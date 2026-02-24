@@ -1,103 +1,103 @@
-# Knowledge
+# Wissen
 
-## WordPress Context
+## WordPress Kontext
 
-This WordPress installation can be customized through the following:
+Diese WordPress-Installation kann über folgende Wege angepasst werden:
 
-### Site Information
-- Site name and description are configurable
-- Permalink structure (typically /%postname%/)
-- Default post category and format
-- Timezone and date format settings
+### Website-Informationen
+- Website-Name und Beschreibung sind konfigurierbar
+- Permalink-Struktur (typischerweise /%postname%/)
+- Standard-Post-Kategorie und -Format
+- Zeitzone und Datumsformat-Einstellungen
 
-### Content Types
-- **Posts:** Blog articles, news, updates
-- **Pages:** Static content (About, Contact, etc.)
-- **Media:** Images, documents, videos in Media Library
-- **Custom Post Types:** May vary by installed plugins
+### Inhaltstypen
+- **Posts:** Blog-Artikel, Nachrichten, Updates
+- **Seiten:** Statische Inhalte (Über uns, Kontakt, etc.)
+- **Medien:** Bilder, Dokumente, Videos in der Mediathek
+- **Eigene Post-Types:** Variieren je nach installierten Plugins
 
-### Common Plugins (if installed)
-- SEO plugins (Yoast, RankMath)
-- Page builders (Elementor, Divi, Gutenberg patterns)
-- Caching plugins (WP Rocket, W3 Total Cache)
-- Form plugins (Contact Form 7, Gravity Forms)
-- E-commerce (WooCommerce)
+### Häufige Plugins (falls installiert)
+- SEO-Plugins (Yoast, RankMath)
+- Page-Builder (Elementor, Divi, Gutenberg-Patterns)
+- Caching-Plugins (WP Rocket, W3 Total Cache)
+- Formular-Plugins (Contact Form 7, Gravity Forms)
+- E-Commerce (WooCommerce)
 
 ## Best Practices
 
-### Content Creation
-- Use Gutenberg blocks for structured content
-- Add alt text to images
-- Use headings hierarchically (H1 → H2 → H3)
-- Keep paragraphs short (2-4 sentences)
-- Include internal links when relevant
+### Inhaltserstellung
+- Verwende Gutenberg-Blöcke für strukturierte Inhalte
+- Füge Alt-Text zu Bildern hinzu
+- Verwende Überschriften hierarchisch (H1 → H2 → H3)
+- Halte Absätze kurz (2-4 Sätze)
+- Füge interne Links hinzu, wenn relevant
 
-### SEO Basics
-- One H1 per page/post
-- Meta description under 160 characters
-- Use focus keyword in first paragraph
-- Optimize images (compress, descriptive filenames)
-- Create descriptive permalinks
+### SEO-Grundlagen
+- Eine H1 pro Seite/Post
+- Meta-Beschreibung unter 160 Zeichen
+- Verwende Fokus-Keyword im ersten Absatz
+- Optimiere Bilder (komprimieren, beschreibende Dateinamen)
+- Erstelle beschreibende Permalinks
 
 ### Performance
-- Use appropriate image sizes
-- Don't load unnecessary scripts
-- Minimize plugin usage
-- Keep WordPress and plugins updated
+- Verwende passende Bildgrößen
+- Lade keine unnötigen Skripte
+- Minimiere Plugin-Nutzung
+- Halte WordPress und Plugins aktuell
 
-## Common User Workflows
+## Häufige Benutzer-Workflows
 
-### Publishing a Blog Post
-1. Create draft with title and content
-2. Add categories and tags
-3. Set featured image
-4. Preview and review
-5. Schedule or publish
+### Blogpost veröffentlichen
+1. Entwurf mit Titel und Inhalt erstellen
+2. Kategorien und Tags hinzufügen
+3. Featured-Image setzen
+4. Vorschau prüfen
+5. Planen oder veröffentlichen
 
-### Updating a Page
-1. Edit content
-2. Update any broken links
-3. Check mobile preview
-4. Save changes
-5. Clear cache if applicable
+### Seite aktualisieren
+1. Inhalt bearbeiten
+2. Defekte Links aktualisieren
+3. Mobile-Vorschau prüfen
+4. Änderungen speichern
+5. Cache leeren falls erforderlich
 
-### Managing Media
-1. Upload to Media Library
-2. Add alt text and description
-3. Optimize file size
-4. Organize in folders (if using media organization plugin)
+### Medien verwalten
+1. In die Mediathek hochladen
+2. Alt-Text und Beschreibung hinzufügen
+3. Dateigröße optimieren
+4. In Ordnern organisieren (falls Media-Organization-Plugin genutzt wird)
 
-## Troubleshooting Knowledge
+## Fehlerbehebungs-Wissen
 
-### Common Issues
-- **White Screen:** Usually PHP error, check error logs
-- **Permalink 404:** Flush permalink settings
-- **Slow Admin:** Likely plugin conflict or insufficient hosting
-- **Image Upload Fail:** Check file permissions and size limits
-- **Update Failed:** Check file permissions (wp-content should be writable)
+### Häufige Probleme
+- **Weiße Seite:** Meist PHP-Fehler, Fehlerprotokolle prüfen
+- **Permalink 404:** Permalink-Einstellungen zurücksetzen
+- **Langsamer Admin:** Wahrscheinlich Plugin-Konflikt oder unzureichendes Hosting
+- **Bild-Upload fehlgeschlagen:** Dateiberechtigungen und Größenlimits prüfen
+- **Update fehlgeschlagen:** Dateiberechtigungen prüfen (wp-content sollte beschreibbar sein)
 
-### Health Checks
-- WordPress version up to date?
-- PHP version 8.0+?
-- SSL certificate valid?
-- Database tables optimized?
-- Backups working?
+### Gesundheits-Checks
+- WordPress-Version aktuell?
+- PHP-Version 8.0+?
+- SSL-Zertifikat gültig?
+- Datenbank-Tabellen optimiert?
+- Backups funktionieren?
 
-## Integration Points
+## Integrationspunkte
 
-### Available Tools
-The agent can interact with WordPress through:
-- Post/Page CRUD operations
-- Media Library access
-- User management (limited)
-- Settings (selected, safe ones)
-- Taxonomy (categories, tags) management
-- Option API (get/update)
+### Verfügbare Tools
+Der Agent kann mit WordPress interagieren über:
+- Post/Page CRUD-Operationen
+- Mediathek-Zugriff
+- Benutzerverwaltung (eingeschränkt)
+- Einstellungen (ausgewählte, sichere)
+- Taxonomie (Kategorien, Tags) Verwaltung
+- Options-API (get/update)
 
 ### REST API Endpoints
-All agent operations use WordPress REST API:
+Alle Agent-Operationen nutzen die WordPress REST API:
 - `/wp/v2/posts` - Posts
-- `/wp/v2/pages` - Pages  
-- `/wp/v2/media` - Media
-- `/wp/v2/users` - Users
-- `/wp/v2/settings` - Settings
+- `/wp/v2/pages` - Seiten
+- `/wp/v2/media` - Medien
+- `/wp/v2/users` - Benutzer
+- `/wp/v2/settings` - Einstellungen
