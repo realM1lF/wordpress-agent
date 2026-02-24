@@ -91,15 +91,15 @@ Ein WordPress-Plugin, das einen KI-Agenten direkt in den Admin-Bereich integrier
 
 ---
 
-### Phase 3: Vector Memory (SQLite)
+### Phase 3: Vector Memory (SQLite) ✅
 **Ziel:** Semantische Suche in .md-Files + episodisches Gedächtnis
 
-- [ ] `src/Memory/VectorStore.php` - SQLite mit Vektor-Support
-- [ ] Embedding-Generierung (OpenAI API)
-- [ ] `memories/` Ordner überwachen
-- [ ] .md-Files → Chunks → Embeddings → SQLite
-- [ ] Semantische Suche implementieren
-- [ ] "Reload Memories" Button in Settings
+- [x] `src/Memory/VectorStore.php` - SQLite mit Vektor-Support
+- [x] Embedding-Generierung (OpenAI API)
+- [x] `memories/` Ordner überwachen
+- [x] .md-Files → Chunks → Embeddings → SQLite
+- [x] Semantische Suche implementieren
+- [x] "Reload Memories" Button in Settings
 
 **Technik:**
 - SQLite mit `sqlite-vec` Extension ODER
@@ -119,18 +119,19 @@ CREATE TABLE memory_vectors (
 
 ---
 
-### Phase 4: Tool System (Lesen)
+### Phase 4: Tool System (Lesen) ✅
 **Ziel:** Agent kann WordPress-Daten live abfragen
 
-- [ ] `src/AI/Tools/ToolInterface.php`
-- [ ] `src/AI/Tools/Registry.php`
-- [ ] Erste Tools implementieren:
-  - `GetPostsTool` - Posts auflisten
-  - `GetPostTool` - Einzelnen Post lesen
-  - `GetPagesTool` - Seiten auflisten
-  - `GetOptionsTool` - Einstellungen lesen
-  - `GetUsersTool` - User auflisten
-  - `GetPluginsTool` - Installierte Plugins
+- [x] `src/AI/Tools/ToolInterface.php`
+- [x] `src/AI/Tools/Registry.php`
+- [x] Erste Tools implementieren:
+  - [x] `GetPostsTool` - Posts auflisten
+  - [x] `GetPostTool` - Einzelnen Post lesen
+  - [x] `GetPagesTool` - Seiten auflisten
+  - [x] `GetOptionsTool` - Einstellungen lesen
+  - [x] `GetUsersTool` - User auflisten
+  - [x] `GetPluginsTool` - Installierte Plugins
+  - [x] `GetMediaTool` - Mediathek
 
 **Wichtig:**
 - Tools definieren Schema für KI (JSON Schema)
@@ -316,9 +317,13 @@ levi-agent/
 
 ## 🚀 Nächste Schritte
 
-1. **Phase 3 starten:** Vector Memory (SQLite)
-2. Dann: Tool System (Lesen)
-3. Dann: Tool System (Schreiben)
-4. Dann: Episodic Memory
+1. ✅ Phase 1: Foundation
+2. ✅ Phase 2: Identity System
+3. ✅ Phase 3: Vector Memory
+4. ✅ Phase 4: Tool System (Lesen)
+5. **Phase 5:** Tool System (Schreiben)
+6. **Phase 6:** Episodic Memory
+7. **Phase 7:** UI/UX Polish
+8. **Phase 8:** Testing & Release
 
-**Soll ich mit Phase 3 beginnen?**
+**Soll ich mit Phase 5 beginnen?**

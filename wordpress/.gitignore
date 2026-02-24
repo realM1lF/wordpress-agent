@@ -1,0 +1,40 @@
+# DDEV
+.ddev/.importdb*
+.ddev/.nfs*
+.ddev/commands/
+.ddev/homeadditions/
+.ddev/providers/
+.ddev/traefik/
+.ddev/xhprof/
+.ddev/mutagen/
+
+# WordPress
+web/wp-admin/
+web/wp-content/uploads/
+web/wp-content/upgrade/
+web/wp-content/backup-db/
+web/wp-content/cache/
+web/wp-content/backups/
+web/wp-includes/
+web/*.php
+web/*.txt
+web/*.html
+web/.htaccess
+
+# Composer
+vendor/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

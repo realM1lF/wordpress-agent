@@ -1,0 +1,23 @@
+name: levi-wordpress
+type: wordpress
+docroot: web
+php_version: "8.2"
+webserver_type: nginx-fpm
+xdebug_enabled: false
+additional_hostnames: []
+additional_fqdns: []
+database:
+    type: mariadb
+    version: "10.11"
+performance_mode: mutagen
+hooks:
+    post-start:
+        - exec: wp core install --url='$DDEV_PRIMARY_URL' --title='Levi Dev Site' --admin_user=admin --admin_password=admin --admin_email=admin@example.com --allow-root || true
+        - exec: wp plugin install query-monitor --activate --allow-root || true
+        - exec: wp plugin install debug-bar --allow-root || true
+        - exec: wp theme install twentytwentyfour --activate --allow-root || true
+webimage_extra_packages: [php8.2-sqlite3]
+use_dns_when_possible: true
+timezone: Europe/Berlin
+composer_version: "2"
+nodejs_version: "20"
