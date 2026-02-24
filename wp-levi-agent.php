@@ -43,10 +43,20 @@ if (file_exists(LEVI_AGENT_PLUGIN_DIR . 'vendor/autoload.php')) {
 // Main Plugin Class
 use Levi\Agent\Core\Plugin;
 
+// Ensure DB tables exist (runs before Plugin init - fixes missed activation hook)
+add_action('plugins_loaded', function() {
+    global $wpdb;
+    $table = $wpdb->prefix . 'levi_conversations';
+    if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+        require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
+        Levi\Agent\Database\Tables::create();
+    }
+}, 1);
+
 // Initialize
 add_action('plugins_loaded', function() {
     Plugin::instance();
-});
+}, 10);
 
 // Activation hook
 register_activation_hook(__FILE__, function() {

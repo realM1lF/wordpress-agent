@@ -16,6 +16,7 @@ class SettingsPage {
         
         add_action('admin_menu', [$this, 'addMenuPage']);
         add_action('admin_init', [$this, 'registerSettings']);
+        add_action('wp_ajax_levi_repair_database', [$this, 'ajaxRepairDatabase']);
     }
 
     public function addMenuPage(): void {
@@ -52,15 +53,6 @@ class SettingsPage {
             'levi_agent_general'
         );
 
-        // Model Selection
-        add_settings_field(
-            'model',
-            __('Model', 'levi-agent'),
-            [$this, 'renderModelField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
         // Rate Limiting
         add_settings_field(
             'rate_limit',
@@ -81,50 +73,35 @@ class SettingsPage {
 
     public function sanitizeSettings(array $input): array {
         $sanitized = [];
+        $existing = get_option($this->optionName, []);
 
-        // API Key - encrypt if provided
-        if (!empty($input['openrouter_api_key'])) {
-            $sanitized['openrouter_api_key'] = $this->encryptApiKey($input['openrouter_api_key']);
-        } else {
-            // Keep existing key if not changed
-            $existing = get_option($this->optionName);
-            if (isset($existing['openrouter_api_key'])) {
-                $sanitized['openrouter_api_key'] = $existing['openrouter_api_key'];
-            }
+        // API Key - plain text, no encryption (fixes save/load issues)
+        $newKey = isset($input['openrouter_api_key']) ? trim($input['openrouter_api_key']) : '';
+        if ($newKey !== '') {
+            $sanitized['openrouter_api_key'] = sanitize_text_field($newKey);
+        } elseif (!empty($existing['openrouter_api_key'])) {
+            $sanitized['openrouter_api_key'] = $existing['openrouter_api_key'];
         }
 
-        $sanitized['model'] = sanitize_text_field($input['model'] ?? 'anthropic/claude-3.5-sonnet');
         $sanitized['rate_limit'] = absint($input['rate_limit'] ?? 50);
 
         return $sanitized;
     }
 
-    private function encryptApiKey(string $apiKey): string {
-        // Use WordPress SALT for encryption
-        $key = wp_salt('auth');
-        $iv = random_bytes(16);
-        $encrypted = openssl_encrypt($apiKey, 'AES-256-CBC', $key, 0, $iv);
-        return base64_encode($iv . $encrypted);
-    }
-
     public function getApiKey(): ?string {
-        // First check .env file (for development)
         $envKey = $this->getApiKeyFromEnv();
         if ($envKey) {
             return $envKey;
         }
 
-        // Then check database
         $settings = get_option($this->optionName);
-        if (empty($settings['openrouter_api_key'])) {
-            return null;
-        }
+        $key = $settings['openrouter_api_key'] ?? '';
+        $key = is_string($key) ? trim($key) : '';
 
-        return $this->decryptApiKey($settings['openrouter_api_key']);
+        return $key !== '' ? $key : null;
     }
 
     private function getApiKeyFromEnv(): ?string {
-        // Look for .env in parent directories (for development)
         $possiblePaths = [
             dirname(ABSPATH) . '/.env',
             dirname(dirname(ABSPATH)) . '/.env',
@@ -143,37 +120,19 @@ class SettingsPage {
         return null;
     }
 
-    private function decryptApiKey(string $encrypted): ?string {
-        try {
-            $data = base64_decode($encrypted);
-            $iv = substr($data, 0, 16);
-            $cipherText = substr($data, 16);
-            $key = wp_salt('auth');
-            
-            $decrypted = openssl_decrypt($cipherText, 'AES-256-CBC', $key, 0, $iv);
-            return $decrypted !== false ? $decrypted : null;
-        } catch (\Exception $e) {
-            return null;
-        }
-    }
-
     public function getSettings(): array {
         $defaults = [
-            'model' => 'anthropic/claude-3.5-sonnet',
             'rate_limit' => 50,
         ];
 
         $settings = get_option($this->optionName, []);
-        
-        // Handle case where settings might be stored as JSON string
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
         }
-        
         if (!is_array($settings)) {
             $settings = [];
         }
-        
+
         return array_merge($defaults, $settings);
     }
 
@@ -203,11 +162,24 @@ class SettingsPage {
 
             <hr>
             
+            <h2><?php esc_html_e('Database', 'levi-agent'); ?></h2>
+            <p>
+                <button type="button" id="levi-repair-database" class="button button-secondary">
+                    <?php esc_html_e('Repair Database Tables', 'levi-agent'); ?>
+                </button>
+                <span id="levi-repair-result" style="margin-left: 10px;"></span>
+            </p>
+            <p class="description">
+                <?php esc_html_e('Creates missing database tables (e.g. if you get "Table doesn\'t exist" errors).', 'levi-agent'); ?>
+            </p>
+
+            <hr>
+            
             <h2>Test Connection</h2>
-            <button type="button" id="mohami-test-connection" class="button button-secondary">
+            <button type="button" id="levi-test-connection" class="button button-secondary">
                 Test OpenRouter Connection
             </button>
-            <span id="mohami-test-result"></span>
+            <span id="levi-test-result"></span>
         </div>
         <?php
     }
@@ -218,44 +190,22 @@ class SettingsPage {
 
     public function renderApiKeyField(): void {
         $settings = $this->getSettings();
-        $hasKey = !empty($settings['openrouter_api_key']);
+        $hasKey = !empty(trim($settings['openrouter_api_key'] ?? ''));
         ?>
         <input 
             type="password" 
             name="<?php echo esc_attr($this->optionName); ?>[openrouter_api_key]" 
             value="" 
             class="regular-text"
-            placeholder="<?php echo $hasKey ? '••••••••••••••••' : 'sk-or-v1-...'; ?>"
+            placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : 'sk-or-v1-...'; ?>"
+            autocomplete="new-password"
         >
         <p class="description">
             <?php if ($hasKey): ?>
-                API Key is saved. Leave empty to keep current key.
-            <?php else: ?>
-                Get your key from <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a>
+                <?php esc_html_e('API Key is saved. Enter a new key to replace it.', 'levi-agent'); ?>
             <?php endif; ?>
+            <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a>
         </p>
-        <?php
-    }
-
-    public function renderModelField(): void {
-        $settings = $this->getSettings();
-        $models = [
-            'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet (Recommended)',
-            'anthropic/claude-3-opus' => 'Claude 3 Opus',
-            'anthropic/claude-3-haiku' => 'Claude 3 Haiku (Fast)',
-            'openai/gpt-4o' => 'GPT-4o',
-            'openai/gpt-4o-mini' => 'GPT-4o Mini (Cheap)',
-            'meta-llama/llama-3.1-70b-instruct' => 'Llama 3.1 70B (Open Source)',
-        ];
-        ?>
-        <select name="<?php echo esc_attr($this->optionName); ?>[model]">
-            <?php foreach ($models as $value => $label): ?>
-                <option value="<?php echo esc_attr($value); ?>" 
-                    <?php selected($settings['model'], $value); ?>>
-                    <?php echo esc_html($label); ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
         <?php
     }
 
@@ -308,14 +258,27 @@ class SettingsPage {
         
         // Reload button
         echo '<p>';
-        echo '<button type="button" id="mohami-reload-memories" class="button button-secondary">';
+        echo '<button type="button" id="levi-reload-memories" class="button button-secondary">';
         echo esc_html__('Reload All Memories', 'levi-agent');
         echo '</button>';
-        echo '<span id="mohami-reload-result" style="margin-left: 10px;"></span>';
+        echo '<span id="levi-reload-result" style="margin-left: 10px;"></span>';
         echo '</p>';
         
         echo '<p class="description">';
         echo esc_html__('This will reload all .md files from identity/ and memories/ folders into the vector database.', 'levi-agent');
         echo '</p>';
+    }
+
+    public function ajaxRepairDatabase(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
+        Levi\Agent\Database\Tables::create();
+
+        wp_send_json_success(['message' => __('Database tables created successfully.', 'levi-agent')]);
     }
 }

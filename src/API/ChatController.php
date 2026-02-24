@@ -84,6 +84,25 @@ class ChatController extends WP_REST_Controller {
                 'permission_callback' => [$this, 'checkPermission'],
             ],
         ]);
+
+        register_rest_route($this->namespace, '/' . $this->rest_base . '/status', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [$this, 'getStatus'],
+                'permission_callback' => [$this, 'checkPermission'],
+            ],
+        ]);
+    }
+
+    public function getStatus(WP_REST_Request $request): WP_REST_Response {
+        global $wpdb;
+        $table = $wpdb->prefix . 'levi_conversations';
+        $tableExists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) === $table;
+        return new WP_REST_Response([
+            'tables_ok' => $tableExists,
+            'ai_configured' => $this->aiClient->isConfigured(),
+            'user_id' => get_current_user_id(),
+        ], 200);
     }
 
     public function checkPermission(): bool {
@@ -117,8 +136,8 @@ class ChatController extends WP_REST_Controller {
     public function sendMessage(WP_REST_Request $request): WP_REST_Response {
         try {
             return $this->processMessage($request);
-        } catch (\Exception $e) {
-            error_log('Levi Agent Error: ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            error_log('Levi Agent Error: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
             return new WP_REST_Response([
                 'error' => 'Internal error: ' . $e->getMessage(),
                 'session_id' => $request->get_param('session_id') ?? uniqid('sess_', true),
@@ -161,8 +180,16 @@ class ChatController extends WP_REST_Controller {
         // Get available tools
         $tools = $this->toolRegistry->getDefinitions();
 
-        // Call AI with tools
+        // Call AI – try with tools first, fallback to no tools on provider error
         $response = $this->aiClient->chat($messages, $tools);
+
+        if (is_wp_error($response)) {
+            $errMsg = $response->get_error_message();
+            // Retry without tools on provider/routing errors (often tool-related)
+            if (!empty($tools) && (str_contains($errMsg, 'Provider') || str_contains($errMsg, 'provider') || str_contains($errMsg, '503'))) {
+                $response = $this->aiClient->chat($messages, []);
+            }
+        }
 
         if (is_wp_error($response)) {
             return new WP_REST_Response([
@@ -283,14 +310,23 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function getSystemPrompt(string $query = ''): string {
-        $identity = new Identity();
-        $basePrompt = $identity->getSystemPrompt();
+        try {
+            $identity = new Identity();
+            $basePrompt = $identity->getSystemPrompt();
+        } catch (\Throwable $e) {
+            error_log('Levi Identity Error: ' . $e->getMessage());
+            $basePrompt = "You are Levi, a helpful AI assistant for WordPress.";
+        }
         
-        // Add relevant memories if query provided
+        // Add relevant memories if query provided (optional - don't fail chat if memory fails)
         if (!empty($query)) {
-            $relevantMemories = $this->getRelevantMemories($query);
-            if (!empty($relevantMemories)) {
-                $basePrompt .= "\n\n# Relevant Context\n\n" . $relevantMemories;
+            try {
+                $relevantMemories = $this->getRelevantMemories($query);
+                if (!empty($relevantMemories)) {
+                    $basePrompt .= "\n\n# Relevant Context\n\n" . $relevantMemories;
+                }
+            } catch (\Throwable $e) {
+                error_log('Levi Memory Error: ' . $e->getMessage());
             }
         }
         
@@ -298,36 +334,36 @@ class ChatController extends WP_REST_Controller {
     }
     
     private function getRelevantMemories(string $query): string {
-        $vectorStore = new VectorStore();
+        try {
+            $vectorStore = new VectorStore();
+        } catch (\Throwable $e) {
+            error_log('Levi VectorStore init: ' . $e->getMessage());
+            return '';
+        }
         
-        // Generate embedding for query
         $queryEmbedding = $vectorStore->generateEmbedding($query);
         if (is_wp_error($queryEmbedding) || empty($queryEmbedding)) {
             return '';
         }
         
-        // Search identity memories
-        $identityResults = $vectorStore->searchSimilar($queryEmbedding, 'identity', 3, 0.7);
-        
-        // Search reference memories
-        $referenceResults = $vectorStore->searchSimilar($queryEmbedding, 'reference', 3, 0.7);
-        
-        // Search episodic memories for this user
-        $userId = get_current_user_id();
-        $episodicResults = $vectorStore->searchEpisodicMemories($queryEmbedding, $userId, 2, 0.75);
-        
         $memories = [];
-        
-        if (!empty($identityResults)) {
-            $memories[] = "## Identity Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $identityResults));
-        }
-        
-        if (!empty($referenceResults)) {
-            $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $referenceResults));
-        }
-        
-        if (!empty($episodicResults)) {
-            $memories[] = "## Learned Preferences\n" . implode("\n", array_map(fn($r) => $r['fact'], $episodicResults));
+        try {
+            $identityResults = $vectorStore->searchSimilar($queryEmbedding, 'identity', 3, 0.7);
+            $referenceResults = $vectorStore->searchSimilar($queryEmbedding, 'reference', 3, 0.7);
+            $userId = get_current_user_id();
+            $episodicResults = $vectorStore->searchEpisodicMemories($queryEmbedding, $userId, 2, 0.75);
+            
+            if (!empty($identityResults)) {
+                $memories[] = "## Identity Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $identityResults));
+            }
+            if (!empty($referenceResults)) {
+                $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $referenceResults));
+            }
+            if (!empty($episodicResults)) {
+                $memories[] = "## Learned Preferences\n" . implode("\n", array_map(fn($r) => $r['fact'], $episodicResults));
+            }
+        } catch (\Throwable $e) {
+            error_log('Levi Memory search: ' . $e->getMessage());
         }
         
         return implode("\n\n", $memories);

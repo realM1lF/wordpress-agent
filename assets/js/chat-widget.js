@@ -155,6 +155,38 @@
             });
         }
 
+        // Repair database button (on settings page)
+        const repairBtn = document.getElementById('levi-repair-database');
+        if (repairBtn) {
+            repairBtn.addEventListener('click', function() {
+                const result = document.getElementById('levi-repair-result');
+                result.textContent = ' Repairing...';
+                repairBtn.disabled = true;
+
+                fetch(leviAgent.ajaxUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'action=levi_repair_database&nonce=' + encodeURIComponent(leviAgent.adminNonce),
+                })
+                .then(r => r.json())
+                .then(data => {
+                    repairBtn.disabled = false;
+                    if (data.success) {
+                        result.innerHTML = ' <span style="color: green;">✅ ' + (data.data.message || 'Done') + '</span>';
+                        setTimeout(() => { result.textContent = ''; }, 3000);
+                    } else {
+                        result.innerHTML = ' <span style="color: red;">❌ ' + (data.data || 'Failed') + '</span>';
+                    }
+                })
+                .catch(err => {
+                    repairBtn.disabled = false;
+                    result.innerHTML = ' <span style="color: red;">❌ Error: ' + err.message + '</span>';
+                });
+            });
+        }
+
         // Reload memories button (on settings page)
         const reloadBtn = document.getElementById('levi-reload-memories');
         if (reloadBtn) {

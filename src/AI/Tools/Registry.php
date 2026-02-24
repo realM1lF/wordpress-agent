@@ -34,7 +34,8 @@ class Registry {
     }
 
     /**
-     * Get tool definitions for OpenAI function calling
+     * Get tool definitions for OpenAI/OpenRouter function calling
+     * Outputs valid JSON Schema (strips invalid keys like 'default', 'required' from properties)
      */
     public function getDefinitions(): array {
         $definitions = [];
@@ -44,6 +45,12 @@ class Registry {
                 continue;
             }
 
+            $rawParams = $tool->getParameters();
+            $properties = [];
+            foreach ($rawParams as $name => $config) {
+                $properties[$name] = array_intersect_key($config, array_flip(['type', 'description', 'enum', 'items']));
+            }
+
             $definitions[] = [
                 'type' => 'function',
                 'function' => [
@@ -51,8 +58,8 @@ class Registry {
                     'description' => $tool->getDescription(),
                     'parameters' => [
                         'type' => 'object',
-                        'properties' => $tool->getParameters(),
-                        'required' => $this->getRequiredParameters($tool->getParameters()),
+                        'properties' => $properties,
+                        'required' => $this->getRequiredParameters($rawParams),
                     ],
                 ],
             ];

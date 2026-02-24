@@ -14,8 +14,7 @@ class OpenRouterClient {
     public function __construct() {
         $settings = new SettingsPage();
         $this->apiKey = $settings->getApiKey();
-        $config = $settings->getSettings();
-        $this->model = $config['model'] ?? 'anthropic/claude-3.5-sonnet';
+        $this->model = 'anthropic/claude-3.5-sonnet';
     }
 
     public function isConfigured(): bool {
@@ -55,11 +54,19 @@ class OpenRouterClient {
         }
 
         $statusCode = wp_remote_retrieve_response_code($response);
-        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $rawBody = wp_remote_retrieve_body($response);
+        $body = json_decode($rawBody, true);
 
         if ($statusCode !== 200) {
-            $errorMessage = $body['error']['message'] ?? 'Unknown error';
-            return new WP_Error('api_error', $errorMessage, ['status' => $statusCode]);
+            $errorMessage = $body['error']['message'] ?? $body['error']['code'] ?? 'Unknown error';
+            $metadata = $body['error']['metadata'] ?? [];
+            error_log(sprintf(
+                'Levi OpenRouter Error [%d]: %s | Body: %s',
+                $statusCode,
+                $errorMessage,
+                substr($rawBody, 0, 500)
+            ));
+            return new WP_Error('api_error', $errorMessage, ['status' => $statusCode, 'metadata' => $metadata]);
         }
 
         return $body;
