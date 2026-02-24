@@ -5,6 +5,7 @@ namespace Mohami\Agent\API;
 use Mohami\Agent\AI\OpenRouterClient;
 use Mohami\Agent\Database\ConversationRepository;
 use Mohami\Agent\Admin\SettingsPage;
+use Mohami\Agent\Agent\Identity;
 use WP_REST_Controller;
 use WP_REST_Server;
 use WP_REST_Request;
@@ -179,24 +180,8 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function getSystemPrompt(): string {
-        $siteName = get_bloginfo('name');
-        $siteUrl = get_site_url();
-        
-        return "You are a helpful WordPress AI assistant for the website '{$siteName}' ({$siteUrl}).
-
-Your capabilities:
-- Answer questions about WordPress
-- Help with content creation and editing
-- Provide technical support
-- Suggest improvements
-
-Guidelines:
-- Be concise but helpful
-- Use Markdown formatting when appropriate
-- If you don't know something, say so honestly
-- Always prioritize user safety and data integrity
-
-Current user: " . wp_get_current_user()->display_name;
+        $identity = new Identity();
+        return $identity->getSystemPrompt();
     }
 
     public function getHistory(WP_REST_Request $request): WP_REST_Response {
