@@ -1,6 +1,6 @@
 <?php
 
-namespace Mohami\Agent\Memory;
+namespace Levi\Agent\Memory;
 
 use WP_Error;
 
@@ -30,7 +30,7 @@ class MemoryLoader {
      * Load identity files (soul.md, rules.md, knowledge.md)
      */
     public function loadIdentityFiles(): array {
-        $identityDir = MOHAMI_AGENT_PLUGIN_DIR . 'identity/';
+        $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
         $files = ['soul.md', 'rules.md', 'knowledge.md'];
         
         $loaded = [];
@@ -66,7 +66,7 @@ class MemoryLoader {
      * Load reference memories from memories/ folder
      */
     public function loadReferenceMemories(): array {
-        $memoriesDir = MOHAMI_AGENT_PLUGIN_DIR . 'memories/';
+        $memoriesDir = LEVI_AGENT_PLUGIN_DIR . 'memories/';
         
         if (!is_dir($memoriesDir)) {
             return ['loaded' => [], 'errors' => ['Memories directory does not exist']];
@@ -221,7 +221,7 @@ class MemoryLoader {
         ];
 
         // Check identity files
-        $identityDir = MOHAMI_AGENT_PLUGIN_DIR . 'identity/';
+        $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
         $files = ['soul.md', 'rules.md', 'knowledge.md'];
         
         foreach ($files as $file) {
@@ -235,7 +235,7 @@ class MemoryLoader {
         }
 
         // Check reference files
-        $memoriesDir = MOHAMI_AGENT_PLUGIN_DIR . 'memories/';
+        $memoriesDir = LEVI_AGENT_PLUGIN_DIR . 'memories/';
         if (is_dir($memoriesDir)) {
             $files = array_merge(
                 glob($memoriesDir . '*.md') ?: [],

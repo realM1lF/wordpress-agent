@@ -1,5 +1,5 @@
 {
-    "name": "realm1lf/mohami-wp-agent",
+    "name": "realm1lf/levi-wp-agent",
     "description": "KI-Mitarbeiter für WordPress",
     "type": "wordpress-plugin",
     "require": {
@@ -11,7 +11,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Mohami\\Agent\\": "src/"
+            "Levi\\Agent\\": "src/"
         }
     },
     "scripts": {

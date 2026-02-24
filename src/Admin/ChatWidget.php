@@ -1,6 +1,6 @@
 <?php
 
-namespace Mohami\Agent\Admin;
+namespace Levi\Agent\Admin;
 
 class ChatWidget {
     public function __construct() {
@@ -13,13 +13,13 @@ class ChatWidget {
         if (!current_user_can('edit_posts')) {
             return;
         }
-        include MOHAMI_AGENT_PLUGIN_DIR . 'templates/admin/chat-widget.php';
+        include LEVI_AGENT_PLUGIN_DIR . 'templates/admin/chat-widget.php';
     }
 
     public function addDashboardWidget(): void {
         wp_add_dashboard_widget(
-            'mohami_ai_chat',
-            __('Mohami AI Assistant', 'mohami-agent'),
+            'levi_ai_chat',
+            __('Levi AI Assistant', 'levi-agent'),
             [$this, 'renderDashboardWidget']
         );
     }

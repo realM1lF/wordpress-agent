@@ -1,18 +1,18 @@
 /**
- * Mohami Chat Widget JavaScript
+ * Levi Chat Widget JavaScript
  */
 (function() {
     'use strict';
 
     document.addEventListener('DOMContentLoaded', function() {
-        const toggle = document.getElementById('mohami-chat-toggle');
-        const window_ = document.getElementById('mohami-chat-window');
-        const close = document.getElementById('mohami-chat-close');
-        const input = document.getElementById('mohami-chat-input');
-        const send = document.getElementById('mohami-chat-send');
-        const messages = document.getElementById('mohami-chat-messages');
+        const toggle = document.getElementById('levi-chat-toggle');
+        const window_ = document.getElementById('levi-chat-window');
+        const close = document.getElementById('levi-chat-close');
+        const input = document.getElementById('levi-chat-input');
+        const send = document.getElementById('levi-chat-send');
+        const messages = document.getElementById('levi-chat-messages');
 
-        let sessionId = localStorage.getItem('mohami_session_id') || null;
+        let sessionId = localStorage.getItem('levi_session_id') || null;
 
         // Toggle chat window
         toggle.addEventListener('click', function() {
@@ -51,11 +51,11 @@
             const typing = addTypingIndicator();
 
             // Send to API
-            fetch(mohamiAgent.restUrl + 'chat', {
+            fetch(leviAgent.restUrl + 'chat', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-WP-Nonce': mohamiAgent.nonce,
+                    'X-WP-Nonce': leviAgent.nonce,
                 },
                 body: JSON.stringify({
                     message: text,
@@ -70,7 +70,7 @@
                 // Store session ID
                 if (data.session_id) {
                     sessionId = data.session_id;
-                    localStorage.setItem('mohami_session_id', sessionId);
+                    localStorage.setItem('levi_session_id', sessionId);
                 }
 
                 // Add assistant response
@@ -85,17 +85,17 @@
 
         function addMessage(text, role) {
             const messageDiv = document.createElement('div');
-            messageDiv.className = 'mohami-message mohami-message-' + role;
-            messageDiv.innerHTML = '<div class="mohami-message-content">' + escapeHtml(text) + '</div>';
+            messageDiv.className = 'levi-message levi-message-' + role;
+            messageDiv.innerHTML = '<div class="levi-message-content">' + escapeHtml(text) + '</div>';
             messages.appendChild(messageDiv);
             messages.scrollTop = messages.scrollHeight;
         }
 
         function addTypingIndicator() {
             const typingDiv = document.createElement('div');
-            typingDiv.className = 'mohami-message mohami-message-assistant';
+            typingDiv.className = 'levi-message levi-message-assistant';
             typingDiv.innerHTML = 
-                '<div class="mohami-message-content mohami-typing">' +
+                '<div class="levi-message-content levi-typing">' +
                 '<span></span><span></span><span></span>' +
                 '</div>';
             messages.appendChild(typingDiv);
@@ -110,18 +110,18 @@
         }
 
         // Test connection button (on settings page)
-        const testBtn = document.getElementById('mohami-test-connection');
+        const testBtn = document.getElementById('levi-test-connection');
         if (testBtn) {
             testBtn.addEventListener('click', function() {
-                const result = document.getElementById('mohami-test-result');
+                const result = document.getElementById('levi-test-result');
                 result.textContent = ' Testing...';
                 
-                fetch(mohamiAgent.ajaxUrl, {
+                fetch(leviAgent.ajaxUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
                     },
-                    body: 'action=mohami_test_connection&nonce=' + encodeURIComponent(mohamiAgent.adminNonce),
+                    body: 'action=levi_test_connection&nonce=' + encodeURIComponent(leviAgent.adminNonce),
                 })
                 .then(r => r.json())
                 .then(data => {
@@ -138,19 +138,19 @@
         }
 
         // Reload memories button (on settings page)
-        const reloadBtn = document.getElementById('mohami-reload-memories');
+        const reloadBtn = document.getElementById('levi-reload-memories');
         if (reloadBtn) {
             reloadBtn.addEventListener('click', function() {
-                const result = document.getElementById('mohami-reload-result');
+                const result = document.getElementById('levi-reload-result');
                 result.textContent = ' Reloading...';
                 reloadBtn.disabled = true;
                 
-                fetch(mohamiAgent.ajaxUrl, {
+                fetch(leviAgent.ajaxUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
                     },
-                    body: 'action=mohami_reload_memories&nonce=' + encodeURIComponent(mohamiAgent.adminNonce),
+                    body: 'action=levi_reload_memories&nonce=' + encodeURIComponent(leviAgent.adminNonce),
                 })
                 .then(r => r.json())
                 .then(data => {

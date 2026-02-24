@@ -1,6 +1,6 @@
 <?php
 
-namespace Mohami\Agent\Agent;
+namespace Levi\Agent\Agent;
 
 class Identity {
     private string $identityPath;
@@ -9,7 +9,7 @@ class Identity {
     private ?string $knowledge = null;
 
     public function __construct() {
-        $this->identityPath = MOHAMI_AGENT_PLUGIN_DIR . 'identity/';
+        $this->identityPath = LEVI_AGENT_PLUGIN_DIR . 'identity/';
         $this->load();
     }
 

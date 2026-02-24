@@ -1,8 +1,8 @@
 <?php
 
-namespace Mohami\Agent\AI;
+namespace Levi\Agent\AI;
 
-use Mohami\Agent\Admin\SettingsPage;
+use Levi\Agent\Admin\SettingsPage;
 use WP_Error;
 
 class OpenRouterClient {

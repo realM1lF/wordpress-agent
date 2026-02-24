@@ -1,13 +1,13 @@
 <?php
 
-namespace Mohami\Agent\API;
+namespace Levi\Agent\API;
 
-use Mohami\Agent\AI\OpenRouterClient;
-use Mohami\Agent\Database\ConversationRepository;
-use Mohami\Agent\Admin\SettingsPage;
-use Mohami\Agent\Agent\Identity;
-use Mohami\Agent\Memory\VectorStore;
-use Mohami\Agent\AI\Tools\Registry;
+use Levi\Agent\AI\OpenRouterClient;
+use Levi\Agent\Database\ConversationRepository;
+use Levi\Agent\Admin\SettingsPage;
+use Levi\Agent\Agent\Identity;
+use Levi\Agent\Memory\VectorStore;
+use Levi\Agent\AI\Tools\Registry;
 use WP_REST_Controller;
 use WP_REST_Server;
 use WP_REST_Request;
@@ -15,7 +15,7 @@ use WP_REST_Response;
 use WP_Error;
 
 class ChatController extends WP_REST_Controller {
-    protected $namespace = 'mohami-agent/v1';
+    protected $namespace = 'levi-agent/v1';
     protected $rest_base = 'chat';
     private OpenRouterClient $aiClient;
     private ConversationRepository $conversationRepo;
@@ -87,7 +87,7 @@ class ChatController extends WP_REST_Controller {
         $settings = $this->settings->getSettings();
         $maxRequests = $settings['rate_limit'] ?? 50;
         
-        $transientKey = 'mohami_rate_' . $userId;
+        $transientKey = 'levi_rate_' . $userId;
         $requests = get_transient($transientKey);
 
         if ($requests === false) {

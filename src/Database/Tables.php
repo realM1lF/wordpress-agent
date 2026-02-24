@@ -1,15 +1,15 @@
 <?php
 
-namespace Mohami\Agent\Database;
+namespace Levi\Agent\Database;
 
 class Tables {
     public static function create(): void {
         global $wpdb;
         $charsetCollate = $wpdb->get_charset_collate();
 
-        $conversationsTable = $wpdb->prefix . 'mohami_conversations';
-        $actionsTable = $wpdb->prefix . 'mohami_actions';
-        $memoryTable = $wpdb->prefix . 'mohami_memory';
+        $conversationsTable = $wpdb->prefix . 'levi_conversations';
+        $actionsTable = $wpdb->prefix . 'levi_actions';
+        $memoryTable = $wpdb->prefix . 'levi_memory';
 
         $sql = "
 CREATE TABLE IF NOT EXISTS {$conversationsTable} (

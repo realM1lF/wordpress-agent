@@ -1,10 +1,10 @@
 <?php
 
-namespace Mohami\Agent\Core;
+namespace Levi\Agent\Core;
 
-use Mohami\Agent\Admin\ChatWidget;
-use Mohami\Agent\Admin\SettingsPage;
-use Mohami\Agent\API\ChatController;
+use Levi\Agent\Admin\ChatWidget;
+use Levi\Agent\Admin\SettingsPage;
+use Levi\Agent\API\ChatController;
 
 class Plugin {
     private static ?self $instance = null;
@@ -32,14 +32,14 @@ class Plugin {
         add_action('admin_enqueue_scripts', [$this, 'enqueueAssets']);
         
         // Test connection AJAX handler
-        add_action('wp_ajax_mohami_test_connection', [$this, 'ajaxTestConnection']);
+        add_action('wp_ajax_levi_test_connection', [$this, 'ajaxTestConnection']);
         
         // Memory reload AJAX handler
-        add_action('wp_ajax_mohami_reload_memories', [$this, 'ajaxReloadMemories']);
+        add_action('wp_ajax_levi_reload_memories', [$this, 'ajaxReloadMemories']);
     }
     
     public function ajaxTestConnection(): void {
-        check_ajax_referer('mohami_admin_nonce', 'nonce');
+        check_ajax_referer('levi_admin_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Unauthorized');
@@ -56,7 +56,7 @@ class Plugin {
     }
     
     public function ajaxReloadMemories(): void {
-        check_ajax_referer('mohami_admin_nonce', 'nonce');
+        check_ajax_referer('levi_admin_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Unauthorized');
@@ -78,26 +78,26 @@ class Plugin {
         }
 
         wp_enqueue_style(
-            'mohami-agent-chat',
-            MOHAMI_AGENT_PLUGIN_URL . 'assets/css/chat-widget.css',
+            'levi-agent-chat',
+            LEVI_AGENT_PLUGIN_URL . 'assets/css/chat-widget.css',
             [],
-            MOHAMI_AGENT_VERSION
+            LEVI_AGENT_VERSION
         );
 
         wp_enqueue_script(
-            'mohami-agent-chat',
-            MOHAMI_AGENT_PLUGIN_URL . 'assets/js/chat-widget.js',
+            'levi-agent-chat',
+            LEVI_AGENT_PLUGIN_URL . 'assets/js/chat-widget.js',
             [],
-            MOHAMI_AGENT_VERSION,
+            LEVI_AGENT_VERSION,
             true
         );
 
-        wp_localize_script('mohami-agent-chat', 'mohamiAgent', [
-            'restUrl' => rest_url('mohami-agent/v1/'),
+        wp_localize_script('levi-agent-chat', 'leviAgent', [
+            'restUrl' => rest_url('levi-agent/v1/'),
             'nonce' => wp_create_nonce('wp_rest'),
             'userName' => wp_get_current_user()->display_name,
             'ajaxUrl' => admin_url('admin-ajax.php'),
-            'adminNonce' => wp_create_nonce('mohami_admin_nonce'),
+            'adminNonce' => wp_create_nonce('levi_admin_nonce'),
         ]);
     }
 }

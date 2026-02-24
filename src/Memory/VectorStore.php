@@ -1,6 +1,6 @@
 <?php
 
-namespace Mohami\Agent\Memory;
+namespace Levi\Agent\Memory;
 
 use WP_Error;
 
@@ -11,7 +11,7 @@ class VectorStore {
     private int $embeddingDimensions = 1536;
 
     public function __construct() {
-        $this->dbPath = MOHAMI_AGENT_PLUGIN_DIR . 'data/vector-memory.sqlite';
+        $this->dbPath = LEVI_AGENT_PLUGIN_DIR . 'data/vector-memory.sqlite';
         $this->init();
     }
 

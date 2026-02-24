@@ -1,10 +1,10 @@
 <?php
 
-namespace Mohami\Agent\Admin;
+namespace Levi\Agent\Admin;
 
 class SettingsPage {
-    private string $optionName = 'mohami_agent_settings';
-    private string $pageSlug = 'mohami-agent-settings';
+    private string $optionName = 'levi_agent_settings';
+    private string $pageSlug = 'levi-agent-settings';
 
     public function __construct() {
         add_action('admin_menu', [$this, 'addMenuPage']);
@@ -13,8 +13,8 @@ class SettingsPage {
 
     public function addMenuPage(): void {
         add_options_page(
-            __('Mohami AI Agent', 'mohami-agent'),
-            __('Mohami AI', 'mohami-agent'),
+            __('Levi AI Agent', 'levi-agent'),
+            __('Levi AI', 'levi-agent'),
             'manage_options',
             $this->pageSlug,
             [$this, 'renderPage']
@@ -23,15 +23,15 @@ class SettingsPage {
 
     public function registerSettings(): void {
         register_setting(
-            'mohami_agent_settings_group',
+            'levi_agent_settings_group',
             $this->optionName,
             [$this, 'sanitizeSettings']
         );
 
         // General Settings Section
         add_settings_section(
-            'mohami_agent_general',
-            __('General Settings', 'mohami-agent'),
+            'levi_agent_general',
+            __('General Settings', 'levi-agent'),
             [$this, 'renderGeneralSection'],
             $this->pageSlug
         );
@@ -39,34 +39,34 @@ class SettingsPage {
         // API Key Field
         add_settings_field(
             'openrouter_api_key',
-            __('OpenRouter API Key', 'mohami-agent'),
+            __('OpenRouter API Key', 'levi-agent'),
             [$this, 'renderApiKeyField'],
             $this->pageSlug,
-            'mohami_agent_general'
+            'levi_agent_general'
         );
 
         // Model Selection
         add_settings_field(
             'model',
-            __('Model', 'mohami-agent'),
+            __('Model', 'levi-agent'),
             [$this, 'renderModelField'],
             $this->pageSlug,
-            'mohami_agent_general'
+            'levi_agent_general'
         );
 
         // Rate Limiting
         add_settings_field(
             'rate_limit',
-            __('Rate Limit (requests per hour)', 'mohami-agent'),
+            __('Rate Limit (requests per hour)', 'levi-agent'),
             [$this, 'renderRateLimitField'],
             $this->pageSlug,
-            'mohami_agent_general'
+            'levi_agent_general'
         );
 
         // Memory Section
         add_settings_section(
-            'mohami_agent_memory',
-            __('Memory', 'mohami-agent'),
+            'levi_agent_memory',
+            __('Memory', 'levi-agent'),
             [$this, 'renderMemorySection'],
             $this->pageSlug
         );
@@ -178,7 +178,7 @@ class SettingsPage {
 
             <form method="post" action="options.php">
                 <?php 
-                settings_fields('mohami_agent_settings_group');
+                settings_fields('levi_agent_settings_group');
                 do_settings_sections($this->pageSlug);
                 submit_button();
                 ?>
@@ -196,7 +196,7 @@ class SettingsPage {
     }
 
     public function renderGeneralSection(): void {
-        echo '<p>' . esc_html__('Configure your AI assistant settings.', 'mohami-agent') . '</p>';
+        echo '<p>' . esc_html__('Configure your AI assistant settings.', 'levi-agent') . '</p>';
     }
 
     public function renderApiKeyField(): void {
@@ -258,18 +258,18 @@ class SettingsPage {
     }
 
     public function renderMemorySection(): void {
-        echo '<p>' . esc_html__('Manage the agent\'s knowledge and memories.', 'mohami-agent') . '</p>';
+        echo '<p>' . esc_html__('Manage the agent\'s knowledge and memories.', 'levi-agent') . '</p>';
         
         // Show stats
         $loader = new \Mohami\Agent\Memory\MemoryLoader();
         $stats = $loader->getStats();
         
         echo '<div class="mohami-memory-stats">';
-        echo '<h4>' . esc_html__('Memory Statistics', 'mohami-agent') . '</h4>';
+        echo '<h4>' . esc_html__('Memory Statistics', 'levi-agent') . '</h4>';
         echo '<ul>';
-        echo '<li>' . sprintf(esc_html__('Identity Vectors: %d', 'mohami-agent'), $stats['identity_vectors'] ?? 0) . '</li>';
-        echo '<li>' . sprintf(esc_html__('Reference Vectors: %d', 'mohami-agent'), $stats['reference_vectors'] ?? 0) . '</li>';
-        echo '<li>' . sprintf(esc_html__('Episodic Memories: %d', 'mohami-agent'), $stats['episodic_memories'] ?? 0) . '</li>';
+        echo '<li>' . sprintf(esc_html__('Identity Vectors: %d', 'levi-agent'), $stats['identity_vectors'] ?? 0) . '</li>';
+        echo '<li>' . sprintf(esc_html__('Reference Vectors: %d', 'levi-agent'), $stats['reference_vectors'] ?? 0) . '</li>';
+        echo '<li>' . sprintf(esc_html__('Episodic Memories: %d', 'levi-agent'), $stats['episodic_memories'] ?? 0) . '</li>';
         echo '</ul>';
         echo '</div>';
         
@@ -279,12 +279,12 @@ class SettingsPage {
         
         if ($hasChanges) {
             echo '<div class="notice notice-warning inline">';
-            echo '<p><strong>' . esc_html__('Memory files have changed!', 'mohami-agent') . '</strong></p>';
+            echo '<p><strong>' . esc_html__('Memory files have changed!', 'levi-agent') . '</strong></p>';
             if (!empty($changes['identity'])) {
-                echo '<p>' . esc_html__('Identity files: ', 'mohami-agent') . esc_html(implode(', ', $changes['identity'])) . '</p>';
+                echo '<p>' . esc_html__('Identity files: ', 'levi-agent') . esc_html(implode(', ', $changes['identity'])) . '</p>';
             }
             if (!empty($changes['reference'])) {
-                echo '<p>' . esc_html__('Reference files: ', 'mohami-agent') . esc_html(implode(', ', $changes['reference'])) . '</p>';
+                echo '<p>' . esc_html__('Reference files: ', 'levi-agent') . esc_html(implode(', ', $changes['reference'])) . '</p>';
             }
             echo '</div>';
         }
@@ -292,13 +292,13 @@ class SettingsPage {
         // Reload button
         echo '<p>';
         echo '<button type="button" id="mohami-reload-memories" class="button button-secondary">';
-        echo esc_html__('Reload All Memories', 'mohami-agent');
+        echo esc_html__('Reload All Memories', 'levi-agent');
         echo '</button>';
         echo '<span id="mohami-reload-result" style="margin-left: 10px;"></span>';
         echo '</p>';
         
         echo '<p class="description">';
-        echo esc_html__('This will reload all .md files from identity/ and memories/ folders into the vector database.', 'mohami-agent');
+        echo esc_html__('This will reload all .md files from identity/ and memories/ folders into the vector database.', 'levi-agent');
         echo '</p>';
     }
 }

@@ -1,6 +1,6 @@
 <?php
 
-namespace Mohami\Agent\Database;
+namespace Levi\Agent\Database;
 
 class ConversationRepository {
     private string $tableConversations;
@@ -8,8 +8,8 @@ class ConversationRepository {
 
     public function __construct() {
         global $wpdb;
-        $this->tableConversations = $wpdb->prefix . 'mohami_conversations';
-        $this->tableActions = $wpdb->prefix . 'mohami_actions';
+        $this->tableConversations = $wpdb->prefix . 'levi_conversations';
+        $this->tableActions = $wpdb->prefix . 'levi_actions';
     }
 
     public function saveMessage(string $sessionId, int $userId, string $role, string $content, ?string $contextHash = null): int {

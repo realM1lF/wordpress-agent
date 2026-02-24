@@ -65,7 +65,7 @@ Ein WordPress-Plugin, das einen KI-Agenten direkt in den Admin-Bereich integrier
 - [x] Session-Management (localStorage + DB)
 
 **Dateien:**
-- `wp-mohami-agent.php`
+- `wp-levi-agent.php`
 - `src/Core/Plugin.php`
 - `src/Admin/SettingsPage.php`
 - `src/AI/OpenRouterClient.php`
@@ -235,8 +235,8 @@ Wann werden .md-Files neu geladen?
 ## 📁 Finale Ordnerstruktur
 
 ```
-wordpress-agent/
-├── wp-mohami-agent.php
+levi-agent/
+├── wp-levi-agent.php
 ├── composer.json
 ├── README.md
 ├── ROADMAP.md

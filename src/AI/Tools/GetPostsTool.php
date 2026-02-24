@@ -1,6 +1,6 @@
 <?php
 
-namespace Mohami\Agent\AI\Tools;
+namespace Levi\Agent\AI\Tools;
 
 class GetPostsTool implements ToolInterface {
 
