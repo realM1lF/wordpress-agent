@@ -44,7 +44,11 @@ class ChatController extends WP_REST_Controller {
                         'sanitize_callback' => 'sanitize_textarea_field',
                     ],
                     'session_id' => [
-                        'type' => 'string',
+                        'type' => ['string', 'null'],
+                        'default' => null,
+                        'sanitize_callback' => function($value) {
+                            return $value ? sanitize_text_field($value) : null;
+                        },
                     ],
                 ],
             ],
