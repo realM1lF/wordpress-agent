@@ -116,6 +116,11 @@ class Registry {
             new UpdatePostTool(),
             new CreatePageTool(),
             new UpdateOptionTool(),
+            new UpdateAnyOptionTool(),
+            new DeletePostTool(),
+            new InstallPluginTool(),
+            new SwitchThemeTool(),
+            new ManageUserTool(),
         ];
 
         foreach ($tools as $tool) {

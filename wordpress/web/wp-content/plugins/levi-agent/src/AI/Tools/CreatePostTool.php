@@ -9,7 +9,7 @@ class CreatePostTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Create a new WordPress post. Always creates as draft first for safety.';
+        return 'Create a new WordPress post. Can publish directly or save as draft.';
     }
 
     public function getParameters(): array {
@@ -27,6 +27,12 @@ class CreatePostTool implements ToolInterface {
             'excerpt' => [
                 'type' => 'string',
                 'description' => 'Optional post excerpt',
+            ],
+            'status' => [
+                'type' => 'string',
+                'description' => 'Post status: publish, draft, pending, private',
+                'enum' => ['publish', 'draft', 'pending', 'private'],
+                'default' => 'draft',
             ],
             'categories' => [
                 'type' => 'array',
@@ -50,7 +56,6 @@ class CreatePostTool implements ToolInterface {
     }
 
     public function execute(array $params): array {
-        // Validate required fields
         if (empty($params['title'])) {
             return [
                 'success' => false,
@@ -58,16 +63,14 @@ class CreatePostTool implements ToolInterface {
             ];
         }
 
-        // Prepare post data
         $postData = [
             'post_title'   => sanitize_text_field($params['title']),
             'post_content' => wp_kses_post($params['content']),
-            'post_status'  => 'draft', // ALWAYS draft for safety
+            'post_status'  => sanitize_key($params['status'] ?? 'draft'),
             'post_type'    => 'post',
             'post_author'  => get_current_user_id(),
         ];
 
-        // Add excerpt if provided
         if (!empty($params['excerpt'])) {
             $postData['post_excerpt'] = sanitize_textarea_field($params['excerpt']);
         }
@@ -79,12 +82,10 @@ class CreatePostTool implements ToolInterface {
                 if (is_numeric($cat)) {
                     $categoryIds[] = intval($cat);
                 } else {
-                    // Get or create category by name
                     $term = get_term_by('name', $cat, 'category');
                     if ($term) {
                         $categoryIds[] = $term->term_id;
                     } else {
-                        // Create category
                         $newTerm = wp_insert_term($cat, 'category');
                         if (!is_wp_error($newTerm)) {
                             $categoryIds[] = $newTerm['term_id'];
@@ -100,7 +101,6 @@ class CreatePostTool implements ToolInterface {
             $postData['tags_input'] = array_map('sanitize_text_field', $params['tags']);
         }
 
-        // Insert post
         $postId = wp_insert_post($postData, true);
 
         if (is_wp_error($postId)) {
@@ -110,37 +110,22 @@ class CreatePostTool implements ToolInterface {
             ];
         }
 
-        // Set featured image if provided
         if (!empty($params['featured_image'])) {
             set_post_thumbnail($postId, intval($params['featured_image']));
         }
 
-        // Log action
-        $this->logAction($postId, 'create', $params);
-
+        $status = $postData['post_status'];
+        
         return [
             'success' => true,
             'post_id' => $postId,
             'title' => $params['title'],
-            'status' => 'draft',
+            'status' => $status,
+            'url' => get_permalink($postId),
             'edit_url' => get_edit_post_link($postId, 'raw'),
-            'preview_url' => get_preview_post_link($postId),
-            'message' => 'Post created as draft. Review before publishing.',
+            'message' => $status === 'publish' 
+                ? 'Post published successfully.' 
+                : 'Post created as ' . $status . '.',
         ];
-    }
-
-    private function logAction(int $postId, string $action, array $params): void {
-        $userId = get_current_user_id();
-        $user = get_user_by('id', $userId);
-        $userName = $user ? $user->display_name : 'Unknown';
-
-        error_log(sprintf(
-            '[Levi Agent] User %s (%d) %s post "%s" (ID: %d)',
-            $userName,
-            $userId,
-            $action,
-            $params['title'] ?? 'Untitled',
-            $postId
-        ));
     }
 }
