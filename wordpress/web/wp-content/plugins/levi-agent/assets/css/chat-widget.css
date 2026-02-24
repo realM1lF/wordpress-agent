@@ -1,0 +1,178 @@
+/* Levi Chat Widget Styles */
+.levi-chat-widget {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    z-index: 999999;
+}
+
+.levi-chat-toggle {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #2271b1;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.levi-chat-toggle:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+}
+
+.levi-chat-toggle .dashicons {
+    font-size: 28px;
+    width: 28px;
+    height: 28px;
+}
+
+.levi-chat-window {
+    position: absolute;
+    bottom: 75px;
+    right: 0;
+    width: 380px;
+    height: 500px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.levi-chat-header {
+    background: #2271b1;
+    color: #fff;
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.levi-chat-title {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.levi-chat-close {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.levi-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    background: #f6f7f7;
+}
+
+.levi-message {
+    margin-bottom: 15px;
+    max-width: 85%;
+}
+
+.levi-message-user {
+    margin-left: auto;
+}
+
+.levi-message-content {
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.levi-message-user .levi-message-content {
+    background: #2271b1;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+}
+
+.levi-message-assistant .levi-message-content {
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-bottom-left-radius: 4px;
+}
+
+.levi-chat-input-area {
+    padding: 15px;
+    background: #fff;
+    border-top: 1px solid #dcdcde;
+    display: flex;
+    gap: 10px;
+}
+
+.levi-chat-input {
+    flex: 1;
+    border: 1px solid #dcdcde;
+    border-radius: 8px;
+    padding: 10px;
+    resize: none;
+    font-size: 14px;
+}
+
+.levi-chat-input:focus {
+    outline: none;
+    border-color: #2271b1;
+}
+
+.levi-chat-send {
+    width: 44px;
+    height: 44px;
+    background: #2271b1;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.levi-chat-send:hover {
+    background: #135e96;
+}
+
+.levi-chat-send .dashicons {
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+}
+
+/* Typing indicator */
+.levi-typing {
+    display: flex;
+    gap: 4px;
+    padding: 12px 16px;
+}
+
+.levi-typing span {
+    width: 8px;
+    height: 8px;
+    background: #c3c4c7;
+    border-radius: 50%;
+    animation: levi-typing 1.4s infinite;
+}
+
+.levi-typing span:nth-child(2) { animation-delay: 0.2s; }
+.levi-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes levi-typing {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-10px); }
+}
