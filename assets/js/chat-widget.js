@@ -136,5 +136,40 @@
                 });
             });
         }
+
+        // Reload memories button (on settings page)
+        const reloadBtn = document.getElementById('mohami-reload-memories');
+        if (reloadBtn) {
+            reloadBtn.addEventListener('click', function() {
+                const result = document.getElementById('mohami-reload-result');
+                result.textContent = ' Reloading...';
+                reloadBtn.disabled = true;
+                
+                fetch(mohamiAgent.ajaxUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'action=mohami_reload_memories&nonce=' + encodeURIComponent(mohamiAgent.adminNonce),
+                })
+                .then(r => r.json())
+                .then(data => {
+                    reloadBtn.disabled = false;
+                    if (data.success) {
+                        const identityCount = Object.keys(data.data.results.identity.loaded || {}).length;
+                        const referenceCount = Object.keys(data.data.results.reference.loaded || {}).length;
+                        result.innerHTML = ' <span style="color: green;">✅ Reloaded! Identity: ' + identityCount + ', Reference: ' + referenceCount + ' files</span>';
+                        // Reload page after 2 seconds to show updated stats
+                        setTimeout(() => location.reload(), 2000);
+                    } else {
+                        result.innerHTML = ' <span style="color: red;">❌ ' + (data.data || 'Failed') + '</span>';
+                    }
+                })
+                .catch(err => {
+                    reloadBtn.disabled = false;
+                    result.innerHTML = ' <span style="color: red;">❌ Error: ' + err.message + '</span>';
+                });
+            });
+        }
     });
 })();

@@ -6,6 +6,7 @@ use Mohami\Agent\AI\OpenRouterClient;
 use Mohami\Agent\Database\ConversationRepository;
 use Mohami\Agent\Admin\SettingsPage;
 use Mohami\Agent\Agent\Identity;
+use Mohami\Agent\Memory\VectorStore;
 use WP_REST_Controller;
 use WP_REST_Server;
 use WP_REST_Request;
@@ -153,10 +154,10 @@ class ChatController extends WP_REST_Controller {
     private function buildMessages(string $sessionId, string $newMessage): array {
         $messages = [];
 
-        // System message
+        // System message with relevant memories
         $messages[] = [
             'role' => 'system',
-            'content' => $this->getSystemPrompt(),
+            'content' => $this->getSystemPrompt($newMessage),
         ];
 
         // History (last 20 messages for context)
@@ -179,9 +180,55 @@ class ChatController extends WP_REST_Controller {
         return $messages;
     }
 
-    private function getSystemPrompt(): string {
+    private function getSystemPrompt(string $query = ''): string {
         $identity = new Identity();
-        return $identity->getSystemPrompt();
+        $basePrompt = $identity->getSystemPrompt();
+        
+        // Add relevant memories if query provided
+        if (!empty($query)) {
+            $relevantMemories = $this->getRelevantMemories($query);
+            if (!empty($relevantMemories)) {
+                $basePrompt .= "\n\n# Relevant Context\n\n" . $relevantMemories;
+            }
+        }
+        
+        return $basePrompt;
+    }
+    
+    private function getRelevantMemories(string $query): string {
+        $vectorStore = new VectorStore();
+        
+        // Generate embedding for query
+        $queryEmbedding = $vectorStore->generateEmbedding($query);
+        if (is_wp_error($queryEmbedding) || empty($queryEmbedding)) {
+            return '';
+        }
+        
+        // Search identity memories
+        $identityResults = $vectorStore->searchSimilar($queryEmbedding, 'identity', 3, 0.7);
+        
+        // Search reference memories
+        $referenceResults = $vectorStore->searchSimilar($queryEmbedding, 'reference', 3, 0.7);
+        
+        // Search episodic memories for this user
+        $userId = get_current_user_id();
+        $episodicResults = $vectorStore->searchEpisodicMemories($queryEmbedding, $userId, 2, 0.75);
+        
+        $memories = [];
+        
+        if (!empty($identityResults)) {
+            $memories[] = "## Identity Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $identityResults));
+        }
+        
+        if (!empty($referenceResults)) {
+            $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $referenceResults));
+        }
+        
+        if (!empty($episodicResults)) {
+            $memories[] = "## Learned Preferences\n" . implode("\n", array_map(fn($r) => $r['fact'], $episodicResults));
+        }
+        
+        return implode("\n\n", $memories);
     }
 
     public function getHistory(WP_REST_Request $request): WP_REST_Response {

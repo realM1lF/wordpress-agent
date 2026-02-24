@@ -33,6 +33,9 @@ class Plugin {
         
         // Test connection AJAX handler
         add_action('wp_ajax_mohami_test_connection', [$this, 'ajaxTestConnection']);
+        
+        // Memory reload AJAX handler
+        add_action('wp_ajax_mohami_reload_memories', [$this, 'ajaxReloadMemories']);
     }
     
     public function ajaxTestConnection(): void {
@@ -50,6 +53,22 @@ class Plugin {
         }
         
         wp_send_json_success($result);
+    }
+    
+    public function ajaxReloadMemories(): void {
+        check_ajax_referer('mohami_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $loader = new \Mohami\Agent\Memory\MemoryLoader();
+        $results = $loader->loadAllMemories();
+        
+        wp_send_json_success([
+            'message' => 'Memories reloaded successfully',
+            'results' => $results,
+        ]);
     }
 
     public function enqueueAssets(): void {

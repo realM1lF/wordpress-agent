@@ -62,6 +62,14 @@ class SettingsPage {
             $this->pageSlug,
             'mohami_agent_general'
         );
+
+        // Memory Section
+        add_settings_section(
+            'mohami_agent_memory',
+            __('Memory', 'mohami-agent'),
+            [$this, 'renderMemorySection'],
+            $this->pageSlug
+        );
     }
 
     public function sanitizeSettings(array $input): array {
@@ -247,5 +255,50 @@ class SettingsPage {
         >
         <p class="description">Limit API requests per user per hour to control costs.</p>
         <?php
+    }
+
+    public function renderMemorySection(): void {
+        echo '<p>' . esc_html__('Manage the agent\'s knowledge and memories.', 'mohami-agent') . '</p>';
+        
+        // Show stats
+        $loader = new \Mohami\Agent\Memory\MemoryLoader();
+        $stats = $loader->getStats();
+        
+        echo '<div class="mohami-memory-stats">';
+        echo '<h4>' . esc_html__('Memory Statistics', 'mohami-agent') . '</h4>';
+        echo '<ul>';
+        echo '<li>' . sprintf(esc_html__('Identity Vectors: %d', 'mohami-agent'), $stats['identity_vectors'] ?? 0) . '</li>';
+        echo '<li>' . sprintf(esc_html__('Reference Vectors: %d', 'mohami-agent'), $stats['reference_vectors'] ?? 0) . '</li>';
+        echo '<li>' . sprintf(esc_html__('Episodic Memories: %d', 'mohami-agent'), $stats['episodic_memories'] ?? 0) . '</li>';
+        echo '</ul>';
+        echo '</div>';
+        
+        // Check for changes
+        $changes = $loader->checkForChanges();
+        $hasChanges = !empty($changes['identity']) || !empty($changes['reference']);
+        
+        if ($hasChanges) {
+            echo '<div class="notice notice-warning inline">';
+            echo '<p><strong>' . esc_html__('Memory files have changed!', 'mohami-agent') . '</strong></p>';
+            if (!empty($changes['identity'])) {
+                echo '<p>' . esc_html__('Identity files: ', 'mohami-agent') . esc_html(implode(', ', $changes['identity'])) . '</p>';
+            }
+            if (!empty($changes['reference'])) {
+                echo '<p>' . esc_html__('Reference files: ', 'mohami-agent') . esc_html(implode(', ', $changes['reference'])) . '</p>';
+            }
+            echo '</div>';
+        }
+        
+        // Reload button
+        echo '<p>';
+        echo '<button type="button" id="mohami-reload-memories" class="button button-secondary">';
+        echo esc_html__('Reload All Memories', 'mohami-agent');
+        echo '</button>';
+        echo '<span id="mohami-reload-result" style="margin-left: 10px;"></span>';
+        echo '</p>';
+        
+        echo '<p class="description">';
+        echo esc_html__('This will reload all .md files from identity/ and memories/ folders into the vector database.', 'mohami-agent');
+        echo '</p>';
     }
 }
