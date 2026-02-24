@@ -121,6 +121,11 @@ class Registry {
             new InstallPluginTool(),
             new SwitchThemeTool(),
             new ManageUserTool(),
+            new CreatePluginTool(),
+            new WritePluginFileTool(),
+            new ListPluginFilesTool(),
+            new ReadPluginFileTool(),
+            new DeletePluginFileTool(),
         ];
 
         foreach ($tools as $tool) {

@@ -53,11 +53,84 @@ class SettingsPage {
             'levi_agent_general'
         );
 
+        // Model Selection
+        add_settings_field(
+            'openrouter_model',
+            __('Chat Model', 'levi-agent'),
+            [$this, 'renderModelField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
         // Rate Limiting
         add_settings_field(
             'rate_limit',
             __('Rate Limit (requests per hour)', 'levi-agent'),
             [$this, 'renderRateLimitField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'max_tool_iterations',
+            __('Max Tool Iterations per Request', 'levi-agent'),
+            [$this, 'renderMaxToolIterationsField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'history_context_limit',
+            __('History Context Messages', 'levi-agent'),
+            [$this, 'renderHistoryContextLimitField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'force_exhaustive_reads',
+            __('Force Exhaustive Reads', 'levi-agent'),
+            [$this, 'renderForceExhaustiveReadsField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'require_confirmation_destructive',
+            __('Require Confirmation for Destructive Tools', 'levi-agent'),
+            [$this, 'renderRequireConfirmationDestructiveField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'memory_identity_k',
+            __('Memory Top-K (Identity)', 'levi-agent'),
+            [$this, 'renderMemoryIdentityKField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'memory_reference_k',
+            __('Memory Top-K (Reference)', 'levi-agent'),
+            [$this, 'renderMemoryReferenceKField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'memory_episodic_k',
+            __('Memory Top-K (Episodic)', 'levi-agent'),
+            [$this, 'renderMemoryEpisodicKField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'memory_min_similarity',
+            __('Memory Min Similarity', 'levi-agent'),
+            [$this, 'renderMemoryMinSimilarityField'],
             $this->pageSlug,
             'levi_agent_general'
         );
@@ -83,7 +156,19 @@ class SettingsPage {
             $sanitized['openrouter_api_key'] = $existing['openrouter_api_key'];
         }
 
+        $allowedModels = $this->getAllowedModels();
+        $model = sanitize_text_field($input['openrouter_model'] ?? '');
+        $sanitized['openrouter_model'] = isset($allowedModels[$model]) ? $model : array_key_first($allowedModels);
+
         $sanitized['rate_limit'] = absint($input['rate_limit'] ?? 50);
+        $sanitized['max_tool_iterations'] = max(1, min(30, absint($input['max_tool_iterations'] ?? 12)));
+        $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'] ?? 50)));
+        $sanitized['force_exhaustive_reads'] = !empty($input['force_exhaustive_reads']) ? 1 : 0;
+        $sanitized['require_confirmation_destructive'] = !empty($input['require_confirmation_destructive']) ? 1 : 0;
+        $sanitized['memory_identity_k'] = max(1, min(20, absint($input['memory_identity_k'] ?? 5)));
+        $sanitized['memory_reference_k'] = max(1, min(20, absint($input['memory_reference_k'] ?? 5)));
+        $sanitized['memory_episodic_k'] = max(1, min(20, absint($input['memory_episodic_k'] ?? 4)));
+        $sanitized['memory_min_similarity'] = max(0.0, min(1.0, (float) ($input['memory_min_similarity'] ?? 0.6)));
 
         return $sanitized;
     }
@@ -120,9 +205,36 @@ class SettingsPage {
         return null;
     }
 
+    public function getAllowedModels(): array {
+        return [
+            'meta-llama/llama-3.1-70b-instruct:free' => 'Llama 3.1 70B (kostenlos)',
+            'moonshotai/kimi-k2.5' => 'Kimi K2.5 (Moonshot)',
+            'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet',
+            'openai/gpt-4o' => 'GPT-4o',
+            'google/gemini-2.0-flash-001' => 'Gemini 2.0 Flash',
+            'meta-llama/llama-3.1-70b-instruct' => 'Llama 3.1 70B (kostenpflichtig)',
+        ];
+    }
+
+    public function getModel(): string {
+        $settings = $this->getSettings();
+        $model = $settings['openrouter_model'] ?? 'meta-llama/llama-3.1-70b-instruct:free';
+        $allowed = $this->getAllowedModels();
+        return isset($allowed[$model]) ? $model : 'meta-llama/llama-3.1-70b-instruct:free';
+    }
+
     public function getSettings(): array {
         $defaults = [
+            'openrouter_model' => 'meta-llama/llama-3.1-70b-instruct:free',
             'rate_limit' => 50,
+            'max_tool_iterations' => 12,
+            'history_context_limit' => 50,
+            'force_exhaustive_reads' => 1,
+            'require_confirmation_destructive' => 1,
+            'memory_identity_k' => 5,
+            'memory_reference_k' => 5,
+            'memory_episodic_k' => 4,
+            'memory_min_similarity' => 0.6,
         ];
 
         $settings = get_option($this->optionName, []);
@@ -209,6 +321,20 @@ class SettingsPage {
         <?php
     }
 
+    public function renderModelField(): void {
+        $settings = $this->getSettings();
+        $current = $settings['openrouter_model'] ?? 'meta-llama/llama-3.1-70b-instruct:free';
+        $models = $this->getAllowedModels();
+        ?>
+        <select name="<?php echo esc_attr($this->optionName); ?>[openrouter_model]" class="regular-text">
+            <?php foreach ($models as $id => $label): ?>
+                <option value="<?php echo esc_attr($id); ?>" <?php selected($current, $id); ?>><?php echo esc_html($label); ?></option>
+            <?php endforeach; ?>
+        </select>
+        <p class="description"><?php esc_html_e('Llama 3.1 70B (kostenlos) ist Standard für Neuinstallationen. Kimi und weitere Modelle verfügbar.', 'levi-agent'); ?></p>
+        <?php
+    }
+
     public function renderRateLimitField(): void {
         $settings = $this->getSettings();
         ?>
@@ -221,6 +347,124 @@ class SettingsPage {
             class="small-text"
         >
         <p class="description">Limit API requests per user per hour to control costs.</p>
+        <?php
+    }
+
+    public function renderMaxToolIterationsField(): void {
+        $settings = $this->getSettings();
+        ?>
+        <input
+            type="number"
+            name="<?php echo esc_attr($this->optionName); ?>[max_tool_iterations]"
+            value="<?php echo esc_attr($settings['max_tool_iterations']); ?>"
+            min="1"
+            max="30"
+            class="small-text"
+        >
+        <p class="description">How many chained tool rounds Levi can run in one response.</p>
+        <?php
+    }
+
+    public function renderHistoryContextLimitField(): void {
+        $settings = $this->getSettings();
+        ?>
+        <input
+            type="number"
+            name="<?php echo esc_attr($this->optionName); ?>[history_context_limit]"
+            value="<?php echo esc_attr($settings['history_context_limit']); ?>"
+            min="10"
+            max="200"
+            class="small-text"
+        >
+        <p class="description">How many past chat messages are sent back as context.</p>
+        <?php
+    }
+
+    public function renderForceExhaustiveReadsField(): void {
+        $settings = $this->getSettings();
+        ?>
+        <label>
+            <input
+                type="checkbox"
+                name="<?php echo esc_attr($this->optionName); ?>[force_exhaustive_reads]"
+                value="1"
+                <?php checked(!empty($settings['force_exhaustive_reads'])); ?>
+            >
+            Always force full-content pagination for content analysis tasks.
+        </label>
+        <?php
+    }
+
+    public function renderRequireConfirmationDestructiveField(): void {
+        $settings = $this->getSettings();
+        ?>
+        <label>
+            <input
+                type="checkbox"
+                name="<?php echo esc_attr($this->optionName); ?>[require_confirmation_destructive]"
+                value="1"
+                <?php checked(!empty($settings['require_confirmation_destructive'])); ?>
+            >
+            Require explicit "ja/confirm" before destructive tools are executed.
+        </label>
+        <?php
+    }
+
+    public function renderMemoryIdentityKField(): void {
+        $settings = $this->getSettings();
+        ?>
+        <input
+            type="number"
+            name="<?php echo esc_attr($this->optionName); ?>[memory_identity_k]"
+            value="<?php echo esc_attr($settings['memory_identity_k']); ?>"
+            min="1"
+            max="20"
+            class="small-text"
+        >
+        <?php
+    }
+
+    public function renderMemoryReferenceKField(): void {
+        $settings = $this->getSettings();
+        ?>
+        <input
+            type="number"
+            name="<?php echo esc_attr($this->optionName); ?>[memory_reference_k]"
+            value="<?php echo esc_attr($settings['memory_reference_k']); ?>"
+            min="1"
+            max="20"
+            class="small-text"
+        >
+        <?php
+    }
+
+    public function renderMemoryEpisodicKField(): void {
+        $settings = $this->getSettings();
+        ?>
+        <input
+            type="number"
+            name="<?php echo esc_attr($this->optionName); ?>[memory_episodic_k]"
+            value="<?php echo esc_attr($settings['memory_episodic_k']); ?>"
+            min="1"
+            max="20"
+            class="small-text"
+        >
+        <?php
+    }
+
+    public function renderMemoryMinSimilarityField(): void {
+        $settings = $this->getSettings();
+        ?>
+        <input
+            type="number"
+            step="0.01"
+            name="<?php echo esc_attr($this->optionName); ?>[memory_min_similarity]"
+            value="<?php echo esc_attr($settings['memory_min_similarity']); ?>"
+            min="0"
+            max="1"
+            class="small-text"
+        >
+        <p class="description">Lower value = broader memory recall, higher value = stricter match.</p>
         <?php
     }
 

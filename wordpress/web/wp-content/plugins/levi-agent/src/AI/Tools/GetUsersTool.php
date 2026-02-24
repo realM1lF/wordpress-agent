@@ -16,8 +16,13 @@ class GetUsersTool implements ToolInterface {
         return [
             'number' => [
                 'type' => 'integer',
-                'description' => 'Number of users to retrieve (max 20)',
-                'default' => 5,
+                'description' => 'Users per page (max 200)',
+                'default' => 50,
+            ],
+            'page' => [
+                'type' => 'integer',
+                'description' => 'Pagination page number (starts at 1)',
+                'default' => 1,
             ],
             'role' => [
                 'type' => 'string',
@@ -42,9 +47,13 @@ class GetUsersTool implements ToolInterface {
     }
 
     public function execute(array $params): array {
+        $perPage = max(1, min(200, (int) ($params['number'] ?? 50)));
+        $page = max(1, (int) ($params['page'] ?? 1));
         $args = [
-            'number' => min($params['number'] ?? 5, 20),
+            'number' => $perPage,
+            'offset' => ($page - 1) * $perPage,
             'orderby' => $params['orderby'] ?? 'name',
+            'count_total' => true,
         ];
 
         if (!empty($params['role'])) {
@@ -56,7 +65,8 @@ class GetUsersTool implements ToolInterface {
             $args['search_columns'] = ['user_login', 'user_nicename', 'user_email', 'display_name'];
         }
 
-        $users = get_users($args);
+        $query = new \WP_User_Query($args);
+        $users = $query->get_results();
         $formatted = [];
 
         foreach ($users as $user) {
@@ -65,7 +75,12 @@ class GetUsersTool implements ToolInterface {
 
         return [
             'success' => true,
+            'page' => $page,
+            'per_page' => $perPage,
+            'has_more' => ($args['offset'] + count($formatted)) < (int) $query->get_total(),
+            'max_pages' => (int) ceil(((int) $query->get_total()) / $perPage),
             'count' => count($formatted),
+            'total' => (int) $query->get_total(),
             'users' => $formatted,
         ];
     }

@@ -41,16 +41,29 @@ class InstallPluginTool implements ToolInterface {
         if (!function_exists('install_plugin_install_status')) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
+        if (!class_exists('\Plugin_Upgrader')) {
+            require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+            require_once ABSPATH . 'wp-admin/includes/class-plugin-upgrader.php';
+        }
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        WP_Filesystem();
 
-        // Check if already installed
-        $installed = validate_plugin($slug);
-        if (!is_wp_error($installed)) {
-            // Already installed, maybe activate
-            if ($activate && !is_plugin_active($slug)) {
-                activate_plugin($slug);
+        // Check if already installed by slug directory
+        $installedPlugins = get_plugins('/' . $slug);
+        if (!empty($installedPlugins)) {
+            $pluginFile = $slug . '/' . array_key_first($installedPlugins);
+
+            if ($activate && !is_plugin_active($pluginFile)) {
+                $activationResult = activate_plugin($pluginFile);
+                if (is_wp_error($activationResult)) {
+                    return [
+                        'success' => false,
+                        'error' => $activationResult->get_error_message(),
+                    ];
+                }
                 return [
                     'success' => true,
-                    'plugin' => $slug,
+                    'plugin' => $pluginFile,
                     'message' => 'Plugin was already installed and is now activated.',
                 ];
             }
@@ -83,14 +96,31 @@ class InstallPluginTool implements ToolInterface {
             ];
         }
 
+        // Find installed plugin file in the slug directory
+        $installedPlugins = get_plugins('/' . $slug);
+        $pluginFile = !empty($installedPlugins) ? $slug . '/' . array_key_first($installedPlugins) : null;
+
+        if ($pluginFile === null) {
+            return [
+                'success' => false,
+                'error' => 'Plugin installed, but main file could not be determined.',
+            ];
+        }
+
         // Activate
         if ($activate) {
-            activate_plugin($slug);
+            $activationResult = activate_plugin($pluginFile);
+            if (is_wp_error($activationResult)) {
+                return [
+                    'success' => false,
+                    'error' => $activationResult->get_error_message(),
+                ];
+            }
         }
 
         return [
             'success' => true,
-            'plugin' => $slug,
+            'plugin' => $pluginFile,
             'version' => $api->version,
             'activated' => $activate,
             'message' => $activate ? 'Plugin installed and activated.' : 'Plugin installed.',

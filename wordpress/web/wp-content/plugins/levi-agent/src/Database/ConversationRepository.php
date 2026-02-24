@@ -89,15 +89,24 @@ class ConversationRepository {
     public function deleteSession(string $sessionId): bool {
         global $wpdb;
 
+        $conversationIds = $wpdb->get_col($wpdb->prepare(
+            "SELECT id FROM {$this->tableConversations} WHERE session_id = %s",
+            $sessionId
+        ));
+
+        if (!empty($conversationIds)) {
+            foreach ($conversationIds as $conversationId) {
+                $wpdb->delete(
+                    $this->tableActions,
+                    ['conversation_id' => (int) $conversationId],
+                    ['%d']
+                );
+            }
+        }
+
         $wpdb->delete(
             $this->tableConversations,
             ['session_id' => $sessionId],
-            ['%s']
-        );
-
-        $wpdb->delete(
-            $this->tableActions,
-            ['conversation_id' => $sessionId],
             ['%s']
         );
 

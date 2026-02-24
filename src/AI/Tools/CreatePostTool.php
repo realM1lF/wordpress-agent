@@ -52,7 +52,7 @@ class CreatePostTool implements ToolInterface {
     }
 
     public function checkPermission(): bool {
-        return current_user_can('publish_posts');
+        return current_user_can('edit_posts');
     }
 
     public function execute(array $params): array {
@@ -63,10 +63,19 @@ class CreatePostTool implements ToolInterface {
             ];
         }
 
+        $allowedStatuses = ['publish', 'draft', 'pending', 'private'];
+        $status = sanitize_key($params['status'] ?? 'draft');
+        if (!in_array($status, $allowedStatuses, true)) {
+            $status = 'draft';
+        }
+        if ($status === 'publish' && !current_user_can('publish_posts')) {
+            $status = 'draft';
+        }
+
         $postData = [
             'post_title'   => sanitize_text_field($params['title']),
             'post_content' => wp_kses_post($params['content']),
-            'post_status'  => sanitize_key($params['status'] ?? 'draft'),
+            'post_status'  => $status,
             'post_type'    => 'post',
             'post_author'  => get_current_user_id(),
         ];

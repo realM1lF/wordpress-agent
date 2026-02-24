@@ -84,10 +84,27 @@ class Plugin {
             LEVI_AGENT_VERSION
         );
 
+        // Same markdown rendering behavior as Mohami UI (GFM + sanitizer).
+        wp_enqueue_script(
+            'levi-marked',
+            'https://cdn.jsdelivr.net/npm/marked/marked.min.js',
+            [],
+            '13.0.3',
+            true
+        );
+
+        wp_enqueue_script(
+            'levi-dompurify',
+            'https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js',
+            [],
+            '3.1.6',
+            true
+        );
+
         wp_enqueue_script(
             'levi-agent-chat',
             LEVI_AGENT_PLUGIN_URL . 'assets/js/chat-widget.js',
-            [],
+            ['levi-marked', 'levi-dompurify'],
             LEVI_AGENT_VERSION,
             true
         );

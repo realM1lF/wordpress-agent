@@ -49,7 +49,7 @@ class ManageUserTool implements ToolInterface {
     }
 
     public function checkPermission(): bool {
-        return current_user_can('create_users') || current_user_can('edit_users');
+        return current_user_can('create_users') || current_user_can('edit_users') || current_user_can('delete_users');
     }
 
     public function execute(array $params): array {
@@ -57,10 +57,19 @@ class ManageUserTool implements ToolInterface {
 
         switch ($action) {
             case 'create':
+                if (!current_user_can('create_users')) {
+                    return ['success' => false, 'error' => 'Permission denied to create users'];
+                }
                 return $this->createUser($params);
             case 'update':
+                if (!current_user_can('edit_users')) {
+                    return ['success' => false, 'error' => 'Permission denied to update users'];
+                }
                 return $this->updateUser($params);
             case 'delete':
+                if (!current_user_can('delete_users')) {
+                    return ['success' => false, 'error' => 'Permission denied to delete users'];
+                }
                 return $this->deleteUser($params);
             default:
                 return ['success' => false, 'error' => 'Unknown action'];
@@ -118,6 +127,12 @@ class ManageUserTool implements ToolInterface {
             $userdata['user_email'] = sanitize_email($params['email']);
         }
         if (!empty($params['role'])) {
+            if (!current_user_can('promote_users')) {
+                return [
+                    'success' => false,
+                    'error' => 'Permission denied to change user roles',
+                ];
+            }
             $userdata['role'] = $params['role'];
         }
         if (!empty($params['display_name'])) {

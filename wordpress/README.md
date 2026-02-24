@@ -58,6 +58,20 @@ wordpress/web/wp-content/plugins/levi-agent -> ../../../..
 
 Nach dem Start ist das Plugin unter Plugins → Installierte Plugins zu finden und kann aktiviert werden.
 
+### Source-of-Truth Workflow
+
+Entwickle den Plugin-Code ausschließlich im Projektroot:
+
+`wordpress-agent/`
+
+Danach synchronisierst du den Stand in die Testinstanz mit:
+
+```bash
+./scripts/sync-plugin-to-wordpress.sh
+```
+
+So musst du keine Änderungen doppelt in `wordpress/...` pflegen.
+
 ## Konfiguration
 
 ### API-Key

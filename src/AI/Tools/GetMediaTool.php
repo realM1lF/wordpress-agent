@@ -16,8 +16,13 @@ class GetMediaTool implements ToolInterface {
         return [
             'number' => [
                 'type' => 'integer',
-                'description' => 'Number of media items to retrieve (max 20)',
-                'default' => 10,
+                'description' => 'Media items per page (max 200)',
+                'default' => 50,
+            ],
+            'page' => [
+                'type' => 'integer',
+                'description' => 'Pagination page number (starts at 1)',
+                'default' => 1,
             ],
             'type' => [
                 'type' => 'string',
@@ -45,10 +50,13 @@ class GetMediaTool implements ToolInterface {
     }
 
     public function execute(array $params): array {
+        $perPage = max(1, min(200, (int) ($params['number'] ?? 50)));
+        $page = max(1, (int) ($params['page'] ?? 1));
         $args = [
             'post_type' => 'attachment',
             'post_status' => 'inherit',
-            'posts_per_page' => min($params['number'] ?? 10, 20),
+            'posts_per_page' => $perPage,
+            'paged' => $page,
             'orderby' => 'date',
             'order' => 'DESC',
         ];
@@ -80,6 +88,10 @@ class GetMediaTool implements ToolInterface {
 
         return [
             'success' => true,
+            'page' => $page,
+            'per_page' => $perPage,
+            'has_more' => $query->max_num_pages > $page,
+            'max_pages' => (int) $query->max_num_pages,
             'count' => count($media),
             'total' => $query->found_posts,
             'media' => $media,

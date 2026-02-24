@@ -44,6 +44,13 @@ class DeletePostTool implements ToolInterface {
             ];
         }
 
+        if (!current_user_can('delete_post', $postId)) {
+            return [
+                'success' => false,
+                'error' => 'Permission denied to delete this post',
+            ];
+        }
+
         $title = $post->post_title;
         $result = wp_delete_post($postId, $forceDelete);
 

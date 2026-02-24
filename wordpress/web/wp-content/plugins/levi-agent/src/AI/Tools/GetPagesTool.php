@@ -9,21 +9,31 @@ class GetPagesTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get a list of WordPress pages. Can filter by status, parent, and more.';
+        return 'Get WordPress pages with optional full content. Supports pagination to fetch all pages.';
     }
 
     public function getParameters(): array {
         return [
             'number' => [
                 'type' => 'integer',
-                'description' => 'Number of pages to retrieve (max 20)',
-                'default' => 5,
+                'description' => 'Number of pages to retrieve per request (max 200)',
+                'default' => 20,
+            ],
+            'page' => [
+                'type' => 'integer',
+                'description' => 'Pagination page number (starts at 1)',
+                'default' => 1,
+            ],
+            'include_content' => [
+                'type' => 'boolean',
+                'description' => 'Include full page content in response',
+                'default' => false,
             ],
             'status' => [
                 'type' => 'string',
-                'description' => 'Page status: publish, draft, pending, private',
+                'description' => 'Page status: publish, draft, pending, private, any',
                 'enum' => ['publish', 'draft', 'pending', 'private', 'any'],
-                'default' => 'publish',
+                'default' => 'any',
             ],
             'parent' => [
                 'type' => 'integer',
@@ -49,9 +59,25 @@ class GetPagesTool implements ToolInterface {
     }
 
     public function execute(array $params): array {
+        $perPage = (int) ($params['number'] ?? 20);
+        if ($perPage < 1) {
+            $perPage = 1;
+        }
+        if ($perPage > 200) {
+            $perPage = 200;
+        }
+
+        $pageNum = (int) ($params['page'] ?? 1);
+        if ($pageNum < 1) {
+            $pageNum = 1;
+        }
+
+        $includeContent = (bool) ($params['include_content'] ?? false);
+
         $args = [
             'post_type' => 'page',
-            'posts_per_page' => min($params['number'] ?? 5, 20),
+            'posts_per_page' => $perPage,
+            'paged' => $pageNum,
             'post_status' => $params['status'] ?? 'publish',
             'orderby' => $params['orderby'] ?? 'menu_order',
             'order' => $params['order'] ?? 'ASC',
@@ -65,21 +91,24 @@ class GetPagesTool implements ToolInterface {
         $pages = [];
 
         foreach ($query->posts as $page) {
-            $pages[] = $this->formatPage($page);
+            $pages[] = $this->formatPage($page, $includeContent);
         }
 
         return [
             'success' => true,
+            'page' => $pageNum,
+            'per_page' => $perPage,
+            'has_more' => $query->max_num_pages > $pageNum,
+            'max_pages' => (int) $query->max_num_pages,
             'count' => count($pages),
             'total' => $query->found_posts,
             'pages' => $pages,
         ];
     }
 
-    private function formatPage(\WP_Post $page): array {
+    private function formatPage(\WP_Post $page, bool $includeContent): array {
         $author = get_user_by('id', $page->post_author);
-        
-        return [
+        $result = [
             'id' => $page->ID,
             'title' => $page->post_title,
             'excerpt' => wp_trim_words($page->post_content, 30),
@@ -91,5 +120,12 @@ class GetPagesTool implements ToolInterface {
             'menu_order' => $page->menu_order,
             'permalink' => get_permalink($page->ID),
         ];
+
+        if ($includeContent) {
+            $result['content'] = $page->post_content;
+            $result['content_rendered'] = apply_filters('the_content', $page->post_content);
+        }
+
+        return $result;
     }
 }

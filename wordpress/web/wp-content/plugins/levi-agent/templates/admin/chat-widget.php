@@ -6,7 +6,12 @@
     <div class="levi-chat-window" id="levi-chat-window" style="display: none;">
         <div class="levi-chat-header">
             <span class="levi-chat-title">🤖 Levi Assistant</span>
-            <button class="levi-chat-close" id="levi-chat-close">&times;</button>
+            <div class="levi-chat-header-actions">
+                <button class="levi-chat-clear" id="levi-chat-clear" title="Session löschen">
+                    <span class="dashicons dashicons-trash"></span>
+                </button>
+                <button class="levi-chat-close" id="levi-chat-close">&times;</button>
+            </div>
         </div>
         <div class="levi-chat-messages" id="levi-chat-messages">
             <div class="levi-message levi-message-assistant">

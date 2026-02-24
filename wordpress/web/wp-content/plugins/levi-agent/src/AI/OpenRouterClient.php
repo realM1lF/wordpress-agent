@@ -14,7 +14,7 @@ class OpenRouterClient {
     public function __construct() {
         $settings = new SettingsPage();
         $this->apiKey = $settings->getApiKey();
-        $this->model = 'anthropic/claude-3.5-sonnet';
+        $this->model = $settings->getModel();
     }
 
     public function isConfigured(): bool {
@@ -26,10 +26,11 @@ class OpenRouterClient {
             return new WP_Error('not_configured', 'OpenRouter API key not configured');
         }
 
+        $temperature = $this->resolveTemperature($messages);
         $payload = [
             'model' => $this->model,
             'messages' => $messages,
-            'temperature' => 0.7,
+            'temperature' => $temperature,
             'max_tokens' => 4096,
         ];
 
@@ -70,6 +71,24 @@ class OpenRouterClient {
         }
 
         return $body;
+    }
+
+    private function resolveTemperature(array $messages): float {
+        $lastUserMessage = '';
+        for ($i = count($messages) - 1; $i >= 0; $i--) {
+            if (($messages[$i]['role'] ?? '') === 'user') {
+                $lastUserMessage = (string) ($messages[$i]['content'] ?? '');
+                break;
+            }
+        }
+
+        if ($lastUserMessage === '') {
+            return 0.7;
+        }
+
+        $text = mb_strtolower($lastUserMessage);
+        $isOperationalTask = preg_match('/\b(erstell|anleg|schreib|änder|bearbeit|install|update|fix|prüf|analysier|lösch|deaktivier|aktivier)\b/u', $text) === 1;
+        return $isOperationalTask ? 0.2 : 0.7;
     }
 
     public function streamChat(array $messages, callable $onChunk): array|WP_Error {
