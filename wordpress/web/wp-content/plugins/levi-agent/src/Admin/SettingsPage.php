@@ -157,6 +157,16 @@ class SettingsPage {
         ];
 
         $settings = get_option($this->optionName, []);
+        
+        // Handle case where settings might be stored as JSON string
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        
+        if (!is_array($settings)) {
+            $settings = [];
+        }
+        
         return array_merge($defaults, $settings);
     }
 
@@ -261,7 +271,7 @@ class SettingsPage {
         echo '<p>' . esc_html__('Manage the agent\'s knowledge and memories.', 'levi-agent') . '</p>';
         
         // Show stats
-        $loader = new \Mohami\Agent\Memory\MemoryLoader();
+        $loader = new \Levi\Agent\Memory\MemoryLoader();
         $stats = $loader->getStats();
         
         echo '<div class="mohami-memory-stats">';

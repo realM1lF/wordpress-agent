@@ -45,7 +45,7 @@ class Plugin {
             wp_send_json_error('Unauthorized');
         }
         
-        $client = new \Mohami\Agent\AI\OpenRouterClient();
+        $client = new \Levi\Agent\AI\OpenRouterClient();
         $result = $client->testConnection();
         
         if (is_wp_error($result)) {
@@ -62,7 +62,7 @@ class Plugin {
             wp_send_json_error('Unauthorized');
         }
         
-        $loader = new \Mohami\Agent\Memory\MemoryLoader();
+        $loader = new \Levi\Agent\Memory\MemoryLoader();
         $results = $loader->loadAllMemories();
         
         wp_send_json_success([

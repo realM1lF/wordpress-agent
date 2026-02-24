@@ -382,7 +382,7 @@ class VectorStore {
      */
     private function getOpenAIKey(): ?string {
         // Try to get from settings (or .env for dev)
-        $settings = new \Mohami\Agent\Admin\SettingsPage();
+        $settings = new \Levi\Agent\Admin\SettingsPage();
         return $settings->getApiKey();
     }
 
