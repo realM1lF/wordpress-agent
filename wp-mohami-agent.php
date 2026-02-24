@@ -18,7 +18,27 @@ define('MOHAMI_AGENT_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('MOHAMI_AGENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 // Autoloader
-require_once MOHAMI_AGENT_PLUGIN_DIR . 'vendor/autoload.php';
+if (file_exists(MOHAMI_AGENT_PLUGIN_DIR . 'vendor/autoload.php')) {
+    require_once MOHAMI_AGENT_PLUGIN_DIR . 'vendor/autoload.php';
+} else {
+    // Fallback to manual autoloading
+    spl_autoload_register(function ($class) {
+        $prefix = 'Mohami\\Agent\\';
+        $base_dir = MOHAMI_AGENT_PLUGIN_DIR . 'src/';
+
+        $len = strlen($prefix);
+        if (strncmp($prefix, $class, $len) !== 0) {
+            return;
+        }
+
+        $relative_class = substr($class, $len);
+        $file = $base_dir . str_replace('\\', '/', $relative_class) . '.php';
+
+        if (file_exists($file)) {
+            require $file;
+        }
+    });
+}
 
 // Main Plugin Class
 use Mohami\Agent\Core\Plugin;

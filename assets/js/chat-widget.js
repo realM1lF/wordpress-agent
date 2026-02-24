@@ -108,5 +108,33 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        // Test connection button (on settings page)
+        const testBtn = document.getElementById('mohami-test-connection');
+        if (testBtn) {
+            testBtn.addEventListener('click', function() {
+                const result = document.getElementById('mohami-test-result');
+                result.textContent = ' Testing...';
+                
+                fetch(mohamiAgent.ajaxUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'action=mohami_test_connection&nonce=' + encodeURIComponent(mohamiAgent.adminNonce),
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        result.innerHTML = ' <span style="color: green;">✅ ' + (data.data.message || 'Success') + '</span>';
+                    } else {
+                        result.innerHTML = ' <span style="color: red;">❌ ' + (data.data || 'Failed') + '</span>';
+                    }
+                })
+                .catch(err => {
+                    result.innerHTML = ' <span style="color: red;">❌ Error: ' + err.message + '</span>';
+                });
+            });
+        }
     });
 })();
