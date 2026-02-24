@@ -62,10 +62,28 @@
                     session_id: sessionId,
                 }),
             })
-            .then(response => response.json())
+            .then(async response => {
+                const text = await response.text();
+                
+                // Try to parse as JSON
+                try {
+                    const data = JSON.parse(text);
+                    return data;
+                } catch (e) {
+                    // Not JSON - likely PHP error output
+                    console.error('Server returned non-JSON:', text.substring(0, 500));
+                    throw new Error('Server error: Invalid response format');
+                }
+            })
             .then(data => {
                 // Remove typing indicator
                 typing.remove();
+
+                // Check for API errors
+                if (data.error) {
+                    addMessage('❌ ' + data.error, 'assistant');
+                    return;
+                }
 
                 // Store session ID
                 if (data.session_id) {
@@ -74,11 +92,11 @@
                 }
 
                 // Add assistant response
-                addMessage(data.message, 'assistant');
+                addMessage(data.message || 'Keine Antwort erhalten', 'assistant');
             })
             .catch(error => {
                 typing.remove();
-                addMessage('Entschuldigung, es gab einen Fehler. Bitte versuche es erneut.', 'assistant');
+                addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
                 console.error('Error:', error);
             });
         }

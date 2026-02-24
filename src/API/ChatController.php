@@ -108,6 +108,18 @@ class ChatController extends WP_REST_Controller {
     }
 
     public function sendMessage(WP_REST_Request $request): WP_REST_Response {
+        try {
+            return $this->processMessage($request);
+        } catch (\Exception $e) {
+            error_log('Levi Agent Error: ' . $e->getMessage());
+            return new WP_REST_Response([
+                'error' => 'Internal error: ' . $e->getMessage(),
+                'session_id' => $request->get_param('session_id') ?? uniqid('sess_', true),
+            ], 500);
+        }
+    }
+    
+    private function processMessage(WP_REST_Request $request): WP_REST_Response {
         $message = $request->get_param('message');
         $sessionId = $request->get_param('session_id') ?? uniqid('sess_', true);
         $userId = get_current_user_id();
@@ -128,8 +140,13 @@ class ChatController extends WP_REST_Controller {
             ], 503);
         }
 
-        // Save user message
-        $this->conversationRepo->saveMessage($sessionId, $userId, 'user', $message);
+        // Save user message (wrapped in try-catch for DB errors)
+        try {
+            $this->conversationRepo->saveMessage($sessionId, $userId, 'user', $message);
+        } catch (\Exception $e) {
+            error_log('Levi DB Error: ' . $e->getMessage());
+            // Continue without saving - don't break the chat
+        }
 
         // Build conversation history
         $messages = $this->buildMessages($sessionId, $message);
@@ -158,8 +175,13 @@ class ChatController extends WP_REST_Controller {
         // Normal response (no tools)
         $assistantMessage = $messageData['content'] ?? 'Sorry, I could not generate a response.';
 
-        // Save assistant message
-        $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+        // Save assistant message (wrapped in try-catch)
+        try {
+            $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+        } catch (\Exception $e) {
+            error_log('Levi DB Error: ' . $e->getMessage());
+            // Continue without saving
+        }
 
         return new WP_REST_Response([
             'session_id' => $sessionId,
