@@ -103,6 +103,7 @@ class Registry {
      */
     private function registerDefaultTools(): void {
         $tools = [
+            // Read tools
             new GetPostsTool(),
             new GetPostTool(),
             new GetPagesTool(),
@@ -110,6 +111,11 @@ class Registry {
             new GetPluginsTool(),
             new GetOptionsTool(),
             new GetMediaTool(),
+            // Write tools (Phase 5)
+            new CreatePostTool(),
+            new UpdatePostTool(),
+            new CreatePageTool(),
+            new UpdateOptionTool(),
         ];
 
         foreach ($tools as $tool) {

@@ -315,15 +315,36 @@ levi-agent/
 
 ---
 
+## ✅ Erledigte Phasen
+
+### Phase 1: Foundation ✅
+- Plugin-Boilerplate mit PSR-4
+- Settings-Page mit API-Key Management
+- OpenRouter Integration
+- Chat-UI (Floating Widget)
+- REST API Endpoints
+- Session-Management
+
+### Phase 2: Identity System ✅
+- soul.md, rules.md, knowledge.md
+- Identity-Klasse für Persönlichkeit
+- Dynamischer Context
+
+### Phase 3: Vector Memory (SQLite) ✅
+- VectorStore mit SQLite
+- Embedding-Generierung
+- MemoryLoader für .md-Files
+- Semantische Suche
+- "Reload Memories" Button
+
+### Phase 4: Tool System (Lesen) ✅
+- 7 Tools: get_posts, get_post, get_pages, get_users, get_plugins, get_options, get_media
+- Tool Registry
+- AI kann WordPress-Daten live abfragen
+
 ## 🚀 Nächste Schritte
 
-1. ✅ Phase 1: Foundation
-2. ✅ Phase 2: Identity System
-3. ✅ Phase 3: Vector Memory
-4. ✅ Phase 4: Tool System (Lesen)
-5. **Phase 5:** Tool System (Schreiben)
+5. **Phase 5:** Tool System (Schreiben) ← JETZT
 6. **Phase 6:** Episodic Memory
 7. **Phase 7:** UI/UX Polish
 8. **Phase 8:** Testing & Release
-
-**Soll ich mit Phase 5 beginnen?**
