@@ -5,8 +5,15 @@ namespace Levi\Agent\Admin;
 class SettingsPage {
     private string $optionName = 'levi_agent_settings';
     private string $pageSlug = 'levi-agent-settings';
+    private static bool $initialized = false;
 
     public function __construct() {
+        // Prevent multiple initializations
+        if (self::$initialized) {
+            return;
+        }
+        self::$initialized = true;
+        
         add_action('admin_menu', [$this, 'addMenuPage']);
         add_action('admin_init', [$this, 'registerSettings']);
     }

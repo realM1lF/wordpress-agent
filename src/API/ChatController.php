@@ -21,8 +21,15 @@ class ChatController extends WP_REST_Controller {
     private ConversationRepository $conversationRepo;
     private SettingsPage $settings;
     private Registry $toolRegistry;
+    private static bool $initialized = false;
 
     public function __construct() {
+        // Prevent multiple initializations
+        if (self::$initialized) {
+            return;
+        }
+        self::$initialized = true;
+        
         $this->aiClient = new OpenRouterClient();
         $this->conversationRepo = new ConversationRepository();
         $this->settings = new SettingsPage();

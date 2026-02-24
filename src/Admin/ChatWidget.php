@@ -3,7 +3,15 @@
 namespace Levi\Agent\Admin;
 
 class ChatWidget {
+    private static bool $initialized = false;
+
     public function __construct() {
+        // Prevent multiple initializations
+        if (self::$initialized) {
+            return;
+        }
+        self::$initialized = true;
+        
         add_action('admin_footer', [$this, 'renderChatWidget']);
         add_action('wp_dashboard_setup', [$this, 'addDashboardWidget']);
     }
