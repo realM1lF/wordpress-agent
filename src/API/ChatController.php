@@ -7,6 +7,7 @@ use Mohami\Agent\Database\ConversationRepository;
 use Mohami\Agent\Admin\SettingsPage;
 use Mohami\Agent\Agent\Identity;
 use Mohami\Agent\Memory\VectorStore;
+use Mohami\Agent\AI\Tools\Registry;
 use WP_REST_Controller;
 use WP_REST_Server;
 use WP_REST_Request;
@@ -19,11 +20,13 @@ class ChatController extends WP_REST_Controller {
     private OpenRouterClient $aiClient;
     private ConversationRepository $conversationRepo;
     private SettingsPage $settings;
+    private Registry $toolRegistry;
 
     public function __construct() {
         $this->aiClient = new OpenRouterClient();
         $this->conversationRepo = new ConversationRepository();
         $this->settings = new SettingsPage();
+        $this->toolRegistry = new Registry();
         
         add_action('rest_api_init', [$this, 'registerRoutes']);
     }
@@ -127,8 +130,11 @@ class ChatController extends WP_REST_Controller {
         // Build conversation history
         $messages = $this->buildMessages($sessionId, $message);
 
-        // Get response from AI
-        $response = $this->aiClient->chat($messages);
+        // Get available tools
+        $tools = $this->toolRegistry->getDefinitions();
+
+        // Call AI with tools
+        $response = $this->aiClient->chat($messages, $tools);
 
         if (is_wp_error($response)) {
             return new WP_REST_Response([
@@ -137,8 +143,16 @@ class ChatController extends WP_REST_Controller {
             ], 500);
         }
 
-        // Extract assistant message
-        $assistantMessage = $response['choices'][0]['message']['content'] ?? 'Sorry, I could not generate a response.';
+        // Check if AI wants to use a tool
+        $messageData = $response['choices'][0]['message'] ?? [];
+        
+        if (isset($messageData['tool_calls']) && !empty($messageData['tool_calls'])) {
+            // AI wants to use tool(s)
+            return $this->handleToolCalls($messageData, $messages, $sessionId, $userId);
+        }
+
+        // Normal response (no tools)
+        $assistantMessage = $messageData['content'] ?? 'Sorry, I could not generate a response.';
 
         // Save assistant message
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
@@ -147,6 +161,61 @@ class ChatController extends WP_REST_Controller {
             'session_id' => $sessionId,
             'message' => $assistantMessage,
             'model' => $response['model'] ?? null,
+            'timestamp' => current_time('mysql'),
+        ], 200);
+    }
+
+    /**
+     * Handle tool calls from AI
+     */
+    private function handleToolCalls(array $messageData, array $messages, string $sessionId, int $userId): WP_REST_Response {
+        $toolCalls = $messageData['tool_calls'];
+        
+        // Add AI's tool call request to messages
+        $messages[] = $messageData;
+
+        $toolResults = [];
+
+        foreach ($toolCalls as $toolCall) {
+            $functionName = $toolCall['function']['name'] ?? '';
+            $functionArgs = json_decode($toolCall['function']['arguments'] ?? '{}', true);
+            $toolCallId = $toolCall['id'] ?? '';
+
+            // Execute tool
+            $result = $this->toolRegistry->execute($functionName, $functionArgs);
+            $toolResults[] = [
+                'tool' => $functionName,
+                'result' => $result,
+            ];
+
+            // Add tool result to conversation
+            $messages[] = [
+                'role' => 'tool',
+                'tool_call_id' => $toolCallId,
+                'content' => json_encode($result),
+            ];
+        }
+
+        // Get final response from AI with tool results
+        $finalResponse = $this->aiClient->chat($messages);
+
+        if (is_wp_error($finalResponse)) {
+            return new WP_REST_Response([
+                'error' => $finalResponse->get_error_message(),
+                'session_id' => $sessionId,
+            ], 500);
+        }
+
+        $finalMessage = $finalResponse['choices'][0]['message']['content'] ?? 'Sorry, I could not process the results.';
+
+        // Save assistant message
+        $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+
+        return new WP_REST_Response([
+            'session_id' => $sessionId,
+            'message' => $finalMessage,
+            'model' => $finalResponse['model'] ?? null,
+            'tools_used' => array_map(fn($r) => $r['tool'], $toolResults),
             'timestamp' => current_time('mysql'),
         ], 200);
     }

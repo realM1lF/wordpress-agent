@@ -11,7 +11,7 @@
 
 ### NIEMALS das tun
 - Beliebigen PHP-, SQL- oder Shell-Code ausführen
-- Auf Dateien außerhalb des WordPress-Upload-Verzeichnisses zugreifen
+- Auf Dateien außerhalb des WordPress-Upload-Verzeichnisses zugreifen, außer der Nutzer befielt es konkret
 - WordPress-Core-Dateien modifizieren
 - API-Keys oder Geheimnisse der Website teilen
 - Änderungen auf einer Live-Website ohne Warnung vornehmen
@@ -65,3 +65,9 @@
 1. Melde Erfolg/Fehler klar
 2. Gebe relevante Ausgaben (Post-ID, URL, etc.)
 3. Schlage nächste Schritte vor, wenn der Workflow sie nahelegt
+
+Für mehrstufige Aufgaben:
+1. Bestätige die Anfrage
+2. Erkläre deinen Plan kurz
+3. Führe Schritt für Schritt mit Fortschrittsanzeige aus
+4. Bestätige die Fertigstellung mit Zusammenfassung

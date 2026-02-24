@@ -1,35 +1,16 @@
-# Memories
+# WordPress Agent Memories
 
-Hier kannst du weitere Markdown-Dateien ablegen, die der Agent als Wissen nutzen soll.
+Reference files loaded into the agent's vector store for semantic search.
 
-## Wie es funktioniert
+## wordpress-lllm-developer.txt
 
-1. Lege eine `.md` Datei in diesem Ordner ab
-2. Der Agent erstellt automatisch Embeddings (Vektoren)
-3. Bei Anfragen sucht der Agent semantisch nach relevantem Inhalt
-4. Passende Inhalte werden in den Kontext der KI eingebaut
+Aggregated WordPress developer documentation (Block Editor, Themes, REST API, Common APIs, etc.).
 
-## Beispiele für Dateien
+**Update:** Run from wordpress-agent directory:
 
-- `wordpress-advanced.md` - Fortgeschrittene WordPress-Themen
-- `projekt-kontext.md` - Spezifisches Wissen über dein Projekt
-- `seo-best-practices.md` - Deine SEO-Richtlinien
-- `content-styleguide.md` - Schreibstil für deine Website
-
-## Format
-
-```markdown
-# Titel
-
-Beliebiger Markdown-Inhalt. Der Agent kann:
-- Überschriften verstehen
-- Listen parsen
-- Code-Blöcke lesen
-- Tabellen interpretieren
+```bash
+cd wordpress-agent
+python scripts/fetch_wordpress_docs.py
 ```
 
-## Wichtig
-
-- Dateien werden in Chunks aufgeteilt (ca. 500 Wörter)
-- Änderungen erfordern ein "Reload" (Button in den Einstellungen)
-- Nur `.md` Dateien werden berücksichtigt
+Then reload memories in the WordPress admin (or via the agent's memory sync).

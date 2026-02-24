@@ -72,7 +72,10 @@ class MemoryLoader {
             return ['loaded' => [], 'errors' => ['Memories directory does not exist']];
         }
 
-        $files = glob($memoriesDir . '*.md');
+        $files = array_merge(
+            glob($memoriesDir . '*.md') ?: [],
+            glob($memoriesDir . '*.txt') ?: []
+        );
         $loaded = [];
         $errors = [];
 
@@ -234,7 +237,10 @@ class MemoryLoader {
         // Check reference files
         $memoriesDir = MOHAMI_AGENT_PLUGIN_DIR . 'memories/';
         if (is_dir($memoriesDir)) {
-            $files = glob($memoriesDir . '*.md');
+            $files = array_merge(
+                glob($memoriesDir . '*.md') ?: [],
+                glob($memoriesDir . '*.txt') ?: []
+            );
             foreach ($files as $file) {
                 if (basename($file) === 'README.md') {
                     continue;
