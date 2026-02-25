@@ -42,6 +42,7 @@ if (file_exists(LEVI_AGENT_PLUGIN_DIR . 'vendor/autoload.php')) {
 
 // Main Plugin Class
 use Levi\Agent\Core\Plugin;
+use Levi\Agent\Memory\StateSnapshotService;
 
 // Ensure DB tables exist (runs before Plugin init - fixes missed activation hook)
 add_action('plugins_loaded', function() {
@@ -62,9 +63,10 @@ add_action('plugins_loaded', function() {
 register_activation_hook(__FILE__, function() {
     require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
     Levi\Agent\Database\Tables::create();
+    StateSnapshotService::scheduleEvent();
 });
 
 // Deactivation hook
 register_deactivation_hook(__FILE__, function() {
-    // Cleanup if needed
+    StateSnapshotService::unscheduleEvent();
 });

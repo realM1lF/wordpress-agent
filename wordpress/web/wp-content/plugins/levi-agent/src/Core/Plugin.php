@@ -6,6 +6,7 @@ use Levi\Agent\Admin\ChatWidget;
 use Levi\Agent\Admin\SettingsPage;
 use Levi\Agent\AI\AIClientFactory;
 use Levi\Agent\API\ChatController;
+use Levi\Agent\Memory\StateSnapshotService;
 
 class Plugin {
     private static ?self $instance = null;
@@ -28,6 +29,7 @@ class Plugin {
         
         // REST API
         new ChatController();
+        new StateSnapshotService();
         
         // Assets
         add_action('admin_enqueue_scripts', [$this, 'enqueueAssets']);

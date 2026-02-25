@@ -8,6 +8,7 @@ use Levi\Agent\Database\ConversationRepository;
 use Levi\Agent\Admin\SettingsPage;
 use Levi\Agent\Agent\Identity;
 use Levi\Agent\Memory\VectorStore;
+use Levi\Agent\Memory\StateSnapshotService;
 use Levi\Agent\AI\Tools\Registry;
 use WP_REST_Controller;
 use WP_REST_Server;
@@ -226,8 +227,10 @@ class ChatController extends WP_REST_Controller {
             // Continue without saving - don't break the chat
         }
 
-        // Build conversation history
-        $messages = $this->buildMessages($sessionId, $message);
+        $hasUploadedContext = !empty($this->getSessionUploads($sessionId, $userId));
+
+        // Build conversation history (with uploaded context by default)
+        $messages = $this->buildMessages($sessionId, $message, true);
 
         // Get available tools
         $tools = $this->toolRegistry->getDefinitions();
@@ -240,17 +243,30 @@ class ChatController extends WP_REST_Controller {
             $errMsgLower = mb_strtolower($errMsg);
             $isNoEndpointFailure = $this->isNoEndpointsError($errMsgLower);
             $isProviderFailure = str_contains($errMsgLower, 'provider') || str_contains($errMsgLower, '503');
+            $isTimeoutFailure = $this->isTimeoutError($errMsgLower);
 
             // For endpoint availability issues, always retry once without tools
             // (also for action intents), because some free endpoints reject tool mode.
             if (!empty($tools) && ($isNoEndpointFailure || ($isProviderFailure && !$this->isActionIntent($message)))) {
+                $response = $this->aiClient->chat($messages, []);
+            } elseif ($isTimeoutFailure && $hasUploadedContext) {
+                // Retry once with same history but without uploaded file context.
+                $messages = $this->buildMessages($sessionId, $message, false);
+                $response = $this->aiClient->chat($messages, $tools);
+                if (is_wp_error($response) && !empty($tools)) {
+                    // Last retry for timeout path: disable tools to reduce payload/latency.
+                    $response = $this->aiClient->chat($messages, []);
+                }
+            } elseif ($isTimeoutFailure && !empty($tools)) {
+                // Retry once without tools for slow/loaded endpoints.
                 $response = $this->aiClient->chat($messages, []);
             }
         }
 
         if (is_wp_error($response)) {
             $errMsg = $response->get_error_message();
-            $statusCode = $this->isNoEndpointsError(mb_strtolower($errMsg)) ? 503 : 500;
+            $errMsgLower = mb_strtolower($errMsg);
+            $statusCode = $this->isNoEndpointsError($errMsgLower) ? 503 : ($this->isTimeoutError($errMsgLower) ? 504 : 500);
             if ($statusCode === 503) {
                 $provider = $this->settings->getProvider();
                 $model = $this->settings->getModelForProvider($provider);
@@ -258,6 +274,8 @@ class ChatController extends WP_REST_Controller {
                     'Für das aktuell gewählte Modell sind gerade keine verfügbaren Endpoints vorhanden (%s). Bitte wechsle auf ein anderes Modell oder versuche es später erneut.',
                     $model
                 );
+            } elseif ($statusCode === 504) {
+                $errMsg = 'Die Anfrage hat beim AI-Provider zu lange gedauert (Timeout). Bitte Anfrage kürzen oder Upload-Inhalt reduzieren und erneut versuchen.';
             }
             return new WP_REST_Response([
                 'error' => $errMsg,
@@ -274,7 +292,9 @@ class ChatController extends WP_REST_Controller {
         }
 
         // Normal response (no tools)
-        $assistantMessage = $messageData['content'] ?? 'Sorry, I could not generate a response.';
+        $assistantMessage = $this->sanitizeAssistantMessageContent(
+            (string) ($messageData['content'] ?? 'Sorry, I could not generate a response.')
+        );
 
         // Save assistant message (wrapped in try-catch)
         try {
@@ -371,7 +391,7 @@ class ChatController extends WP_REST_Controller {
                 $messages[] = [
                     'role' => 'tool',
                     'tool_call_id' => $toolCallId,
-                    'content' => json_encode($result),
+                    'content' => $this->compactToolResultForModel($result),
                 ];
             }
 
@@ -379,14 +399,16 @@ class ChatController extends WP_REST_Controller {
             $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions());
             if (is_wp_error($nextResponse)) {
                 $errMsg = $nextResponse->get_error_message();
-                if ($this->isNoEndpointsError(mb_strtolower($errMsg))) {
+                $errMsgLower = mb_strtolower($errMsg);
+                if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
                     // Retry once without tool definitions to avoid tool-mode endpoint limitations.
                     $nextResponse = $this->aiClient->chat($messages, []);
                 }
             }
             if (is_wp_error($nextResponse)) {
                 $errMsg = $nextResponse->get_error_message();
-                $statusCode = $this->isNoEndpointsError(mb_strtolower($errMsg)) ? 503 : 500;
+                $errMsgLower = mb_strtolower($errMsg);
+                $statusCode = $this->isNoEndpointsError($errMsgLower) ? 503 : ($this->isTimeoutError($errMsgLower) ? 504 : 500);
                 if ($statusCode === 503) {
                     $provider = $this->settings->getProvider();
                     $model = $this->settings->getModelForProvider($provider);
@@ -394,6 +416,8 @@ class ChatController extends WP_REST_Controller {
                         'Für das aktuell gewählte Modell sind gerade keine verfügbaren Endpoints vorhanden (%s). Bitte wechsle auf ein anderes Modell oder versuche es später erneut.',
                         $model
                     );
+                } elseif ($statusCode === 504) {
+                    $errMsg = 'Die Anfrage hat beim AI-Provider zu lange gedauert (Timeout). Bitte präzisieren, in kleinere Schritte aufteilen oder erneut versuchen.';
                 }
                 return new WP_REST_Response([
                     'error' => $errMsg,
@@ -404,7 +428,9 @@ class ChatController extends WP_REST_Controller {
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
-                $finalMessage = $messageData['content'] ?? 'Sorry, I could not process the results.';
+                $finalMessage = $this->sanitizeAssistantMessageContent(
+                    (string) ($messageData['content'] ?? 'Sorry, I could not process the results.')
+                );
                 $finalMessage = $this->applyResponseSafetyGates($finalMessage, $toolResults, $taskIntent);
                 $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
@@ -431,13 +457,13 @@ class ChatController extends WP_REST_Controller {
         ], 200);
     }
 
-    private function buildMessages(string $sessionId, string $newMessage): array {
+    private function buildMessages(string $sessionId, string $newMessage, bool $includeUploadedContext = true): array {
         $messages = [];
 
         // System message with relevant memories
         $messages[] = [
             'role' => 'system',
-            'content' => $this->getSystemPrompt($newMessage, $sessionId),
+            'content' => $this->getSystemPrompt($newMessage, $sessionId, $includeUploadedContext),
         ];
 
         // History (configurable context window)
@@ -462,7 +488,7 @@ class ChatController extends WP_REST_Controller {
         return $messages;
     }
 
-    private function getSystemPrompt(string $query = '', ?string $sessionId = null): string {
+    private function getSystemPrompt(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): string {
         try {
             $identity = new Identity();
             $basePrompt = $identity->getSystemPrompt();
@@ -483,11 +509,16 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
-        if (!empty($sessionId)) {
+        if ($includeUploadedContext && !empty($sessionId)) {
             $uploadedContext = $this->buildUploadedFilesContext($sessionId, get_current_user_id());
             if ($uploadedContext !== '') {
                 $basePrompt .= "\n\n# Session File Context\n\n" . $uploadedContext;
             }
+        }
+
+        $stateBaseline = StateSnapshotService::getPromptContext();
+        if ($stateBaseline !== '') {
+            $basePrompt .= "\n\n# Daily WordPress State Baseline\n\n" . $stateBaseline;
         }
         
         return $basePrompt;
@@ -583,6 +614,12 @@ class ChatController extends WP_REST_Controller {
 
             $identityResults = $vectorStore->searchSimilar($queryEmbedding, 'identity', $identityK, $similarity);
             $referenceResults = $vectorStore->searchSimilar($queryEmbedding, 'reference', $referenceK, $similarity);
+            $stateSnapshotResults = $vectorStore->searchSimilar(
+                $queryEmbedding,
+                'state_snapshot',
+                2,
+                max(0.5, $similarity - 0.1)
+            );
             $userId = get_current_user_id();
             $episodicResults = $vectorStore->searchEpisodicMemories($queryEmbedding, $userId, $episodicK, $similarity);
             
@@ -591,6 +628,16 @@ class ChatController extends WP_REST_Controller {
             }
             if (!empty($referenceResults)) {
                 $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $referenceResults));
+            }
+            if (!empty($stateSnapshotResults)) {
+                $snapshotTexts = array_map(function ($r) {
+                    $content = (string) ($r['content'] ?? '');
+                    if (mb_strlen($content) > 1500) {
+                        $content = mb_substr($content, 0, 1500) . "\n...[truncated]";
+                    }
+                    return $content;
+                }, $stateSnapshotResults);
+                $memories[] = "## Historical System Snapshots\n" . implode("\n\n", $snapshotTexts);
             }
             if (!empty($episodicResults)) {
                 $memories[] = "## Learned Preferences\n" . implode("\n", array_map(fn($r) => $r['fact'], $episodicResults));
@@ -622,9 +669,52 @@ class ChatController extends WP_REST_Controller {
             || str_contains($errMsgLower, 'no endpoint found');
     }
 
+    private function isTimeoutError(string $errMsgLower): bool {
+        return str_contains($errMsgLower, 'curl error 28')
+            || str_contains($errMsgLower, 'operation timed out')
+            || str_contains($errMsgLower, 'timed out');
+    }
+
     private function requiresExhaustiveReadIntent(string $text): bool {
         $t = mb_strtolower($text);
-        return preg_match('/\b(alle|gesamt|komplett|vollständig|sämtlich|rechtschreibung|review|prüf|analysier)\b/u', $t) === 1;
+        return preg_match('/\b(alle|gesamt|komplett|vollständig|sämtlich|alles lesen|komplett lesen|gesamten inhalt)\b/u', $t) === 1;
+    }
+
+    private function compactToolResultForModel(array $result): string {
+        $compact = $result;
+        foreach (['posts', 'pages', 'media', 'users', 'plugins'] as $listKey) {
+            if (!isset($compact[$listKey]) || !is_array($compact[$listKey])) {
+                continue;
+            }
+            $originalCount = count($compact[$listKey]);
+            if ($originalCount > 20) {
+                $compact[$listKey] = array_slice($compact[$listKey], 0, 20);
+                $compact[$listKey . '_truncated_count'] = $originalCount - 20;
+            }
+        }
+
+        if (isset($compact['content']) && is_string($compact['content']) && mb_strlen($compact['content']) > 4000) {
+            $compact['content'] = mb_substr($compact['content'], 0, 4000) . "\n...[truncated]";
+        }
+
+        $json = wp_json_encode($compact);
+        if (!is_string($json)) {
+            return '{"success":false,"error":"Could not serialize tool result."}';
+        }
+        if (mb_strlen($json) > 12000) {
+            return mb_substr($json, 0, 12000) . '...[truncated]';
+        }
+        return $json;
+    }
+
+    private function sanitizeAssistantMessageContent(string $text): string {
+        $clean = $text;
+        // Strip leaked tool protocol tokens from some provider responses.
+        $clean = preg_replace('/<\|tool_calls_section_begin\|>[\s\S]*$/u', '', $clean) ?? $clean;
+        $clean = preg_replace('/<\|[^|>]+?\|>/u', '', $clean) ?? $clean;
+        $clean = preg_replace('/(?:^|\R)\s*functions\.[a-z0-9_]+\s*:\s*\d+[\s\S]*$/iu', '', $clean) ?? $clean;
+        $clean = trim((string) preg_replace('/\R{3,}/u', "\n\n", $clean));
+        return $clean !== '' ? $clean : 'Keine Antwort erhalten.';
     }
 
     private function normalizeToolArgumentsForIntent(string $toolName, array $args, string $latestUserMessage): array {
@@ -1095,8 +1185,8 @@ class ChatController extends WP_REST_Controller {
             return ['success' => false, 'error' => sprintf('Could not read file: %s', $name)];
         }
 
-        // Keep context bounded for prompt stability.
-        $content = mb_substr($content, 0, 20000);
+        // Keep context bounded for prompt stability and provider latency.
+        $content = mb_substr($content, 0, 12000);
         $preview = mb_substr(trim($content), 0, 280);
 
         return [
@@ -1120,7 +1210,7 @@ class ChatController extends WP_REST_Controller {
         }
 
         $parts = [];
-        $remainingBudget = 30000;
+        $remainingBudget = 12000;
         foreach ($files as $file) {
             if (!is_array($file)) {
                 continue;
@@ -1131,7 +1221,7 @@ class ChatController extends WP_REST_Controller {
             if ($content === '' || $remainingBudget <= 0) {
                 continue;
             }
-            $chunk = mb_substr($content, 0, min(12000, $remainingBudget));
+            $chunk = mb_substr($content, 0, min(4000, $remainingBudget));
             $remainingBudget -= mb_strlen($chunk);
             $parts[] = "## File: {$name} ({$type})\n" . $chunk;
         }

@@ -96,15 +96,33 @@ class CreatePluginTool implements ToolInterface {
         $pluginDir = trailingslashit(WP_PLUGIN_DIR) . $slug;
         $mainFile = $pluginDir . '/' . $slug . '.php';
         $pluginBasename = $slug . '/' . $slug . '.php';
+        $filesystem = $this->getFilesystem();
+        if ($filesystem === null) {
+            return [
+                'success' => false,
+                'error' => 'WordPress filesystem is not available.',
+            ];
+        }
+        $hadMainFile = $filesystem->exists($mainFile);
+        $previousMainContent = null;
+        if ($hadMainFile) {
+            $previousMainContent = $filesystem->get_contents($mainFile);
+            if (!is_string($previousMainContent)) {
+                return [
+                    'success' => false,
+                    'error' => 'Could not read existing main plugin file for safety backup.',
+                ];
+            }
+        }
 
-        if (!is_dir($pluginDir) && !wp_mkdir_p($pluginDir)) {
+        if (!$filesystem->is_dir($pluginDir) && !$filesystem->mkdir($pluginDir, FS_CHMOD_DIR, true)) {
             return [
                 'success' => false,
                 'error' => 'Could not create plugin directory.',
             ];
         }
 
-        if (file_exists($mainFile) && !$overwrite) {
+        if ($filesystem->exists($mainFile) && !$overwrite) {
             return [
                 'success' => false,
                 'error' => 'Main plugin file already exists. Set overwrite=true to replace it.',
@@ -128,15 +146,27 @@ class CreatePluginTool implements ToolInterface {
             . "    // Plugin bootstrapped by Levi Agent.\n"
             . "});\n";
 
-        if (file_put_contents($mainFile, $pluginContent) === false) {
+        if (!$filesystem->put_contents($mainFile, $pluginContent, FS_CHMOD_FILE)) {
             return [
                 'success' => false,
-                'error' => 'Could not write main plugin file.',
+                'error' => 'Could not write main plugin file via WordPress filesystem.',
+            ];
+        }
+        $lint = $this->validatePhpSyntax($mainFile);
+        if (($lint['valid'] ?? false) !== true) {
+            if ($hadMainFile && is_string($previousMainContent)) {
+                $filesystem->put_contents($mainFile, $previousMainContent, FS_CHMOD_FILE);
+            } else {
+                $filesystem->delete($mainFile, false, 'f');
+            }
+            return [
+                'success' => false,
+                'error' => 'Create reverted: PHP syntax check failed for main plugin file. ' . ($lint['error'] ?? 'Unknown lint error.'),
             ];
         }
 
         $readme = "# {$name}\n\n{$description}\n";
-        @file_put_contents($pluginDir . '/README.md', $readme);
+        $filesystem->put_contents($pluginDir . '/README.md', $readme, FS_CHMOD_FILE);
 
         $activated = false;
         if ($activate) {
@@ -152,7 +182,7 @@ class CreatePluginTool implements ToolInterface {
             $activated = true;
         }
 
-        return [
+        $result = [
             'success' => true,
             'slug' => $slug,
             'plugin_file' => $pluginBasename,
@@ -162,5 +192,51 @@ class CreatePluginTool implements ToolInterface {
                 ? 'Plugin scaffold created and activated.'
                 : 'Plugin scaffold created.',
         ];
+        if (!empty($lint['warning'])) {
+            $result['warning'] = $lint['warning'];
+        }
+        return $result;
+    }
+
+    private function validatePhpSyntax(string $path): array {
+        if (strtolower((string) pathinfo($path, PATHINFO_EXTENSION)) !== 'php') {
+            return ['valid' => true];
+        }
+
+        if (!function_exists('exec')) {
+            return [
+                'valid' => true,
+                'warning' => 'PHP lint skipped (exec unavailable).',
+            ];
+        }
+
+        $output = [];
+        $exitCode = 0;
+        @exec('php -l ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
+        if ($exitCode !== 0) {
+            return [
+                'valid' => false,
+                'error' => trim(implode("\n", $output)) ?: 'PHP lint failed.',
+            ];
+        }
+
+        return ['valid' => true];
+    }
+
+    private function getFilesystem(): ?\WP_Filesystem_Base {
+        if (!function_exists('WP_Filesystem')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+
+        if (!WP_Filesystem()) {
+            return null;
+        }
+
+        global $wp_filesystem;
+        if (!($wp_filesystem instanceof \WP_Filesystem_Base)) {
+            return null;
+        }
+
+        return $wp_filesystem;
     }
 }

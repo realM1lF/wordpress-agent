@@ -17,6 +17,7 @@ class SettingsPage {
         add_action('admin_menu', [$this, 'addMenuPage']);
         add_action('admin_init', [$this, 'registerSettings']);
         add_action('wp_ajax_levi_repair_database', [$this, 'ajaxRepairDatabase']);
+        add_action('wp_ajax_levi_run_state_snapshot', [$this, 'ajaxRunStateSnapshot']);
     }
 
     public function addMenuPage(): void {
@@ -81,7 +82,7 @@ class SettingsPage {
         // Rate Limiting
         add_settings_field(
             'rate_limit',
-            __('Rate Limit (requests per hour)', 'levi-agent'),
+            __('Rate Limit (Anfragen pro Stunde)', 'levi-agent'),
             [$this, 'renderRateLimitField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -89,7 +90,7 @@ class SettingsPage {
 
         add_settings_field(
             'max_tool_iterations',
-            __('Max Tool Iterations per Request', 'levi-agent'),
+            __('Max. Tool-Iterationen pro Anfrage', 'levi-agent'),
             [$this, 'renderMaxToolIterationsField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -97,7 +98,7 @@ class SettingsPage {
 
         add_settings_field(
             'history_context_limit',
-            __('History Context Messages', 'levi-agent'),
+            __('Nachrichten im Verlaufskontext', 'levi-agent'),
             [$this, 'renderHistoryContextLimitField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -105,7 +106,7 @@ class SettingsPage {
 
         add_settings_field(
             'force_exhaustive_reads',
-            __('Force Exhaustive Reads', 'levi-agent'),
+            __('Vollständige Inhaltsanalyse erzwingen', 'levi-agent'),
             [$this, 'renderForceExhaustiveReadsField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -113,7 +114,7 @@ class SettingsPage {
 
         add_settings_field(
             'require_confirmation_destructive',
-            __('Require Confirmation for Destructive Tools', 'levi-agent'),
+            __('Bestätigung für destruktive Tools erzwingen', 'levi-agent'),
             [$this, 'renderRequireConfirmationDestructiveField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -121,7 +122,7 @@ class SettingsPage {
 
         add_settings_field(
             'memory_identity_k',
-            __('Memory Top-K (Identity)', 'levi-agent'),
+            __('Memory Top-K (Identität)', 'levi-agent'),
             [$this, 'renderMemoryIdentityKField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -129,7 +130,7 @@ class SettingsPage {
 
         add_settings_field(
             'memory_reference_k',
-            __('Memory Top-K (Reference)', 'levi-agent'),
+            __('Memory Top-K (Referenz)', 'levi-agent'),
             [$this, 'renderMemoryReferenceKField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -137,7 +138,7 @@ class SettingsPage {
 
         add_settings_field(
             'memory_episodic_k',
-            __('Memory Top-K (Episodic)', 'levi-agent'),
+            __('Memory Top-K (Episodisch)', 'levi-agent'),
             [$this, 'renderMemoryEpisodicKField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -145,7 +146,7 @@ class SettingsPage {
 
         add_settings_field(
             'memory_min_similarity',
-            __('Memory Min Similarity', 'levi-agent'),
+            __('Memory Mindest-Ähnlichkeit', 'levi-agent'),
             [$this, 'renderMemoryMinSimilarityField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -531,7 +532,7 @@ class SettingsPage {
             max="1000"
             class="small-text"
         >
-        <p class="description">Limit API requests per user per hour to control costs.</p>
+        <p class="description">Begrenzt API-Anfragen pro Benutzer und Stunde, um Kosten zu kontrollieren.</p>
         <?php
     }
 
@@ -546,7 +547,7 @@ class SettingsPage {
             max="30"
             class="small-text"
         >
-        <p class="description">How many chained tool rounds Levi can run in one response.</p>
+        <p class="description">Legt fest, wie viele aufeinanderfolgende Tool-Runden Levi in einer Antwort ausführen darf.</p>
         <?php
     }
 
@@ -561,7 +562,7 @@ class SettingsPage {
             max="200"
             class="small-text"
         >
-        <p class="description">How many past chat messages are sent back as context.</p>
+        <p class="description">Bestimmt, wie viele frühere Chat-Nachrichten als Kontext mitgesendet werden.</p>
         <?php
     }
 
@@ -575,7 +576,7 @@ class SettingsPage {
                 value="1"
                 <?php checked(!empty($settings['force_exhaustive_reads'])); ?>
             >
-            Always force full-content pagination for content analysis tasks.
+            Erzwingt bei Analyse-Aufgaben das vollständige Lesen von Inhalten über alle Seiten/Abschnitte hinweg.
         </label>
         <?php
     }
@@ -590,7 +591,7 @@ class SettingsPage {
                 value="1"
                 <?php checked(!empty($settings['require_confirmation_destructive'])); ?>
             >
-            Require explicit "ja/confirm" before destructive tools are executed.
+            Verlangt eine explizite Bestätigung ("ja/confirm"), bevor potenziell destruktive Tools ausgeführt werden.
         </label>
         <?php
     }
@@ -649,19 +650,19 @@ class SettingsPage {
             max="1"
             class="small-text"
         >
-        <p class="description">Lower value = broader memory recall, higher value = stricter match.</p>
+        <p class="description">Niedriger Wert = breitere Erinnerungssuche, höherer Wert = strengere Treffer.</p>
         <?php
     }
 
     public function renderMemorySection(): void {
-        echo '<p>' . esc_html__('Manage the agent\'s knowledge and memories.', 'levi-agent') . '</p>';
+        echo '<p>' . esc_html__('Verwalte das Wissen und die Erinnerungen des Agenten.', 'levi-agent') . '</p>';
         
         // Show stats
         $loader = new \Levi\Agent\Memory\MemoryLoader();
         $stats = $loader->getStats();
         
         echo '<div class="mohami-memory-stats">';
-        echo '<h4>' . esc_html__('Memory Statistics', 'levi-agent') . '</h4>';
+        echo '<h4>' . esc_html__('Memory-Statistiken', 'levi-agent') . '</h4>';
         echo '<ul>';
         echo '<li>' . sprintf(esc_html__('Identity Vectors: %d', 'levi-agent'), $stats['identity_vectors'] ?? 0) . '</li>';
         echo '<li>' . sprintf(esc_html__('Reference Vectors: %d', 'levi-agent'), $stats['reference_vectors'] ?? 0) . '</li>';
@@ -696,6 +697,24 @@ class SettingsPage {
         echo '<p class="description">';
         echo esc_html__('This will reload all .md files from identity/ and memories/ folders into the vector database.', 'levi-agent');
         echo '</p>';
+
+        $snapshotMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMeta();
+        $snapshotStatus = (string) ($snapshotMeta['status'] ?? 'not_run');
+        $snapshotCapturedAt = (string) ($snapshotMeta['captured_at'] ?? '-');
+
+        echo '<hr style="margin:16px 0;">';
+        echo '<h4>' . esc_html__('WordPress/Plugin-Index (Daily Snapshot)', 'levi-agent') . '</h4>';
+        echo '<p style="margin:0 0 8px 0;">' . esc_html(sprintf('Letzter Stand: %s | Status: %s', $snapshotCapturedAt, $snapshotStatus)) . '</p>';
+        echo '<p>';
+        echo '<button type="button" id="levi-run-state-snapshot" class="button button-secondary">';
+        echo esc_html__('Indexierung jetzt ausführen', 'levi-agent');
+        echo '</button>';
+        echo '<span id="levi-state-snapshot-result" style="margin-left: 10px;"></span>';
+        echo '</p>';
+        echo '<div id="levi-state-snapshot-progress-wrap" style="display:none;max-width:420px;height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;">';
+        echo '<div id="levi-state-snapshot-progress" style="width:0%;height:100%;background:#2563eb;transition:width .25s ease;"></div>';
+        echo '</div>';
+        echo '<p class="description">' . esc_html__('Erfasst WordPress- und Plugin-Stand und speichert Änderungen im Langzeitgedächtnis.', 'levi-agent') . '</p>';
     }
 
     public function ajaxRepairDatabase(): void {
@@ -709,5 +728,20 @@ class SettingsPage {
         Levi\Agent\Database\Tables::create();
 
         wp_send_json_success(['message' => __('Database tables created successfully.', 'levi-agent')]);
+    }
+
+    public function ajaxRunStateSnapshot(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $service = new \Levi\Agent\Memory\StateSnapshotService();
+        $meta = $service->runManualSync();
+        wp_send_json_success([
+            'message' => __('Indexierung abgeschlossen.', 'levi-agent'),
+            'meta' => $meta,
+        ]);
     }
 }

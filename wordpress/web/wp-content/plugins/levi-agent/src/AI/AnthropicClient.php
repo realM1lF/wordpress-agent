@@ -9,7 +9,7 @@ class AnthropicClient implements AIClientInterface {
     private const API_BASE = 'https://api.anthropic.com/v1';
     private ?string $apiKey;
     private string $model;
-    private int $timeout = 60;
+    private int $timeout = 120;
 
     public function __construct() {
         $settings = new SettingsPage();
@@ -43,7 +43,18 @@ class AnthropicClient implements AIClientInterface {
         }
 
         $statusCode = wp_remote_retrieve_response_code($response);
-        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $rawBody = wp_remote_retrieve_body($response);
+        $body = json_decode($rawBody, true);
+        if (!is_array($body)) {
+            return new WP_Error(
+                'api_error',
+                'Anthropic returned an invalid response format.',
+                [
+                    'status' => $statusCode,
+                    'raw_body_excerpt' => mb_substr(trim((string) $rawBody), 0, 400),
+                ]
+            );
+        }
         if ($statusCode !== 200) {
             $errorMessage = $body['error']['message'] ?? $body['error']['type'] ?? 'Unknown error';
             error_log(sprintf('Levi Anthropic Error [%d]: %s', $statusCode, $errorMessage));

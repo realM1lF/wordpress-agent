@@ -73,26 +73,22 @@ class VectorStore {
     }
 
     /**
-     * Generate embedding via OpenAI API
+     * Generate embedding via configured provider (OpenRouter/OpenAI).
      */
     public function generateEmbedding(string $text): array|WP_Error {
-        $apiKey = $this->getOpenAIKey();
-        
-        if (!$apiKey) {
-            return new WP_Error('no_api_key', 'OpenAI API key not configured');
+        $config = $this->getEmbeddingRequestConfig();
+        if (is_wp_error($config)) {
+            return $config;
         }
 
         // Trim text to token limit (approx 8000 chars for 2000 tokens)
         $text = substr($text, 0, 8000);
 
-        $response = wp_remote_post('https://api.openai.com/v1/embeddings', [
-            'headers' => [
-                'Authorization' => 'Bearer ' . $apiKey,
-                'Content-Type' => 'application/json',
-            ],
+        $response = wp_remote_post($config['endpoint'], [
+            'headers' => $config['headers'],
             'body' => json_encode([
                 'input' => $text,
-                'model' => $this->embeddingModel,
+                'model' => $config['model'],
             ]),
             'timeout' => 30,
         ]);
@@ -104,7 +100,7 @@ class VectorStore {
         $statusCode = wp_remote_retrieve_response_code($response);
         if ($statusCode !== 200) {
             $body = json_decode(wp_remote_retrieve_body($response), true);
-            $error = $body['error']['message'] ?? 'Embedding generation failed';
+            $error = $body['error']['message'] ?? ('Embedding generation failed (' . $config['provider'] . ')');
             return new WP_Error('embedding_failed', $error);
         }
 
@@ -313,6 +309,37 @@ class VectorStore {
     }
 
     /**
+     * Keep only the latest N vectors for a memory type.
+     */
+    public function pruneMemoryType(string $memoryType, int $keepLatest = 60): bool {
+        if ($keepLatest <= 0) {
+            return $this->clearMemory($memoryType);
+        }
+
+        try {
+            $stmt = $this->db->prepare('
+                DELETE FROM memory_vectors
+                WHERE memory_type = :memory_type
+                  AND id NOT IN (
+                    SELECT id
+                    FROM memory_vectors
+                    WHERE memory_type = :memory_type_inner
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT :keep_latest
+                  )
+            ');
+            $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
+            $stmt->bindValue(':memory_type_inner', $memoryType, SQLITE3_TEXT);
+            $stmt->bindValue(':keep_latest', $keepLatest, SQLITE3_INTEGER);
+            $stmt->execute();
+            return true;
+        } catch (\Exception $e) {
+            error_log('VectorStore prune error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Check if file was already loaded (by hash)
      */
     public function isFileLoaded(string $filePath, string $fileHash): bool {
@@ -378,16 +405,47 @@ class VectorStore {
     }
 
     /**
-     * Get OpenAI API key
+     * Build embedding request config from current settings.
      */
-    private function getOpenAIKey(): ?string {
-        // Try to get from settings (or .env for dev)
+    private function getEmbeddingRequestConfig(): array|WP_Error {
         $settings = new \Levi\Agent\Admin\SettingsPage();
-        $openAiKey = $settings->getApiKeyForProvider('openai');
-        if ($openAiKey) {
-            return $openAiKey;
+        $provider = $settings->getProvider();
+        $apiKey = $settings->getApiKeyForProvider($provider);
+
+        if (!$apiKey) {
+            return new WP_Error('no_api_key', sprintf('Kein API-Key für den ausgewählten Provider (%s) hinterlegt.', $provider));
         }
-        return $settings->getApiKey();
+
+        // Anthropic does not provide a compatible embeddings endpoint in this plugin.
+        if ($provider === 'anthropic') {
+            return new WP_Error(
+                'embedding_provider_unsupported',
+                'Embeddings werden aktuell für OpenRouter und OpenAI unterstützt. Bitte Provider auf OpenRouter/OpenAI stellen oder Embeddings separat konfigurieren.'
+            );
+        }
+
+        $endpoint = $provider === 'openrouter'
+            ? 'https://openrouter.ai/api/v1/embeddings'
+            : 'https://api.openai.com/v1/embeddings';
+        $model = $provider === 'openrouter'
+            ? 'openai/text-embedding-3-small'
+            : $this->embeddingModel;
+
+        $headers = [
+            'Authorization' => 'Bearer ' . $apiKey,
+            'Content-Type' => 'application/json',
+        ];
+        if ($provider === 'openrouter') {
+            $headers['HTTP-Referer'] = home_url('/');
+            $headers['X-Title'] = 'Levi AI Agent';
+        }
+
+        return [
+            'provider' => $provider,
+            'endpoint' => $endpoint,
+            'model' => $model,
+            'headers' => $headers,
+        ];
     }
 
     public function __destruct() {

@@ -58,9 +58,14 @@ class DeletePluginFileTool implements ToolInterface {
             return ['success' => false, 'error' => 'Resolved path is outside plugin directory.'];
         }
 
-        $deleted = @unlink($targetPathReal);
+        $filesystem = $this->getFilesystem();
+        if ($filesystem === null) {
+            return ['success' => false, 'error' => 'WordPress filesystem is not available.'];
+        }
+
+        $deleted = $filesystem->delete($targetPathReal, false, 'f');
         if (!$deleted) {
-            return ['success' => false, 'error' => 'Could not delete file.'];
+            return ['success' => false, 'error' => 'Could not delete file via WordPress filesystem.'];
         }
 
         return [
@@ -69,5 +74,22 @@ class DeletePluginFileTool implements ToolInterface {
             'relative_path' => $relativePath,
             'message' => 'Plugin file deleted.',
         ];
+    }
+
+    private function getFilesystem(): ?\WP_Filesystem_Base {
+        if (!function_exists('WP_Filesystem')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+
+        if (!WP_Filesystem()) {
+            return null;
+        }
+
+        global $wp_filesystem;
+        if (!($wp_filesystem instanceof \WP_Filesystem_Base)) {
+            return null;
+        }
+
+        return $wp_filesystem;
     }
 }

@@ -102,6 +102,7 @@
         if (clearFilesBtn) {
             clearFilesBtn.addEventListener('click', clearSessionFiles);
         }
+        updateClearFilesButton();
 
         // Send message on button click
         send.addEventListener('click', sendMessage);
@@ -123,8 +124,10 @@
             addMessage(text, 'user');
             input.value = '';
 
+            const taskMode = inferTaskMode(text);
             // Show typing indicator
-            const typing = addTypingIndicator();
+            const typing = addTypingIndicator(taskMode);
+            const phaseTimers = scheduleTypingPhases(typing, taskMode);
             setSendingState(true);
 
             // Send to API
@@ -155,17 +158,14 @@
             })
             .then(data => {
                 // Remove typing indicator
-                typing.remove();
+                clearPhaseTimers(phaseTimers);
+                typing.complete();
                 setSendingState(false);
 
                 // Check for API errors
                 if (data.error) {
                     addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
                     return;
-                }
-
-                if (Array.isArray(data.execution_trace) && data.execution_trace.length > 0) {
-                    addMessage(formatExecutionTrace(data.execution_trace), 'assistant');
                 }
 
                 // Store session ID
@@ -175,9 +175,11 @@
                 }
 
                 // Add assistant response
-                addMessage(data.message || 'Keine Antwort erhalten', 'assistant');
+                const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
+                addMessage(cleanedMessage, 'assistant');
             })
             .catch(error => {
+                clearPhaseTimers(phaseTimers);
                 typing.remove();
                 setSendingState(false);
                 addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
@@ -297,7 +299,13 @@
                     }
                 });
             });
+            updateClearFilesButton();
             updateContextHint();
+        }
+
+        function updateClearFilesButton() {
+            if (!clearFilesBtn) return;
+            clearFilesBtn.style.display = uploadedFiles.length > 0 ? 'inline-flex' : 'none';
         }
 
         function updateContextHint() {
@@ -496,32 +504,96 @@
             });
         }
 
-        function addTypingIndicator() {
+        function addTypingIndicator(taskMode) {
             const typingDiv = document.createElement('div');
             typingDiv.className = 'levi-message levi-message-assistant';
-            typingDiv.innerHTML = 
+            typingDiv.innerHTML =
                 '<div class="levi-message-content levi-typing">' +
+                '<div class="levi-typing-row">' +
                 '<span></span><span></span><span></span>' +
-                '<small style="margin-left:8px;color:#6c7781;">Levi arbeitet an Teilaufgaben...</small>' +
+                '<small class="levi-typing-label"></small>' +
+                '</div>' +
+                '<div class="levi-chat-progress-track"><div class="levi-chat-progress-fill"></div></div>' +
                 '</div>';
             messages.appendChild(typingDiv);
             messages.scrollTop = messages.scrollHeight;
-            return typingDiv;
+
+            const labelEl = typingDiv.querySelector('.levi-typing-label');
+            const progressFillEl = typingDiv.querySelector('.levi-chat-progress-fill');
+            let progress = 6;
+            let intervalId = null;
+
+            const setLabel = (label) => {
+                if (labelEl) {
+                    labelEl.textContent = label;
+                }
+            };
+
+            const setProgress = (next) => {
+                progress = Math.max(0, Math.min(100, next));
+                if (progressFillEl) {
+                    progressFillEl.style.width = progress + '%';
+                }
+            };
+
+            setLabel(getTypingLabel(taskMode, 'start'));
+            setProgress(progress);
+
+            intervalId = setInterval(() => {
+                setProgress(Math.min(90, progress + 3));
+            }, 420);
+
+            return {
+                setLabel,
+                complete: () => {
+                    if (intervalId) {
+                        clearInterval(intervalId);
+                        intervalId = null;
+                    }
+                    setProgress(100);
+                    setTimeout(() => typingDiv.remove(), 180);
+                },
+                remove: () => {
+                    if (intervalId) {
+                        clearInterval(intervalId);
+                        intervalId = null;
+                    }
+                    typingDiv.remove();
+                },
+            };
         }
 
-        function formatExecutionTrace(trace) {
-            const relevant = trace.filter(t => t && (t.status === 'completed' || t.status === 'failed')).slice(-6);
-            const summaryParts = relevant.map((t, idx) => {
-                const icon = t.status === 'completed' ? '✓' : '✗';
-                const label = t.status === 'completed' ? 'fertig' : 'Problem';
-                return icon + ' Schritt ' + (idx + 1) + ' (' + (t.tool || 'tool') + '): ' + (t.summary || label);
-            });
-
-            if (relevant.length === 0) {
-                return '🔧 Keine auswertbaren Teilaufgaben im Trace gefunden.';
+        function inferTaskMode(text) {
+            const t = String(text || '').toLowerCase();
+            if (/\b(code|plugin|php|javascript|js|css|datei|funktion|implement|bugfix|refactor)\b/.test(t)) {
+                return 'code';
             }
+            if (/\b(rechtschreibung|analyse|prüf|review|durchsuch|korrigier)\b/.test(t)) {
+                return 'analysis';
+            }
+            return 'write';
+        }
 
-            return '🔧 Zwischenstand:\n' + summaryParts.join('\n');
+        function getTypingLabel(taskMode, phase) {
+            if (taskMode === 'code') {
+                return phase === 'final' ? 'Levi finalisiert Code...' : 'Levi codet...';
+            }
+            if (taskMode === 'analysis') {
+                return phase === 'final' ? 'Levi fasst Ergebnisse zusammen...' : 'Levi analysiert...';
+            }
+            return phase === 'final' ? 'Levi finalisiert Antwort...' : 'Levi schreibt...';
+        }
+
+        function scheduleTypingPhases(typing, taskMode) {
+            return [
+                setTimeout(() => typing.setLabel('Levi arbeitet...'), 2200),
+                setTimeout(() => typing.setLabel(getTypingLabel(taskMode, 'final')), 5200),
+            ];
+        }
+
+        function clearPhaseTimers(timerIds) {
+            if (!Array.isArray(timerIds)) return;
+            timerIds.forEach((id) => clearTimeout(id));
         }
 
         function formatApiError(message, httpStatus) {
@@ -575,6 +647,16 @@
             }
 
             return fallbackPlainText(source);
+        }
+
+        function sanitizeAssistantMessage(message) {
+            let cleaned = String(message || '');
+            // Remove leaked tool protocol tokens from provider responses.
+            cleaned = cleaned.replace(/<\|tool_calls_section_begin\|>[\s\S]*$/gi, '');
+            cleaned = cleaned.replace(/<\|[^|>]+?\|>/g, '');
+            cleaned = cleaned.replace(/(?:^|\n)\s*functions\.[a-z0-9_]+\s*:\s*\d+[\s\S]*$/i, '');
+            cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+            return cleaned || 'Keine Antwort erhalten';
         }
 
         function fallbackPlainText(text) {
@@ -677,6 +759,60 @@
                 })
                 .catch(err => {
                     reloadBtn.disabled = false;
+                    result.innerHTML = ' <span style="color: red;">❌ Error: ' + err.message + '</span>';
+                });
+            });
+        }
+
+        // Manual WordPress/plugin indexing (state snapshot) with progress indicator
+        const runSnapshotBtn = document.getElementById('levi-run-state-snapshot');
+        if (runSnapshotBtn) {
+            runSnapshotBtn.addEventListener('click', function() {
+                const result = document.getElementById('levi-state-snapshot-result');
+                const progressWrap = document.getElementById('levi-state-snapshot-progress-wrap');
+                const progressBar = document.getElementById('levi-state-snapshot-progress');
+                if (!result || !progressWrap || !progressBar) {
+                    return;
+                }
+
+                runSnapshotBtn.disabled = true;
+                result.textContent = ' Indexierung läuft...';
+                progressWrap.style.display = 'block';
+                progressBar.style.width = '6%';
+
+                let progress = 6;
+                const timer = setInterval(() => {
+                    progress = Math.min(92, progress + 7);
+                    progressBar.style.width = progress + '%';
+                }, 450);
+
+                fetch(leviAgent.ajaxUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'action=levi_run_state_snapshot&nonce=' + encodeURIComponent(leviAgent.adminNonce),
+                })
+                .then(r => r.json())
+                .then(data => {
+                    clearInterval(timer);
+                    runSnapshotBtn.disabled = false;
+                    progressBar.style.width = '100%';
+
+                    if (data.success) {
+                        const meta = data?.data?.meta || {};
+                        const capturedAt = meta.captured_at || '-';
+                        const status = meta.status || 'unknown';
+                        result.innerHTML = ' <span style="color: green;">✅ ' + (data.data.message || 'Done') + ' (' + capturedAt + ', ' + status + ')</span>';
+                        setTimeout(() => { location.reload(); }, 1200);
+                    } else {
+                        result.innerHTML = ' <span style="color: red;">❌ ' + (data.data || 'Failed') + '</span>';
+                    }
+                })
+                .catch(err => {
+                    clearInterval(timer);
+                    runSnapshotBtn.disabled = false;
+                    progressBar.style.width = '100%';
                     result.innerHTML = ' <span style="color: red;">❌ Error: ' + err.message + '</span>';
                 });
             });

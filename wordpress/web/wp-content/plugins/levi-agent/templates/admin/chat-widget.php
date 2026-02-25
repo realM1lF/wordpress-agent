@@ -5,7 +5,7 @@
     </button>
     <div class="levi-chat-window" id="levi-chat-window" style="display: none;">
         <div class="levi-chat-header">
-            <span class="levi-chat-title">🤖 Levi Assistant</span>
+            <span class="levi-chat-title">🤖 Levi Assistant <span class="levi-chat-alpha-badge">ALPHA</span></span>
             <div class="levi-chat-header-actions">
                 <button class="levi-chat-expand" id="levi-chat-expand" title="Full Width">
                     <span class="dashicons dashicons-editor-expand"></span>
@@ -30,7 +30,7 @@
                     <span class="dashicons dashicons-paperclip"></span>
                     <span>Datei</span>
                 </button>
-                <button id="levi-chat-clear-files-btn" class="levi-chat-clear-files-btn" type="button" title="Uploads aus Kontext entfernen">
+                <button id="levi-chat-clear-files-btn" class="levi-chat-clear-files-btn" type="button" title="Uploads aus Kontext entfernen" style="display: none;">
                     <span class="dashicons dashicons-dismiss"></span>
                     <span>Uploads löschen</span>
                 </button>

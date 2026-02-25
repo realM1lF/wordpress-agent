@@ -91,20 +91,97 @@ class WritePluginFileTool implements ToolInterface {
             ];
         }
 
-        $bytes = file_put_contents($targetPath, $content);
-        if ($bytes === false) {
+        $filesystem = $this->getFilesystem();
+        if ($filesystem === null) {
             return [
                 'success' => false,
-                'error' => 'Could not write file content.',
+                'error' => 'WordPress filesystem is not available.',
             ];
         }
+        $hadExistingFile = $filesystem->exists($targetPath);
+        $previousContent = null;
+        if ($hadExistingFile) {
+            $previousContent = $filesystem->get_contents($targetPath);
+            if (!is_string($previousContent)) {
+                return [
+                    'success' => false,
+                    'error' => 'Could not read existing file content for safety backup.',
+                ];
+            }
+        }
+        $written = $filesystem->put_contents($targetPath, $content, FS_CHMOD_FILE);
+        if (!$written) {
+            return [
+                'success' => false,
+                'error' => 'Could not write file content via WordPress filesystem.',
+            ];
+        }
+        $lint = $this->validatePhpSyntax($targetPath);
+        if (($lint['valid'] ?? false) !== true) {
+            if ($hadExistingFile && is_string($previousContent)) {
+                $filesystem->put_contents($targetPath, $previousContent, FS_CHMOD_FILE);
+            } else {
+                $filesystem->delete($targetPath, false, 'f');
+            }
+            return [
+                'success' => false,
+                'error' => 'Write reverted: PHP syntax check failed. ' . ($lint['error'] ?? 'Unknown lint error.'),
+            ];
+        }
+        $bytes = strlen($content);
 
-        return [
+        $result = [
             'success' => true,
             'plugin_slug' => $slug,
             'relative_path' => $relativePath,
             'bytes_written' => $bytes,
             'message' => 'Plugin file written successfully.',
         ];
+        if (!empty($lint['warning'])) {
+            $result['warning'] = $lint['warning'];
+        }
+        return $result;
+    }
+
+    private function getFilesystem(): ?\WP_Filesystem_Base {
+        if (!function_exists('WP_Filesystem')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+
+        if (!WP_Filesystem()) {
+            return null;
+        }
+
+        global $wp_filesystem;
+        if (!($wp_filesystem instanceof \WP_Filesystem_Base)) {
+            return null;
+        }
+
+        return $wp_filesystem;
+    }
+
+    private function validatePhpSyntax(string $path): array {
+        if (strtolower((string) pathinfo($path, PATHINFO_EXTENSION)) !== 'php') {
+            return ['valid' => true];
+        }
+
+        if (!function_exists('exec')) {
+            return [
+                'valid' => true,
+                'warning' => 'PHP lint skipped (exec unavailable).',
+            ];
+        }
+
+        $output = [];
+        $exitCode = 0;
+        @exec('php -l ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
+        if ($exitCode !== 0) {
+            return [
+                'valid' => false,
+                'error' => trim(implode("\n", $output)) ?: 'PHP lint failed.',
+            ];
+        }
+
+        return ['valid' => true];
     }
 }
