@@ -383,6 +383,10 @@ class VectorStore {
     private function getOpenAIKey(): ?string {
         // Try to get from settings (or .env for dev)
         $settings = new \Levi\Agent\Admin\SettingsPage();
+        $openAiKey = $settings->getApiKeyForProvider('openai');
+        if ($openAiKey) {
+            return $openAiKey;
+        }
         return $settings->getApiKey();
     }
 

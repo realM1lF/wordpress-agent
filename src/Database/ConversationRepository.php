@@ -31,6 +31,24 @@ class ConversationRepository {
         return $result ? $wpdb->insert_id : 0;
     }
 
+    /**
+     * Get the user_id of the first message in a session (session owner).
+     * Returns null if session is empty.
+     */
+    public function getSessionOwnerId(string $sessionId): ?int {
+        global $wpdb;
+
+        $ownerId = $wpdb->get_var($wpdb->prepare(
+            "SELECT user_id FROM {$this->tableConversations} 
+             WHERE session_id = %s 
+             ORDER BY created_at ASC 
+             LIMIT 1",
+            $sessionId
+        ));
+
+        return $ownerId !== null ? (int) $ownerId : null;
+    }
+
     public function getHistory(string $sessionId, int $limit = 50): array {
         global $wpdb;
 

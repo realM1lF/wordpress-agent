@@ -4,6 +4,7 @@ namespace Levi\Agent\Core;
 
 use Levi\Agent\Admin\ChatWidget;
 use Levi\Agent\Admin\SettingsPage;
+use Levi\Agent\AI\AIClientFactory;
 use Levi\Agent\API\ChatController;
 
 class Plugin {
@@ -45,7 +46,8 @@ class Plugin {
             wp_send_json_error('Unauthorized');
         }
         
-        $client = new \Levi\Agent\AI\OpenRouterClient();
+        $settings = new SettingsPage();
+        $client = AIClientFactory::create($settings->getProvider());
         $result = $client->testConnection();
         
         if (is_wp_error($result)) {

@@ -5,7 +5,7 @@ namespace Levi\Agent\AI;
 use Levi\Agent\Admin\SettingsPage;
 use WP_Error;
 
-class OpenRouterClient {
+class OpenRouterClient implements AIClientInterface {
     private const API_BASE = 'https://openrouter.ai/api/v1';
     private ?string $apiKey;
     private string $model;
@@ -13,8 +13,8 @@ class OpenRouterClient {
 
     public function __construct() {
         $settings = new SettingsPage();
-        $this->apiKey = $settings->getApiKey();
-        $this->model = $settings->getModel();
+        $this->apiKey = $settings->getApiKeyForProvider('openrouter');
+        $this->model = $settings->getModelForProvider('openrouter');
     }
 
     public function isConfigured(): bool {
@@ -62,10 +62,9 @@ class OpenRouterClient {
             $errorMessage = $body['error']['message'] ?? $body['error']['code'] ?? 'Unknown error';
             $metadata = $body['error']['metadata'] ?? [];
             error_log(sprintf(
-                'Levi OpenRouter Error [%d]: %s | Body: %s',
+                'Levi OpenRouter Error [%d]: %s',
                 $statusCode,
-                $errorMessage,
-                substr($rawBody, 0, 500)
+                $errorMessage
             ));
             return new WP_Error('api_error', $errorMessage, ['status' => $statusCode, 'metadata' => $metadata]);
         }

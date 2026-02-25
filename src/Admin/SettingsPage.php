@@ -44,10 +44,26 @@ class SettingsPage {
             $this->pageSlug
         );
 
+        add_settings_field(
+            'ai_provider',
+            __('AI Provider', 'levi-agent'),
+            [$this, 'renderProviderField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
+        add_settings_field(
+            'ai_auth_method',
+            __('Authentication Method', 'levi-agent'),
+            [$this, 'renderAuthMethodField'],
+            $this->pageSlug,
+            'levi_agent_general'
+        );
+
         // API Key Field
         add_settings_field(
-            'openrouter_api_key',
-            __('OpenRouter API Key', 'levi-agent'),
+            'provider_api_key',
+            __('Provider API Key', 'levi-agent'),
             [$this, 'renderApiKeyField'],
             $this->pageSlug,
             'levi_agent_general'
@@ -55,7 +71,7 @@ class SettingsPage {
 
         // Model Selection
         add_settings_field(
-            'openrouter_model',
+            'provider_model',
             __('Chat Model', 'levi-agent'),
             [$this, 'renderModelField'],
             $this->pageSlug,
@@ -148,17 +164,41 @@ class SettingsPage {
         $sanitized = [];
         $existing = get_option($this->optionName, []);
 
-        // API Key - plain text, no encryption (fixes save/load issues)
-        $newKey = isset($input['openrouter_api_key']) ? trim($input['openrouter_api_key']) : '';
-        if ($newKey !== '') {
-            $sanitized['openrouter_api_key'] = sanitize_text_field($newKey);
-        } elseif (!empty($existing['openrouter_api_key'])) {
-            $sanitized['openrouter_api_key'] = $existing['openrouter_api_key'];
+        $provider = sanitize_key($input['ai_provider'] ?? ($existing['ai_provider'] ?? 'openrouter'));
+        $providers = $this->getProviderLabels();
+        if (!isset($providers[$provider])) {
+            $provider = 'openrouter';
+        }
+        $sanitized['ai_provider'] = $provider;
+
+        $authMethod = sanitize_key($input['ai_auth_method'] ?? ($existing['ai_auth_method'] ?? 'api_key'));
+        $authOptions = $this->getAuthMethodOptions($provider);
+        if (!isset($authOptions[$authMethod])) {
+            $authMethod = array_key_first($authOptions);
+        }
+        $sanitized['ai_auth_method'] = $authMethod;
+
+        // Keep existing keys if no replacement is entered.
+        $keyFields = ['openrouter_api_key', 'openai_api_key', 'anthropic_api_key'];
+        foreach ($keyFields as $keyField) {
+            $newKey = isset($input[$keyField]) ? trim((string) $input[$keyField]) : '';
+            if ($newKey !== '') {
+                $sanitized[$keyField] = sanitize_text_field($newKey);
+            } elseif (!empty($existing[$keyField])) {
+                $sanitized[$keyField] = $existing[$keyField];
+            }
         }
 
-        $allowedModels = $this->getAllowedModels();
-        $model = sanitize_text_field($input['openrouter_model'] ?? '');
-        $sanitized['openrouter_model'] = isset($allowedModels[$model]) ? $model : array_key_first($allowedModels);
+        $modelFields = [
+            'openrouter' => 'openrouter_model',
+            'openai' => 'openai_model',
+            'anthropic' => 'anthropic_model',
+        ];
+        foreach ($modelFields as $modelProvider => $settingKey) {
+            $allowedModels = $this->getAllowedModelsForProvider($modelProvider);
+            $candidate = sanitize_text_field($input[$settingKey] ?? ($existing[$settingKey] ?? ''));
+            $sanitized[$settingKey] = isset($allowedModels[$candidate]) ? $candidate : array_key_first($allowedModels);
+        }
 
         $sanitized['rate_limit'] = absint($input['rate_limit'] ?? 50);
         $sanitized['max_tool_iterations'] = max(1, min(30, absint($input['max_tool_iterations'] ?? 12)));
@@ -173,20 +213,74 @@ class SettingsPage {
         return $sanitized;
     }
 
+    public function getProviderLabels(): array {
+        return [
+            'openrouter' => 'OpenRouter',
+            'openai' => 'OpenAI',
+            'anthropic' => 'Anthropic',
+        ];
+    }
+
+    public function getProvider(): string {
+        $settings = $this->getSettings();
+        $provider = sanitize_key((string) ($settings['ai_provider'] ?? 'openrouter'));
+        $labels = $this->getProviderLabels();
+        return isset($labels[$provider]) ? $provider : 'openrouter';
+    }
+
+    public function getAuthMethodOptions(string $provider): array {
+        return match ($provider) {
+            'openrouter' => [
+                'api_key' => __('API Key', 'levi-agent'),
+                'oauth' => __('Login via OpenRouter (OAuth, coming soon)', 'levi-agent'),
+            ],
+            'anthropic' => [
+                'api_key' => __('API Key (Pay-as-you-go)', 'levi-agent'),
+                'subscription_token' => __('Subscription Token (sk-ant-oat-*)', 'levi-agent'),
+            ],
+            default => [
+                'api_key' => __('API Key', 'levi-agent'),
+            ],
+        };
+    }
+
+    public function getAuthMethod(): string {
+        $settings = $this->getSettings();
+        $provider = $this->getProvider();
+        $method = sanitize_key((string) ($settings['ai_auth_method'] ?? 'api_key'));
+        $options = $this->getAuthMethodOptions($provider);
+        return isset($options[$method]) ? $method : array_key_first($options);
+    }
+
     public function getApiKey(): ?string {
-        $envKey = $this->getApiKeyFromEnv();
+        return $this->getApiKeyForProvider($this->getProvider());
+    }
+
+    public function getApiKeyForProvider(string $provider): ?string {
+        $envVar = match ($provider) {
+            'openai' => 'OPENAI_API_KEY',
+            'anthropic' => 'ANTHROPIC_API_KEY',
+            default => 'OPEN_ROUTER_API_KEY',
+        };
+
+        $envKey = $this->getApiKeyFromEnvVar($envVar);
         if ($envKey) {
             return $envKey;
         }
 
-        $settings = get_option($this->optionName);
-        $key = $settings['openrouter_api_key'] ?? '';
+        $settings = $this->getSettings();
+        $settingKey = match ($provider) {
+            'openai' => 'openai_api_key',
+            'anthropic' => 'anthropic_api_key',
+            default => 'openrouter_api_key',
+        };
+        $key = $settings[$settingKey] ?? '';
         $key = is_string($key) ? trim($key) : '';
 
         return $key !== '' ? $key : null;
     }
 
-    private function getApiKeyFromEnv(): ?string {
+    private function getApiKeyFromEnvVar(string $envVar): ?string {
         $possiblePaths = [
             dirname(ABSPATH) . '/.env',
             dirname(dirname(ABSPATH)) . '/.env',
@@ -194,11 +288,15 @@ class SettingsPage {
         ];
 
         foreach ($possiblePaths as $envPath) {
-            if (file_exists($envPath)) {
-                $content = file_get_contents($envPath);
-                if (preg_match('/OPEN_ROUTER_API_KEY=(.+)/', $content, $matches)) {
-                    return trim($matches[1]);
-                }
+            if (!file_exists($envPath)) {
+                continue;
+            }
+            $content = file_get_contents($envPath);
+            if (!is_string($content)) {
+                continue;
+            }
+            if (preg_match('/^' . preg_quote($envVar, '/') . '=(.+)$/m', $content, $matches)) {
+                return trim($matches[1]);
             }
         }
 
@@ -206,26 +304,59 @@ class SettingsPage {
     }
 
     public function getAllowedModels(): array {
-        return [
-            'meta-llama/llama-3.1-70b-instruct:free' => 'Llama 3.1 70B (kostenlos)',
-            'moonshotai/kimi-k2.5' => 'Kimi K2.5 (Moonshot)',
-            'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet',
-            'openai/gpt-4o' => 'GPT-4o',
-            'google/gemini-2.0-flash-001' => 'Gemini 2.0 Flash',
-            'meta-llama/llama-3.1-70b-instruct' => 'Llama 3.1 70B (kostenpflichtig)',
-        ];
+        return $this->getAllowedModelsForProvider($this->getProvider());
+    }
+
+    public function getAllowedModelsForProvider(string $provider): array {
+        return match ($provider) {
+            'openai' => [
+                'gpt-4o-mini' => 'GPT-4o Mini (günstig)',
+                'gpt-4o' => 'GPT-4o',
+                'gpt-4.1-mini' => 'GPT-4.1 Mini',
+                'gpt-4.1' => 'GPT-4.1',
+            ],
+            'anthropic' => [
+                'claude-3-5-haiku-20241022' => 'Claude 3.5 Haiku',
+                'claude-3-5-sonnet-20241022' => 'Claude 3.5 Sonnet',
+                'claude-3-opus-20240229' => 'Claude 3 Opus',
+            ],
+            default => [
+                'meta-llama/llama-3.1-70b-instruct:free' => 'Llama 3.1 70B (kostenlos)',
+                'moonshotai/kimi-k2.5' => 'Kimi K2.5 (Moonshot)',
+                'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet',
+                'openai/gpt-4o' => 'GPT-4o',
+                'google/gemini-2.0-flash-001' => 'Gemini 2.0 Flash',
+                'meta-llama/llama-3.1-70b-instruct' => 'Llama 3.1 70B (kostenpflichtig)',
+            ],
+        };
     }
 
     public function getModel(): string {
+        return $this->getModelForProvider($this->getProvider());
+    }
+
+    public function getModelForProvider(string $provider): string {
         $settings = $this->getSettings();
-        $model = $settings['openrouter_model'] ?? 'meta-llama/llama-3.1-70b-instruct:free';
-        $allowed = $this->getAllowedModels();
-        return isset($allowed[$model]) ? $model : 'meta-llama/llama-3.1-70b-instruct:free';
+        $settingKey = match ($provider) {
+            'openai' => 'openai_model',
+            'anthropic' => 'anthropic_model',
+            default => 'openrouter_model',
+        };
+        $allowed = $this->getAllowedModelsForProvider($provider);
+        $model = (string) ($settings[$settingKey] ?? array_key_first($allowed));
+        return isset($allowed[$model]) ? $model : array_key_first($allowed);
     }
 
     public function getSettings(): array {
         $defaults = [
+            'ai_provider' => 'openrouter',
+            'ai_auth_method' => 'api_key',
+            'openrouter_api_key' => '',
+            'openai_api_key' => '',
+            'anthropic_api_key' => '',
             'openrouter_model' => 'meta-llama/llama-3.1-70b-instruct:free',
+            'openai_model' => 'gpt-4o-mini',
+            'anthropic_model' => 'claude-3-5-sonnet-20241022',
             'rate_limit' => 50,
             'max_tool_iterations' => 12,
             'history_context_limit' => 50,
@@ -250,17 +381,19 @@ class SettingsPage {
 
     public function renderPage(): void {
         $settings = $this->getSettings();
-        $apiKeyStatus = $this->getApiKey() ? 'configured' : 'missing';
+        $provider = $this->getProvider();
+        $providerLabel = $this->getProviderLabels()[$provider] ?? ucfirst($provider);
+        $apiKeyStatus = $this->getApiKeyForProvider($provider) ? 'configured' : 'missing';
         ?>
         <div class="wrap">
             <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
             
             <div class="notice notice-<?php echo $apiKeyStatus === 'configured' ? 'success' : 'warning'; ?>">
                 <p>
-                    <strong>API Key Status:</strong> 
+                    <strong><?php echo esc_html($providerLabel); ?> Status:</strong>
                     <?php echo $apiKeyStatus === 'configured' 
-                        ? '✅ OpenRouter API Key is configured' 
-                        : '⚠️ Please configure your OpenRouter API Key'; ?>
+                        ? '✅ Connection credentials are configured'
+                        : '⚠️ Please configure authentication credentials'; ?>
                 </p>
             </div>
 
@@ -289,7 +422,7 @@ class SettingsPage {
             
             <h2>Test Connection</h2>
             <button type="button" id="levi-test-connection" class="button button-secondary">
-                Test OpenRouter Connection
+                Test Provider Connection
             </button>
             <span id="levi-test-result"></span>
         </div>
@@ -297,41 +430,93 @@ class SettingsPage {
     }
 
     public function renderGeneralSection(): void {
-        echo '<p>' . esc_html__('Configure your AI assistant settings.', 'levi-agent') . '</p>';
+        echo '<p>' . esc_html__('Configure provider, authentication, and model. Then test the connection.', 'levi-agent') . '</p>';
+    }
+
+    public function renderProviderField(): void {
+        $settings = $this->getSettings();
+        $current = $settings['ai_provider'] ?? 'openrouter';
+        $providers = $this->getProviderLabels();
+        ?>
+        <select name="<?php echo esc_attr($this->optionName); ?>[ai_provider]" class="regular-text">
+            <?php foreach ($providers as $id => $label): ?>
+                <option value="<?php echo esc_attr($id); ?>" <?php selected($current, $id); ?>><?php echo esc_html($label); ?></option>
+            <?php endforeach; ?>
+        </select>
+        <p class="description"><?php esc_html_e('OpenRouter is easiest for most users. OpenAI and Anthropic can be configured directly.', 'levi-agent'); ?></p>
+        <?php
+    }
+
+    public function renderAuthMethodField(): void {
+        $provider = $this->getProvider();
+        $current = $this->getAuthMethod();
+        $options = $this->getAuthMethodOptions($provider);
+        ?>
+        <select name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" class="regular-text">
+            <?php foreach ($options as $id => $label): ?>
+                <option value="<?php echo esc_attr($id); ?>" <?php selected($current, $id); ?>><?php echo esc_html($label); ?></option>
+            <?php endforeach; ?>
+        </select>
+        <p class="description">
+            <?php if ($provider === 'openai'): ?>
+                <?php esc_html_e('OpenAI API requires API keys. ChatGPT Plus/Pro subscriptions do not include API access.', 'levi-agent'); ?>
+            <?php elseif ($provider === 'anthropic'): ?>
+                <?php esc_html_e('Anthropic supports API keys and subscription-style tokens (sk-ant-oat-*).', 'levi-agent'); ?>
+            <?php else: ?>
+                <?php esc_html_e('OpenRouter supports API keys. OAuth login flow can be added later.', 'levi-agent'); ?>
+            <?php endif; ?>
+        </p>
+        <?php
     }
 
     public function renderApiKeyField(): void {
         $settings = $this->getSettings();
-        $hasKey = !empty(trim($settings['openrouter_api_key'] ?? ''));
+        $provider = $this->getProvider();
+        $settingKey = $provider === 'openai' ? 'openai_api_key' : ($provider === 'anthropic' ? 'anthropic_api_key' : 'openrouter_api_key');
+        $hasKey = !empty(trim((string) ($settings[$settingKey] ?? '')));
+        $placeholder = $provider === 'openai' ? 'sk-...' : ($provider === 'anthropic' ? 'sk-ant-...' : 'sk-or-v1-...');
+        $helpUrl = $provider === 'openai'
+            ? 'https://platform.openai.com/api-keys'
+            : ($provider === 'anthropic' ? 'https://console.anthropic.com/settings/keys' : 'https://openrouter.ai/keys');
         ?>
         <input 
             type="password" 
-            name="<?php echo esc_attr($this->optionName); ?>[openrouter_api_key]" 
+            name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($settingKey); ?>]" 
             value="" 
             class="regular-text"
-            placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : 'sk-or-v1-...'; ?>"
+            placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : esc_attr($placeholder); ?>"
             autocomplete="new-password"
         >
         <p class="description">
             <?php if ($hasKey): ?>
                 <?php esc_html_e('API Key is saved. Enter a new key to replace it.', 'levi-agent'); ?>
             <?php endif; ?>
-            <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a>
+            <a href="<?php echo esc_url($helpUrl); ?>" target="_blank"><?php echo esc_html(preg_replace('#^https?://#', '', $helpUrl)); ?></a>
         </p>
         <?php
     }
 
     public function renderModelField(): void {
         $settings = $this->getSettings();
-        $current = $settings['openrouter_model'] ?? 'meta-llama/llama-3.1-70b-instruct:free';
-        $models = $this->getAllowedModels();
+        $provider = $this->getProvider();
+        $settingKey = $provider === 'openai' ? 'openai_model' : ($provider === 'anthropic' ? 'anthropic_model' : 'openrouter_model');
+        $models = $this->getAllowedModelsForProvider($provider);
+        $current = (string) ($settings[$settingKey] ?? array_key_first($models));
         ?>
-        <select name="<?php echo esc_attr($this->optionName); ?>[openrouter_model]" class="regular-text">
+        <select name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($settingKey); ?>]" class="regular-text">
             <?php foreach ($models as $id => $label): ?>
                 <option value="<?php echo esc_attr($id); ?>" <?php selected($current, $id); ?>><?php echo esc_html($label); ?></option>
             <?php endforeach; ?>
         </select>
-        <p class="description"><?php esc_html_e('Llama 3.1 70B (kostenlos) ist Standard für Neuinstallationen. Kimi und weitere Modelle verfügbar.', 'levi-agent'); ?></p>
+        <p class="description">
+            <?php if ($provider === 'openrouter'): ?>
+                <?php esc_html_e('Default for new installs: Llama 3.1 70B (kostenlos).', 'levi-agent'); ?>
+            <?php elseif ($provider === 'openai'): ?>
+                <?php esc_html_e('Recommended default: GPT-4o Mini for cost/performance.', 'levi-agent'); ?>
+            <?php else: ?>
+                <?php esc_html_e('Recommended default: Claude 3.5 Sonnet.', 'levi-agent'); ?>
+            <?php endif; ?>
+        </p>
         <?php
     }
 

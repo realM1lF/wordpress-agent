@@ -2,7 +2,8 @@
 
 namespace Levi\Agent\API;
 
-use Levi\Agent\AI\OpenRouterClient;
+use Levi\Agent\AI\AIClientFactory;
+use Levi\Agent\AI\AIClientInterface;
 use Levi\Agent\Database\ConversationRepository;
 use Levi\Agent\Admin\SettingsPage;
 use Levi\Agent\Agent\Identity;
@@ -17,7 +18,7 @@ use WP_Error;
 class ChatController extends WP_REST_Controller {
     protected $namespace = 'levi-agent/v1';
     protected $rest_base = 'chat';
-    private OpenRouterClient $aiClient;
+    private AIClientInterface $aiClient;
     private ConversationRepository $conversationRepo;
     private SettingsPage $settings;
     private Registry $toolRegistry;
@@ -30,9 +31,9 @@ class ChatController extends WP_REST_Controller {
         }
         self::$initialized = true;
         
-        $this->aiClient = new OpenRouterClient();
-        $this->conversationRepo = new ConversationRepository();
         $this->settings = new SettingsPage();
+        $this->aiClient = AIClientFactory::create($this->settings->getProvider());
+        $this->conversationRepo = new ConversationRepository();
         $this->toolRegistry = new Registry();
         
         add_action('rest_api_init', [$this, 'register_routes']);
@@ -161,6 +162,17 @@ class ChatController extends WP_REST_Controller {
         $sessionId = $request->get_param('session_id') ?? $this->generateSessionId();
         $userId = get_current_user_id();
 
+        // Session ownership: if reusing existing session, verify it belongs to current user
+        if ($sessionId !== null) {
+            $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
+            if ($ownerId !== null && $ownerId !== $userId && !current_user_can('manage_options')) {
+                return new WP_REST_Response([
+                    'error' => 'Session not found or access denied.',
+                    'session_id' => $sessionId,
+                ], 403);
+            }
+        }
+
         // Check rate limit
         if (!$this->checkRateLimit($userId)) {
             return new WP_REST_Response([
@@ -172,7 +184,7 @@ class ChatController extends WP_REST_Controller {
         // Check if AI is configured
         if (!$this->aiClient->isConfigured()) {
             return new WP_REST_Response([
-                'error' => 'AI not configured. Please set up your OpenRouter API key in Settings.',
+                'error' => 'AI not configured. Please set up provider credentials in Settings.',
                 'session_id' => $sessionId,
             ], 503);
         }
@@ -196,18 +208,32 @@ class ChatController extends WP_REST_Controller {
 
         if (is_wp_error($response)) {
             $errMsg = $response->get_error_message();
-            // Retry without tools on provider/routing errors (often tool-related)
-            $isProviderFailure = str_contains($errMsg, 'Provider') || str_contains($errMsg, 'provider') || str_contains($errMsg, '503');
-            if (!empty($tools) && $isProviderFailure && !$this->isActionIntent($message)) {
+            $errMsgLower = mb_strtolower($errMsg);
+            $isNoEndpointFailure = $this->isNoEndpointsError($errMsgLower);
+            $isProviderFailure = str_contains($errMsgLower, 'provider') || str_contains($errMsgLower, '503');
+
+            // For endpoint availability issues, always retry once without tools
+            // (also for action intents), because some free endpoints reject tool mode.
+            if (!empty($tools) && ($isNoEndpointFailure || ($isProviderFailure && !$this->isActionIntent($message)))) {
                 $response = $this->aiClient->chat($messages, []);
             }
         }
 
         if (is_wp_error($response)) {
+            $errMsg = $response->get_error_message();
+            $statusCode = $this->isNoEndpointsError(mb_strtolower($errMsg)) ? 503 : 500;
+            if ($statusCode === 503) {
+                $provider = $this->settings->getProvider();
+                $model = $this->settings->getModelForProvider($provider);
+                $errMsg = sprintf(
+                    'Für das aktuell gewählte Modell sind gerade keine verfügbaren Endpoints vorhanden (%s). Bitte wechsle auf ein anderes Modell oder versuche es später erneut.',
+                    $model
+                );
+            }
             return new WP_REST_Response([
-                'error' => $response->get_error_message(),
+                'error' => $errMsg,
                 'session_id' => $sessionId,
-            ], 500);
+            ], $statusCode);
         }
 
         // Check if AI wants to use a tool
@@ -323,11 +349,28 @@ class ChatController extends WP_REST_Controller {
             // Ask model again with tool outputs (include tool definitions for further tool rounds)
             $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions());
             if (is_wp_error($nextResponse)) {
+                $errMsg = $nextResponse->get_error_message();
+                if ($this->isNoEndpointsError(mb_strtolower($errMsg))) {
+                    // Retry once without tool definitions to avoid tool-mode endpoint limitations.
+                    $nextResponse = $this->aiClient->chat($messages, []);
+                }
+            }
+            if (is_wp_error($nextResponse)) {
+                $errMsg = $nextResponse->get_error_message();
+                $statusCode = $this->isNoEndpointsError(mb_strtolower($errMsg)) ? 503 : 500;
+                if ($statusCode === 503) {
+                    $provider = $this->settings->getProvider();
+                    $model = $this->settings->getModelForProvider($provider);
+                    $errMsg = sprintf(
+                        'Für das aktuell gewählte Modell sind gerade keine verfügbaren Endpoints vorhanden (%s). Bitte wechsle auf ein anderes Modell oder versuche es später erneut.',
+                        $model
+                    );
+                }
                 return new WP_REST_Response([
-                    'error' => $nextResponse->get_error_message(),
+                    'error' => $errMsg,
                     'session_id' => $sessionId,
                     'execution_trace' => $executionTrace,
-                ], 500);
+                ], $statusCode);
             }
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
@@ -538,6 +581,11 @@ class ChatController extends WP_REST_Controller {
         return $score >= 1;
     }
 
+    private function isNoEndpointsError(string $errMsgLower): bool {
+        return str_contains($errMsgLower, 'no endpoints found')
+            || str_contains($errMsgLower, 'no endpoint found');
+    }
+
     private function requiresExhaustiveReadIntent(string $text): bool {
         $t = mb_strtolower($text);
         return preg_match('/\b(alle|gesamt|komplett|vollständig|sämtlich|rechtschreibung|review|prüf|analysier)\b/u', $t) === 1;
@@ -698,6 +746,17 @@ class ChatController extends WP_REST_Controller {
 
     public function getHistory(WP_REST_Request $request): WP_REST_Response {
         $sessionId = $request->get_param('session_id');
+        $currentUserId = get_current_user_id();
+
+        // Session ownership: only owner or admin may read history
+        $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
+        if ($ownerId !== null && $ownerId !== $currentUserId && !current_user_can('manage_options')) {
+            return new WP_REST_Response([
+                'error' => 'Session not found or access denied.',
+                'session_id' => $sessionId,
+            ], 403);
+        }
+
         $messages = $this->conversationRepo->getHistory($sessionId);
 
         return new WP_REST_Response([
