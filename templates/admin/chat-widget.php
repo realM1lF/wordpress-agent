@@ -7,6 +7,9 @@
         <div class="levi-chat-header">
             <span class="levi-chat-title">🤖 Levi Assistant</span>
             <div class="levi-chat-header-actions">
+                <button class="levi-chat-expand" id="levi-chat-expand" title="Full Width">
+                    <span class="dashicons dashicons-editor-expand"></span>
+                </button>
                 <button class="levi-chat-clear" id="levi-chat-clear" title="Session löschen">
                     <span class="dashicons dashicons-trash"></span>
                 </button>
@@ -22,15 +25,31 @@
             </div>
         </div>
         <div class="levi-chat-input-area">
-            <textarea 
-                id="levi-chat-input" 
-                class="levi-chat-input" 
-                placeholder="Schreib eine Nachricht..."
-                rows="2"
-            ></textarea>
-            <button id="levi-chat-send" class="levi-chat-send">
-                <span class="dashicons dashicons-arrow-right-alt2"></span>
-            </button>
+            <div class="levi-chat-upload-row">
+                <button id="levi-chat-upload-btn" class="levi-chat-upload-btn" type="button" title="Datei hochladen (.txt, .md)">
+                    <span class="dashicons dashicons-paperclip"></span>
+                    <span>Datei</span>
+                </button>
+                <button id="levi-chat-clear-files-btn" class="levi-chat-clear-files-btn" type="button" title="Uploads aus Kontext entfernen">
+                    <span class="dashicons dashicons-dismiss"></span>
+                    <span>Uploads löschen</span>
+                </button>
+                <input id="levi-chat-file-input" type="file" accept=".txt,.md,text/plain,text/markdown" multiple hidden>
+                <div id="levi-chat-upload-status" class="levi-chat-upload-status"></div>
+            </div>
+            <div id="levi-chat-context-hint" class="levi-chat-context-hint"></div>
+            <div id="levi-chat-file-list" class="levi-chat-file-list"></div>
+            <div class="levi-chat-input-row">
+                <textarea 
+                    id="levi-chat-input" 
+                    class="levi-chat-input" 
+                    placeholder="Schreib eine Nachricht..."
+                    rows="2"
+                ></textarea>
+                <button id="levi-chat-send" class="levi-chat-send">
+                    <span class="dashicons dashicons-arrow-right-alt2"></span>
+                </button>
+            </div>
         </div>
     </div>
 </div>

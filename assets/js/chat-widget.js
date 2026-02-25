@@ -9,14 +9,25 @@
         const window_ = document.getElementById('levi-chat-window');
         const close = document.getElementById('levi-chat-close');
         const clear = document.getElementById('levi-chat-clear');
+        const expand = document.getElementById('levi-chat-expand');
         const input = document.getElementById('levi-chat-input');
         const send = document.getElementById('levi-chat-send');
         const messages = document.getElementById('levi-chat-messages');
+        const uploadBtn = document.getElementById('levi-chat-upload-btn');
+        const clearFilesBtn = document.getElementById('levi-chat-clear-files-btn');
+        const fileInput = document.getElementById('levi-chat-file-input');
+        const uploadStatus = document.getElementById('levi-chat-upload-status');
+        const contextHint = document.getElementById('levi-chat-context-hint');
+        const fileList = document.getElementById('levi-chat-file-list');
 
         const sessionKey = 'levi_session_id';
         const openKey = 'levi_chat_open';
+        const fullWidthKey = 'levi_chat_fullwidth';
         let sessionId = localStorage.getItem(sessionKey) || null;
         let historyLoaded = false;
+        let sendInFlight = false;
+        let uploadInFlight = false;
+        let uploadedFiles = [];
 
         function setChatOpen(isOpen) {
             window_.style.display = isOpen ? 'flex' : 'none';
@@ -31,9 +42,28 @@
             setChatOpen(true);
         }
 
+        function setFullWidth(enabled) {
+            window_.classList.toggle('levi-chat-window-fullwidth', !!enabled);
+            localStorage.setItem(fullWidthKey, enabled ? '1' : '0');
+            const icon = expand ? expand.querySelector('.dashicons') : null;
+            if (icon) {
+                icon.className = enabled
+                    ? 'dashicons dashicons-editor-contract'
+                    : 'dashicons dashicons-editor-expand';
+            }
+            if (expand) {
+                expand.title = enabled ? 'Standardgröße' : 'Full Width';
+            }
+        }
+
+        if (localStorage.getItem(fullWidthKey) === '1') {
+            setFullWidth(true);
+        }
+
         // Restore server-side history if we already have a session
         if (sessionId) {
             loadHistory(sessionId);
+            loadSessionUploads(sessionId);
         }
 
         // Toggle chat window
@@ -47,9 +77,30 @@
             setChatOpen(false);
         });
 
+        if (expand) {
+            expand.addEventListener('click', function() {
+                const isEnabled = window_.classList.contains('levi-chat-window-fullwidth');
+                setFullWidth(!isEnabled);
+            });
+        }
+
         // Clear current session
         if (clear) {
             clear.addEventListener('click', clearCurrentSession);
+        }
+
+        if (uploadBtn && fileInput) {
+            uploadBtn.addEventListener('click', function() {
+                if (!uploadInFlight) {
+                    fileInput.click();
+                }
+            });
+            fileInput.addEventListener('change', function() {
+                uploadSelectedFiles(fileInput.files);
+            });
+        }
+        if (clearFilesBtn) {
+            clearFilesBtn.addEventListener('click', clearSessionFiles);
         }
 
         // Send message on button click
@@ -64,6 +115,7 @@
         });
 
         function sendMessage() {
+            if (sendInFlight) return;
             const text = input.value.trim();
             if (!text) return;
 
@@ -73,6 +125,7 @@
 
             // Show typing indicator
             const typing = addTypingIndicator();
+            setSendingState(true);
 
             // Send to API
             fetch(leviAgent.restUrl + 'chat', {
@@ -92,6 +145,7 @@
                 // Try to parse as JSON
                 try {
                     const data = JSON.parse(text);
+                    data.__httpStatus = response.status;
                     return data;
                 } catch (e) {
                     // Not JSON - likely PHP error output
@@ -102,10 +156,11 @@
             .then(data => {
                 // Remove typing indicator
                 typing.remove();
+                setSendingState(false);
 
                 // Check for API errors
                 if (data.error) {
-                    addMessage('❌ ' + data.error, 'assistant');
+                    addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
                     return;
                 }
 
@@ -124,8 +179,221 @@
             })
             .catch(error => {
                 typing.remove();
+                setSendingState(false);
                 addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
                 console.error('Error:', error);
+            });
+        }
+
+        function setSendingState(isSending) {
+            sendInFlight = !!isSending;
+            send.disabled = !!isSending;
+            input.disabled = !!isSending;
+            if (isSending) {
+                send.style.opacity = '0.7';
+            } else {
+                send.style.opacity = '1';
+                input.focus();
+            }
+        }
+
+        function uploadSelectedFiles(fileListObj) {
+            if (!fileListObj || fileListObj.length === 0 || uploadInFlight) {
+                return;
+            }
+
+            uploadInFlight = true;
+            uploadBtn.disabled = true;
+            if (uploadStatus) {
+                uploadStatus.textContent = 'Upload läuft...';
+            }
+
+            const formData = new FormData();
+            for (const file of fileListObj) {
+                formData.append('files[]', file);
+            }
+            if (sessionId) {
+                formData.append('session_id', sessionId);
+            }
+
+            fetch(leviAgent.restUrl + 'chat/upload', {
+                method: 'POST',
+                headers: {
+                    'X-WP-Nonce': leviAgent.nonce,
+                },
+                body: formData,
+            })
+            .then(async response => {
+                const text = await response.text();
+                try {
+                    const data = JSON.parse(text);
+                    data.__httpStatus = response.status;
+                    return data;
+                } catch (e) {
+                    throw new Error('Upload response konnte nicht gelesen werden');
+                }
+            })
+            .then(data => {
+                uploadInFlight = false;
+                uploadBtn.disabled = false;
+                if (fileInput) {
+                    fileInput.value = '';
+                }
+
+                if (data.session_id) {
+                    sessionId = data.session_id;
+                    localStorage.setItem(sessionKey, sessionId);
+                }
+
+                if (data.error) {
+                    if (uploadStatus) uploadStatus.textContent = 'Upload fehlgeschlagen';
+                    addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
+                    return;
+                }
+
+                const uploaded = Array.isArray(data.files) ? data.files : [];
+                const fullList = Array.isArray(data.session_files) ? data.session_files : null;
+                if (uploaded.length > 0) {
+                    uploadedFiles = fullList || uploadedFiles.concat(uploaded).slice(-5);
+                    renderUploadedFiles();
+                    if (uploadStatus) uploadStatus.textContent = uploaded.length + ' Datei(en) hochgeladen';
+                    addMessage('📎 Datei(en) hochgeladen: ' + uploaded.map(f => f.name).join(', '), 'assistant');
+                } else {
+                    if (uploadStatus) uploadStatus.textContent = 'Keine Datei übernommen';
+                }
+
+                if (Array.isArray(data.errors) && data.errors.length > 0) {
+                    addMessage('⚠️ Upload-Hinweise: ' + data.errors.join(' | '), 'assistant');
+                }
+            })
+            .catch(error => {
+                uploadInFlight = false;
+                uploadBtn.disabled = false;
+                if (fileInput) {
+                    fileInput.value = '';
+                }
+                if (uploadStatus) uploadStatus.textContent = 'Upload fehlgeschlagen';
+                addMessage('❌ Upload-Fehler: ' + error.message, 'assistant');
+            });
+        }
+
+        function renderUploadedFiles() {
+            if (!fileList) return;
+            fileList.innerHTML = '';
+            uploadedFiles.forEach((f) => {
+                const chip = document.createElement('span');
+                chip.className = 'levi-chat-file-chip';
+                const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
+                const fileId = escapeHtml((f && f.id) ? String(f.id) : '');
+                chip.innerHTML = '<span class="dashicons dashicons-media-text"></span><span>' + name + '</span>'
+                    + '<button type="button" class="levi-chat-file-chip-remove" data-file-id="' + fileId + '" title="Datei entfernen">×</button>';
+                fileList.appendChild(chip);
+            });
+            fileList.querySelectorAll('.levi-chat-file-chip-remove').forEach((btn) => {
+                btn.addEventListener('click', function() {
+                    const fileId = btn.getAttribute('data-file-id');
+                    if (fileId) {
+                        removeSessionFile(fileId);
+                    }
+                });
+            });
+            updateContextHint();
+        }
+
+        function updateContextHint() {
+            if (!contextHint) return;
+            const count = uploadedFiles.length;
+            if (count === 0) {
+                contextHint.textContent = '';
+                return;
+            }
+            contextHint.textContent = count + ' Datei(en) sind im aktuellen Chat-Kontext aktiv.';
+        }
+
+        function loadSessionUploads(currentSessionId) {
+            if (!currentSessionId) return;
+            fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(currentSessionId) + '/uploads', {
+                method: 'GET',
+                headers: {
+                    'X-WP-Nonce': leviAgent.nonce,
+                },
+            })
+            .then(async (response) => {
+                const text = await response.text();
+                const data = JSON.parse(text);
+                data.__httpStatus = response.status;
+                return data;
+            })
+            .then((data) => {
+                if (data.error) {
+                    return;
+                }
+                uploadedFiles = Array.isArray(data.files) ? data.files : [];
+                renderUploadedFiles();
+            })
+            .catch(() => {
+                // ignore silently, chat works without upload context preload
+            });
+        }
+
+        function clearSessionFiles() {
+            if (!sessionId) {
+                uploadedFiles = [];
+                renderUploadedFiles();
+                if (uploadStatus) uploadStatus.textContent = '';
+                return;
+            }
+            fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(sessionId) + '/uploads', {
+                method: 'DELETE',
+                headers: {
+                    'X-WP-Nonce': leviAgent.nonce,
+                },
+            })
+            .then(async (response) => {
+                const text = await response.text();
+                const data = JSON.parse(text);
+                data.__httpStatus = response.status;
+                return data;
+            })
+            .then((data) => {
+                if (data.error) {
+                    addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
+                    return;
+                }
+                uploadedFiles = [];
+                renderUploadedFiles();
+                if (uploadStatus) uploadStatus.textContent = 'Uploads entfernt';
+            })
+            .catch((error) => {
+                addMessage('❌ Uploads konnten nicht gelöscht werden: ' + error.message, 'assistant');
+            });
+        }
+
+        function removeSessionFile(fileId) {
+            if (!sessionId || !fileId) return;
+            fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(sessionId) + '/uploads/' + encodeURIComponent(fileId), {
+                method: 'DELETE',
+                headers: {
+                    'X-WP-Nonce': leviAgent.nonce,
+                },
+            })
+            .then(async (response) => {
+                const text = await response.text();
+                const data = JSON.parse(text);
+                data.__httpStatus = response.status;
+                return data;
+            })
+            .then((data) => {
+                if (data.error) {
+                    addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
+                    return;
+                }
+                uploadedFiles = Array.isArray(data.files) ? data.files : [];
+                renderUploadedFiles();
+                if (uploadStatus) uploadStatus.textContent = 'Datei entfernt';
+            })
+            .catch((error) => {
+                addMessage('❌ Datei konnte nicht entfernt werden: ' + error.message, 'assistant');
             });
         }
 
@@ -149,18 +417,25 @@
             .then(async response => {
                 const text = await response.text();
                 try {
-                    return JSON.parse(text);
+                    const data = JSON.parse(text);
+                    data.__httpStatus = response.status;
+                    return data;
                 } catch (e) {
                     throw new Error('Could not parse delete response');
                 }
             })
             .then(data => {
                 if (data && data.error) {
-                    throw new Error(data.error);
+                    throw new Error(formatApiError(data.error, data.__httpStatus));
                 }
                 localStorage.removeItem(sessionKey);
                 sessionId = null;
                 historyLoaded = false;
+                uploadedFiles = [];
+                renderUploadedFiles();
+                if (uploadStatus) {
+                    uploadStatus.textContent = '';
+                }
                 renderHistory([]);
             })
             .catch((error) => {
@@ -247,6 +522,23 @@
             }
 
             return '🔧 Zwischenstand:\n' + summaryParts.join('\n');
+        }
+
+        function formatApiError(message, httpStatus) {
+            const msg = String(message || 'Unbekannter Fehler');
+            if (httpStatus === 401 || httpStatus === 403) {
+                return 'Berechtigung/Nonce ungültig. Seite neu laden und erneut versuchen. (' + msg + ')';
+            }
+            if (httpStatus === 429) {
+                return 'Rate-Limit erreicht. Bitte kurz warten und erneut versuchen.';
+            }
+            if (httpStatus === 503) {
+                return 'Provider/Modell aktuell nicht verfügbar. Bitte anderes Modell wählen oder später erneut versuchen. (' + msg + ')';
+            }
+            if (httpStatus >= 500) {
+                return 'Serverfehler. Bitte später erneut versuchen. (' + msg + ')';
+            }
+            return msg;
         }
 
         function renderMessageContent(text, role) {

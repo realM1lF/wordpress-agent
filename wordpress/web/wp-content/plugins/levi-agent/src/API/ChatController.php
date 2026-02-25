@@ -62,6 +62,35 @@ class ChatController extends WP_REST_Controller {
             ],
         ]);
 
+        register_rest_route($this->namespace, '/' . $this->rest_base . '/upload', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [$this, 'uploadFiles'],
+                'permission_callback' => [$this, 'checkPermission'],
+            ],
+        ]);
+
+        register_rest_route($this->namespace, '/' . $this->rest_base . '/(?P<session_id>[a-zA-Z0-9_.-]+)/uploads', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [$this, 'getSessionUploadsMeta'],
+                'permission_callback' => [$this, 'checkPermission'],
+            ],
+            [
+                'methods' => WP_REST_Server::DELETABLE,
+                'callback' => [$this, 'clearSessionUploadsEndpoint'],
+                'permission_callback' => [$this, 'checkPermission'],
+            ],
+        ]);
+
+        register_rest_route($this->namespace, '/' . $this->rest_base . '/(?P<session_id>[a-zA-Z0-9_.-]+)/uploads/(?P<file_id>[a-zA-Z0-9_.-]+)', [
+            [
+                'methods' => WP_REST_Server::DELETABLE,
+                'callback' => [$this, 'deleteSessionUploadById'],
+                'permission_callback' => [$this, 'checkPermission'],
+            ],
+        ]);
+
         register_rest_route($this->namespace, '/' . $this->rest_base . '/(?P<session_id>[a-zA-Z0-9_.-]+)/history', [
             [
                 'methods' => WP_REST_Server::READABLE,
@@ -408,7 +437,7 @@ class ChatController extends WP_REST_Controller {
         // System message with relevant memories
         $messages[] = [
             'role' => 'system',
-            'content' => $this->getSystemPrompt($newMessage),
+            'content' => $this->getSystemPrompt($newMessage, $sessionId),
         ];
 
         // History (configurable context window)
@@ -433,7 +462,7 @@ class ChatController extends WP_REST_Controller {
         return $messages;
     }
 
-    private function getSystemPrompt(string $query = ''): string {
+    private function getSystemPrompt(string $query = '', ?string $sessionId = null): string {
         try {
             $identity = new Identity();
             $basePrompt = $identity->getSystemPrompt();
@@ -451,6 +480,13 @@ class ChatController extends WP_REST_Controller {
                 }
             } catch (\Throwable $e) {
                 error_log('Levi Memory Error: ' . $e->getMessage());
+            }
+        }
+
+        if (!empty($sessionId)) {
+            $uploadedContext = $this->buildUploadedFilesContext($sessionId, get_current_user_id());
+            if ($uploadedContext !== '') {
+                $basePrompt .= "\n\n# Session File Context\n\n" . $uploadedContext;
             }
         }
         
@@ -783,22 +819,165 @@ class ChatController extends WP_REST_Controller {
         $history = $this->conversationRepo->getHistory($sessionId, 1);
         $currentUserId = get_current_user_id();
         $isAdmin = current_user_can('manage_options');
+        $ownerId = !empty($history) ? (int) ($history[0]['user_id'] ?? 0) : 0;
 
         if (!$isAdmin) {
             if (empty($history)) {
+                $this->clearSessionUploads($sessionId, $currentUserId);
                 return new WP_REST_Response(['success' => true, 'session_id' => $sessionId], 200);
             }
-            $ownerId = (int) ($history[0]['user_id'] ?? 0);
             if ($ownerId !== $currentUserId) {
                 return new WP_REST_Response(['success' => false, 'error' => 'Not allowed to delete this session'], 403);
             }
         }
 
         $this->conversationRepo->deleteSession($sessionId);
+        if ($isAdmin && $ownerId > 0 && $ownerId !== $currentUserId) {
+            $this->clearSessionUploads($sessionId, $ownerId);
+        } else {
+            $this->clearSessionUploads($sessionId, $currentUserId);
+        }
 
         return new WP_REST_Response([
             'success' => true,
             'session_id' => $sessionId,
+        ], 200);
+    }
+
+    public function uploadFiles(WP_REST_Request $request): WP_REST_Response {
+        $sessionId = (string) ($request->get_param('session_id') ?? '');
+        if ($sessionId === '') {
+            $sessionId = $this->generateSessionId();
+        }
+
+        $userId = get_current_user_id();
+        $access = $this->assertSessionAccess($sessionId, $userId);
+        if ($access !== true) {
+            return $access;
+        }
+
+        $files = $request->get_file_params();
+        if (empty($files)) {
+            return new WP_REST_Response([
+                'error' => 'No files uploaded.',
+                'session_id' => $sessionId,
+            ], 400);
+        }
+
+        $normalizedFiles = $this->normalizeUploadedFiles($files);
+        if (empty($normalizedFiles)) {
+            return new WP_REST_Response([
+                'error' => 'No valid file payload found.',
+                'session_id' => $sessionId,
+            ], 400);
+        }
+
+        $stored = $this->getSessionUploads($sessionId, $userId);
+        $uploaded = [];
+        $errors = [];
+
+        foreach ($normalizedFiles as $file) {
+            $single = $this->processUploadedFile($file);
+            if (($single['success'] ?? false) !== true) {
+                $errors[] = $single['error'] ?? 'Upload failed.';
+                continue;
+            }
+
+            $entry = $single['file'];
+            $stored[] = $entry;
+            if (count($stored) > 5) {
+                $stored = array_slice($stored, -5);
+            }
+            $uploaded[] = [
+                'id' => $entry['id'],
+                'name' => $entry['name'],
+                'size' => $entry['size'],
+                'type' => $entry['type'],
+                'preview' => $entry['preview'],
+            ];
+        }
+
+        $this->setSessionUploads($sessionId, $userId, $stored);
+
+        return new WP_REST_Response([
+            'success' => !empty($uploaded),
+            'session_id' => $sessionId,
+            'files' => $uploaded,
+            'session_files' => $this->filesToMeta($stored),
+            'errors' => $errors,
+        ], !empty($uploaded) ? 200 : 400);
+    }
+
+    public function getSessionUploadsMeta(WP_REST_Request $request): WP_REST_Response {
+        $sessionId = (string) ($request->get_param('session_id') ?? '');
+        if ($sessionId === '') {
+            return new WP_REST_Response(['error' => 'Missing session_id'], 400);
+        }
+
+        $userId = get_current_user_id();
+        $access = $this->assertSessionAccess($sessionId, $userId);
+        if ($access !== true) {
+            return $access;
+        }
+
+        $files = $this->getSessionUploads($sessionId, $userId);
+        return new WP_REST_Response([
+            'success' => true,
+            'session_id' => $sessionId,
+            'files' => $this->filesToMeta($files),
+        ], 200);
+    }
+
+    public function clearSessionUploadsEndpoint(WP_REST_Request $request): WP_REST_Response {
+        $sessionId = (string) ($request->get_param('session_id') ?? '');
+        if ($sessionId === '') {
+            return new WP_REST_Response(['error' => 'Missing session_id'], 400);
+        }
+
+        $userId = get_current_user_id();
+        $access = $this->assertSessionAccess($sessionId, $userId);
+        if ($access !== true) {
+            return $access;
+        }
+
+        $this->clearSessionUploads($sessionId, $userId);
+        return new WP_REST_Response([
+            'success' => true,
+            'session_id' => $sessionId,
+            'files' => [],
+        ], 200);
+    }
+
+    public function deleteSessionUploadById(WP_REST_Request $request): WP_REST_Response {
+        $sessionId = (string) ($request->get_param('session_id') ?? '');
+        $fileId = (string) ($request->get_param('file_id') ?? '');
+        if ($sessionId === '' || $fileId === '') {
+            return new WP_REST_Response(['error' => 'Missing session_id or file_id'], 400);
+        }
+
+        $userId = get_current_user_id();
+        $access = $this->assertSessionAccess($sessionId, $userId);
+        if ($access !== true) {
+            return $access;
+        }
+
+        $files = $this->getSessionUploads($sessionId, $userId);
+        $before = count($files);
+        $files = array_values(array_filter($files, function ($f) use ($fileId) {
+            return (string) ($f['id'] ?? '') !== $fileId;
+        }));
+        if (count($files) === $before) {
+            return new WP_REST_Response([
+                'error' => 'File not found in session.',
+                'session_id' => $sessionId,
+            ], 404);
+        }
+
+        $this->setSessionUploads($sessionId, $userId, $files);
+        return new WP_REST_Response([
+            'success' => true,
+            'session_id' => $sessionId,
+            'files' => $this->filesToMeta($files),
         ], 200);
     }
 
@@ -817,5 +996,146 @@ class ChatController extends WP_REST_Controller {
 
     private function generateSessionId(): string {
         return 'sess_' . wp_generate_uuid4();
+    }
+
+    private function getSessionUploadsKey(string $sessionId, int $userId): string {
+        return 'levi_files_' . md5($sessionId . '|' . $userId);
+    }
+
+    private function getSessionUploads(string $sessionId, int $userId): array {
+        $value = get_transient($this->getSessionUploadsKey($sessionId, $userId));
+        return is_array($value) ? $value : [];
+    }
+
+    private function setSessionUploads(string $sessionId, int $userId, array $files): void {
+        set_transient($this->getSessionUploadsKey($sessionId, $userId), $files, HOUR_IN_SECONDS);
+    }
+
+    private function clearSessionUploads(string $sessionId, int $userId): void {
+        delete_transient($this->getSessionUploadsKey($sessionId, $userId));
+    }
+
+    private function filesToMeta(array $files): array {
+        return array_map(function ($f) {
+            return [
+                'id' => (string) ($f['id'] ?? ''),
+                'name' => (string) ($f['name'] ?? ''),
+                'type' => (string) ($f['type'] ?? ''),
+                'size' => (int) ($f['size'] ?? 0),
+                'preview' => (string) ($f['preview'] ?? ''),
+                'uploaded_at' => (string) ($f['uploaded_at'] ?? ''),
+            ];
+        }, array_values(array_filter($files, 'is_array')));
+    }
+
+    private function assertSessionAccess(string $sessionId, int $userId): bool|WP_REST_Response {
+        $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
+        if ($ownerId !== null && $ownerId !== $userId && !current_user_can('manage_options')) {
+            return new WP_REST_Response([
+                'error' => 'Session not found or access denied.',
+                'session_id' => $sessionId,
+            ], 403);
+        }
+        return true;
+    }
+
+    private function normalizeUploadedFiles(array $fileParams): array {
+        $normalized = [];
+        foreach ($fileParams as $fieldValue) {
+            if (!is_array($fieldValue)) {
+                continue;
+            }
+            if (isset($fieldValue['name']) && is_array($fieldValue['name'])) {
+                $count = count($fieldValue['name']);
+                for ($i = 0; $i < $count; $i++) {
+                    $normalized[] = [
+                        'name' => (string) ($fieldValue['name'][$i] ?? ''),
+                        'type' => (string) ($fieldValue['type'][$i] ?? ''),
+                        'tmp_name' => (string) ($fieldValue['tmp_name'][$i] ?? ''),
+                        'error' => (int) ($fieldValue['error'][$i] ?? UPLOAD_ERR_NO_FILE),
+                        'size' => (int) ($fieldValue['size'][$i] ?? 0),
+                    ];
+                }
+                continue;
+            }
+            $normalized[] = $fieldValue;
+        }
+        return $normalized;
+    }
+
+    private function processUploadedFile(array $file): array {
+        $name = (string) ($file['name'] ?? '');
+        $tmpName = (string) ($file['tmp_name'] ?? '');
+        $size = (int) ($file['size'] ?? 0);
+        $error = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
+
+        if ($error !== UPLOAD_ERR_OK) {
+            return ['success' => false, 'error' => sprintf('Upload failed for %s (code %d).', $name, $error)];
+        }
+        if ($name === '' || $tmpName === '') {
+            return ['success' => false, 'error' => 'Invalid upload payload.'];
+        }
+
+        $ext = strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['txt', 'md'], true)) {
+            return ['success' => false, 'error' => sprintf('Unsupported file type: %s', $name)];
+        }
+        if ($size <= 0) {
+            return ['success' => false, 'error' => sprintf('Empty file: %s', $name)];
+        }
+        if ($size > 1024 * 1024) {
+            return ['success' => false, 'error' => sprintf('File too large (max 1MB): %s', $name)];
+        }
+        if (!is_uploaded_file($tmpName) && !file_exists($tmpName)) {
+            return ['success' => false, 'error' => sprintf('Temporary file missing: %s', $name)];
+        }
+
+        $content = file_get_contents($tmpName);
+        if (!is_string($content)) {
+            return ['success' => false, 'error' => sprintf('Could not read file: %s', $name)];
+        }
+
+        // Keep context bounded for prompt stability.
+        $content = mb_substr($content, 0, 20000);
+        $preview = mb_substr(trim($content), 0, 280);
+
+        return [
+            'success' => true,
+            'file' => [
+                'id' => 'f_' . wp_generate_uuid4(),
+                'name' => sanitize_file_name($name),
+                'type' => $ext,
+                'size' => $size,
+                'content' => $content,
+                'preview' => $preview,
+                'uploaded_at' => current_time('mysql'),
+            ],
+        ];
+    }
+
+    private function buildUploadedFilesContext(string $sessionId, int $userId): string {
+        $files = $this->getSessionUploads($sessionId, $userId);
+        if (empty($files)) {
+            return '';
+        }
+
+        $parts = [];
+        $remainingBudget = 30000;
+        foreach ($files as $file) {
+            if (!is_array($file)) {
+                continue;
+            }
+            $name = (string) ($file['name'] ?? 'unknown');
+            $type = (string) ($file['type'] ?? 'txt');
+            $content = (string) ($file['content'] ?? '');
+            if ($content === '' || $remainingBudget <= 0) {
+                continue;
+            }
+            $chunk = mb_substr($content, 0, min(12000, $remainingBudget));
+            $remainingBudget -= mb_strlen($chunk);
+            $parts[] = "## File: {$name} ({$type})\n" . $chunk;
+        }
+
+        return implode("\n\n", $parts);
     }
 }
