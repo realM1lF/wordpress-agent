@@ -8,7 +8,6 @@ class SettingsPage {
     private static bool $initialized = false;
 
     public function __construct() {
-        // Prevent multiple initializations
         if (self::$initialized) {
             return;
         }
@@ -16,6 +15,7 @@ class SettingsPage {
         
         add_action('admin_menu', [$this, 'addMenuPage']);
         add_action('admin_init', [$this, 'registerSettings']);
+        add_action('admin_enqueue_scripts', [$this, 'enqueueAssets']);
         add_action('wp_ajax_levi_repair_database', [$this, 'ajaxRepairDatabase']);
         add_action('wp_ajax_levi_run_state_snapshot', [$this, 'ajaxRunStateSnapshot']);
     }
@@ -30,134 +30,80 @@ class SettingsPage {
         );
     }
 
+    public function enqueueAssets(): void {
+        $screen = get_current_screen();
+        if (!$screen || $screen->id !== 'settings_page_' . $this->pageSlug) {
+            return;
+        }
+
+        // Levi Settings Styles
+        wp_enqueue_style(
+            'levi-agent-settings',
+            LEVI_AGENT_PLUGIN_URL . 'assets/css/settings-page.css',
+            [],
+            LEVI_AGENT_VERSION
+        );
+
+        // Levi Settings JavaScript
+        wp_enqueue_script(
+            'levi-agent-settings',
+            LEVI_AGENT_PLUGIN_URL . 'assets/js/settings-page.js',
+            ['jquery'],
+            LEVI_AGENT_VERSION,
+            true
+        );
+
+        wp_localize_script('levi-agent-settings', 'leviSettings', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('levi_admin_nonce'),
+            'i18n' => [
+                'testing' => $this->tr('Testing…', 'Teste...'),
+                'connected' => $this->tr('Connected', 'Verbunden'),
+                'notConnected' => $this->tr('Not Connected', 'Nicht verbunden'),
+                'connectionError' => $this->tr('Connection error', 'Verbindungsfehler'),
+                'failed' => $this->tr('Failed', 'Fehlgeschlagen'),
+                'reloadConfirm' => $this->tr('Reload all memories? This may take a moment.', 'Alle Memories neu laden? Das kann einen Moment dauern.'),
+                'reloading' => $this->tr('Reloading…', 'Lade neu...'),
+                'reloaded' => $this->tr('Reloaded:', 'Neu geladen:'),
+                'identity' => $this->tr('identity', 'Identität'),
+                'reference' => $this->tr('reference', 'Referenz'),
+                'files' => $this->tr('files', 'Dateien'),
+                'error' => $this->tr('Error', 'Fehler'),
+                'done' => $this->tr('Done', 'Fertig'),
+                'repairing' => $this->tr('Repairing…', 'Repariere...'),
+                'saving' => $this->tr('Saving…', 'Speichere...'),
+                'status_not_run' => $this->tr('Not run yet', 'Noch nicht gelaufen'),
+                'status_unchanged' => $this->tr('Unchanged', 'Unverändert'),
+                'status_changed_stored' => $this->tr('Updated and stored', 'Aktualisiert und gespeichert'),
+            ],
+        ]);
+    }
+
+    private function tr(string $english, string $german): string {
+        $translated = __($english, 'levi-agent');
+        if ($translated !== $english) {
+            return $translated;
+        }
+        $locale = function_exists('determine_locale') ? (string) determine_locale() : (string) get_locale();
+        return str_starts_with($locale, 'de') ? $german : $english;
+    }
+
+    /** @return string Translated label for snapshot status (internal key). */
+    private function translateSnapshotStatus(string $status): string {
+        $labels = [
+            'not_run' => $this->tr('Not run yet', 'Noch nicht gelaufen'),
+            'unchanged' => $this->tr('Unchanged', 'Unveraendert'),
+            'changed_stored' => $this->tr('Updated and stored', 'Aktualisiert und gespeichert'),
+            'error' => $this->tr('Error', 'Fehler'),
+        ];
+        return $labels[$status] ?? $status;
+    }
+
     public function registerSettings(): void {
         register_setting(
             'levi_agent_settings_group',
             $this->optionName,
             [$this, 'sanitizeSettings']
-        );
-
-        // General Settings Section
-        add_settings_section(
-            'levi_agent_general',
-            __('General Settings', 'levi-agent'),
-            [$this, 'renderGeneralSection'],
-            $this->pageSlug
-        );
-
-        add_settings_field(
-            'ai_provider',
-            __('AI Provider', 'levi-agent'),
-            [$this, 'renderProviderField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'ai_auth_method',
-            __('Authentication Method', 'levi-agent'),
-            [$this, 'renderAuthMethodField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        // API Key Field
-        add_settings_field(
-            'provider_api_key',
-            __('Provider API Key', 'levi-agent'),
-            [$this, 'renderApiKeyField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        // Model Selection
-        add_settings_field(
-            'provider_model',
-            __('Chat Model', 'levi-agent'),
-            [$this, 'renderModelField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        // Rate Limiting
-        add_settings_field(
-            'rate_limit',
-            __('Rate Limit (Anfragen pro Stunde)', 'levi-agent'),
-            [$this, 'renderRateLimitField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'max_tool_iterations',
-            __('Max. Tool-Iterationen pro Anfrage', 'levi-agent'),
-            [$this, 'renderMaxToolIterationsField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'history_context_limit',
-            __('Nachrichten im Verlaufskontext', 'levi-agent'),
-            [$this, 'renderHistoryContextLimitField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'force_exhaustive_reads',
-            __('Vollständige Inhaltsanalyse erzwingen', 'levi-agent'),
-            [$this, 'renderForceExhaustiveReadsField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'require_confirmation_destructive',
-            __('Bestätigung für destruktive Tools erzwingen', 'levi-agent'),
-            [$this, 'renderRequireConfirmationDestructiveField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'memory_identity_k',
-            __('Memory Top-K (Identität)', 'levi-agent'),
-            [$this, 'renderMemoryIdentityKField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'memory_reference_k',
-            __('Memory Top-K (Referenz)', 'levi-agent'),
-            [$this, 'renderMemoryReferenceKField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'memory_episodic_k',
-            __('Memory Top-K (Episodisch)', 'levi-agent'),
-            [$this, 'renderMemoryEpisodicKField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        add_settings_field(
-            'memory_min_similarity',
-            __('Memory Mindest-Ähnlichkeit', 'levi-agent'),
-            [$this, 'renderMemoryMinSimilarityField'],
-            $this->pageSlug,
-            'levi_agent_general'
-        );
-
-        // Memory Section
-        add_settings_section(
-            'levi_agent_memory',
-            __('Memory', 'levi-agent'),
-            [$this, 'renderMemorySection'],
-            $this->pageSlug
         );
     }
 
@@ -167,19 +113,13 @@ class SettingsPage {
 
         $provider = sanitize_key($input['ai_provider'] ?? ($existing['ai_provider'] ?? 'openrouter'));
         $providers = $this->getProviderLabels();
-        if (!isset($providers[$provider])) {
-            $provider = 'openrouter';
-        }
-        $sanitized['ai_provider'] = $provider;
+        $sanitized['ai_provider'] = isset($providers[$provider]) ? $provider : 'openrouter';
 
         $authMethod = sanitize_key($input['ai_auth_method'] ?? ($existing['ai_auth_method'] ?? 'api_key'));
-        $authOptions = $this->getAuthMethodOptions($provider);
-        if (!isset($authOptions[$authMethod])) {
-            $authMethod = array_key_first($authOptions);
-        }
-        $sanitized['ai_auth_method'] = $authMethod;
+        $authOptions = $this->getAuthMethodOptions($sanitized['ai_provider']);
+        $sanitized['ai_auth_method'] = isset($authOptions[$authMethod]) ? $authMethod : array_key_first($authOptions);
 
-        // Keep existing keys if no replacement is entered.
+        // API Keys
         $keyFields = ['openrouter_api_key', 'openai_api_key', 'anthropic_api_key'];
         foreach ($keyFields as $keyField) {
             $newKey = isset($input[$keyField]) ? trim((string) $input[$keyField]) : '';
@@ -190,6 +130,7 @@ class SettingsPage {
             }
         }
 
+        // Models
         $modelFields = [
             'openrouter' => 'openrouter_model',
             'openai' => 'openai_model',
@@ -201,7 +142,8 @@ class SettingsPage {
             $sanitized[$settingKey] = isset($allowedModels[$candidate]) ? $candidate : array_key_first($allowedModels);
         }
 
-        $sanitized['rate_limit'] = absint($input['rate_limit'] ?? 50);
+        // Numeric & Boolean Settings
+        $sanitized['rate_limit'] = max(1, min(1000, absint($input['rate_limit'] ?? 50)));
         $sanitized['max_tool_iterations'] = max(1, min(30, absint($input['max_tool_iterations'] ?? 12)));
         $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'] ?? 50)));
         $sanitized['force_exhaustive_reads'] = !empty($input['force_exhaustive_reads']) ? 1 : 0;
@@ -214,6 +156,584 @@ class SettingsPage {
         return $sanitized;
     }
 
+    public function renderPage(): void {
+        $settings = $this->getSettings();
+        $provider = $this->getProvider();
+        $apiKeyStatus = $this->getApiKeyForProvider($provider) ? 'connected' : 'disconnected';
+        $activeTab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'general';
+        
+        $tabs = [
+            'general' => ['icon' => 'dashicons-admin-generic', 'label' => $this->tr('General', 'Allgemein')],
+            'ai-provider' => ['icon' => 'dashicons-cloud', 'label' => $this->tr('AI Provider', 'KI-Anbieter')],
+            'memory' => ['icon' => 'dashicons-database', 'label' => $this->tr('Memory', 'Memory')],
+            'safety' => ['icon' => 'dashicons-shield', 'label' => $this->tr('Limits & Safety', 'Limits & Sicherheit')],
+            'advanced' => ['icon' => 'dashicons-admin-tools', 'label' => $this->tr('Advanced', 'Erweitert')],
+        ];
+        ?>
+        <div class="levi-settings-wrap">
+            <!-- Header -->
+            <header class="levi-settings-header">
+                <div class="levi-header-content">
+                    <div class="levi-logo">
+                        <span class="levi-logo-icon">🤖</span>
+                        <div class="levi-logo-text">
+                            <h1><?php echo esc_html(__('Levi AI Agent', 'levi-agent')); ?></h1>
+                            <span class="levi-version">v<?php echo esc_html(LEVI_AGENT_VERSION); ?></span>
+                        </div>
+                    </div>
+                    <div class="levi-connection-status levi-status-<?php echo esc_attr($apiKeyStatus); ?>">
+                        <span class="levi-status-dot"></span>
+                        <span class="levi-status-text">
+                            <?php echo $apiKeyStatus === 'connected' ? esc_html($this->tr('Connected', 'Verbunden')) : esc_html($this->tr('Not Connected', 'Nicht verbunden')); ?>
+                        </span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Navigation -->
+            <nav class="levi-settings-nav">
+                <div class="levi-nav-tabs">
+                    <?php foreach ($tabs as $tabId => $tabData): 
+                        $isActive = $activeTab === $tabId;
+                        $tabUrl = add_query_arg(['page' => $this->pageSlug, 'tab' => $tabId], admin_url('options-general.php'));
+                    ?>
+                        <a href="<?php echo esc_url($tabUrl); ?>" 
+                           class="levi-nav-tab <?php echo $isActive ? 'levi-nav-tab-active' : ''; ?>">
+                            <span class="dashicons <?php echo esc_attr($tabData['icon']); ?>"></span>
+                            <span><?php echo esc_html($tabData['label']); ?></span>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+            </nav>
+
+            <!-- Main Content -->
+            <main class="levi-settings-main">
+                <form method="post" action="options.php" class="levi-settings-form">
+                    <?php settings_fields('levi_agent_settings_group'); ?>
+                    
+                    <?php if ($activeTab === 'general'): ?>
+                        <?php $this->renderGeneralTab($settings); ?>
+                    <?php elseif ($activeTab === 'ai-provider'): ?>
+                        <?php $this->renderAiProviderTab($settings); ?>
+                    <?php elseif ($activeTab === 'memory'): ?>
+                        <?php $this->renderMemoryTab($settings); ?>
+                    <?php elseif ($activeTab === 'safety'): ?>
+                        <?php $this->renderSafetyTab($settings); ?>
+                    <?php elseif ($activeTab === 'advanced'): ?>
+                        <?php $this->renderAdvancedTab($settings); ?>
+                    <?php endif; ?>
+
+                    <div class="levi-form-actions">
+                        <?php submit_button($this->tr('Save Settings', 'Einstellungen speichern'), 'levi-btn-primary', 'submit', false); ?>
+                        <span class="levi-save-indicator">
+                            <span class="dashicons dashicons-yes-alt"></span>
+                            <?php echo esc_html($this->tr('Settings saved successfully', 'Einstellungen erfolgreich gespeichert')); ?>
+                        </span>
+                    </div>
+                </form>
+            </main>
+        </div>
+        <?php
+    }
+
+    private function renderGeneralTab(array $settings): void {
+        ?>
+        <div class="levi-settings-section">
+            <div class="levi-section-header">
+                <h2><?php echo esc_html($this->tr('Welcome to Levi', 'Willkommen bei Levi')); ?></h2>
+                <p><?php echo esc_html($this->tr('Your AI-powered WordPress assistant. Configure the basic settings below.', 'Dein KI-Assistent fuer WordPress. Konfiguriere hier die wichtigsten Grundeinstellungen.')); ?></p>
+            </div>
+
+            <div class="levi-cards-grid">
+                <!-- Quick Start Card -->
+                <div class="levi-card levi-card-featured">
+                    <div class="levi-card-icon">🚀</div>
+                    <h3><?php echo esc_html($this->tr('Quick Start', 'Schnellstart')); ?></h3>
+                    <p><?php echo esc_html($this->tr('Levi is ready to help you manage your WordPress site. Open the chat widget in the bottom right corner to get started.', 'Levi hilft dir bei deiner WordPress-Seite. Oeffne unten rechts das Chat-Widget, um zu starten.')); ?></p>
+                    <a href="#" class="levi-btn levi-btn-secondary" onclick="document.getElementById('levi-chat-toggle').click(); return false;">
+                        <?php echo esc_html($this->tr('Open Chat', 'Chat oeffnen')); ?>
+                    </a>
+                </div>
+
+                <!-- Connection Card -->
+                <div class="levi-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-cloud"></span>
+                        <h3><?php echo esc_html($this->tr('Connection Status', 'Verbindungsstatus')); ?></h3>
+                    </div>
+                    <div class="levi-card-content">
+                        <?php 
+                        $provider = $this->getProvider();
+                        $providerLabel = $this->getProviderLabels()[$provider] ?? ucfirst($provider);
+                        $isConfigured = $this->getApiKeyForProvider($provider) ? true : false;
+                        ?>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Provider', 'Anbieter')); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html($providerLabel); ?></span>
+                        </div>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Model', 'Modell')); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html($this->getModelForProvider($provider)); ?></span>
+                        </div>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Status', 'Status')); ?></span>
+                            <span class="levi-status-badge <?php echo $isConfigured ? 'levi-badge-success' : 'levi-badge-warning'; ?>">
+                                <?php echo $isConfigured ? esc_html($this->tr('Connected', 'Verbunden')) : esc_html($this->tr('Setup Required', 'Einrichtung erforderlich')); ?>
+                            </span>
+                        </div>
+                    </div>
+                    <?php if (!$isConfigured): ?>
+                        <div class="levi-card-footer">
+                            <a href="<?php echo esc_url(add_query_arg(['tab' => 'ai-provider'], $_SERVER['REQUEST_URI'])); ?>" class="levi-btn levi-btn-small">
+                                <?php echo esc_html($this->tr('Configure Now', 'Jetzt konfigurieren')); ?>
+                            </a>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Memory Stats Card -->
+                <div class="levi-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-database"></span>
+                        <h3><?php echo esc_html($this->tr('Memory Stats', 'Memory-Statistik')); ?></h3>
+                    </div>
+                    <div class="levi-card-content">
+                        <?php 
+                        $loader = new \Levi\Agent\Memory\MemoryLoader();
+                        $stats = $loader->getStats();
+                        ?>
+                        <div class="levi-stat-item">
+                            <span class="levi-stat-value"><?php echo number_format($stats['identity_vectors'] ?? 0); ?></span>
+                            <span class="levi-stat-label"><?php _e('Identity', 'levi-agent'); ?></span>
+                        </div>
+                        <div class="levi-stat-item">
+                            <span class="levi-stat-value"><?php echo number_format($stats['reference_vectors'] ?? 0); ?></span>
+                            <span class="levi-stat-label"><?php _e('Reference', 'levi-agent'); ?></span>
+                        </div>
+                        <div class="levi-stat-item">
+                            <span class="levi-stat-value"><?php echo number_format($stats['episodic_memories'] ?? 0); ?></span>
+                            <span class="levi-stat-label"><?php _e('Episodic', 'levi-agent'); ?></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- State Snapshot Card -->
+                <div class="levi-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-backup"></span>
+                        <h3><?php echo esc_html($this->tr('WordPress Snapshot', 'WordPress-Snapshot')); ?></h3>
+                    </div>
+                    <div class="levi-card-content">
+                        <?php 
+                        $snapshotMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMeta();
+                        $snapshotStatus = (string) ($snapshotMeta['status'] ?? 'not_run');
+                        $snapshotCapturedAt = (string) ($snapshotMeta['captured_at'] ?? '-');;
+                        ?>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Last Run', 'Letzter Lauf')); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html($snapshotCapturedAt); ?></span>
+                        </div>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Status', 'Status')); ?></span>
+                            <span class="levi-status-badge levi-badge-<?php echo $snapshotStatus === 'changed_stored' ? 'success' : 'neutral'; ?>">
+                                <?php echo esc_html($this->translateSnapshotStatus($snapshotStatus)); ?>
+                            </span>
+                        </div>
+                    </div>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr('Hint: The daily snapshot indexes your WordPress state (plugins, themes, config) so Levi can answer questions about your site. Run manually here or wait for the scheduled task.', 'Hinweis: Der taegliche Snapshot indexiert deinen WordPress-Stand (Plugins, Themes, Konfiguration), damit Levi Fragen zur Seite beantworten kann. Hier manuell starten oder auf den geplanten Lauf warten.')); ?>
+                    </p>
+                    <div class="levi-card-footer">
+                        <button type="button" id="levi-run-state-snapshot" class="levi-btn levi-btn-small levi-btn-secondary">
+                            <span class="dashicons dashicons-update"></span>
+                            <?php echo esc_html($this->tr('Run Now', 'Jetzt ausfuehren')); ?>
+                        </button>
+                        <div id="levi-state-snapshot-progress-wrap" class="levi-progress-wrap" style="display:none;">
+                            <div id="levi-state-snapshot-progress" class="levi-progress-bar"></div>
+                        </div>
+                        <span id="levi-state-snapshot-result"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    private function renderAiProviderTab(array $settings): void {
+        $provider = $this->getProvider();
+        ?>
+        <div class="levi-settings-section">
+            <div class="levi-section-header">
+                <h2><?php echo esc_html($this->tr('AI Provider Configuration', 'KI-Anbieter konfigurieren')); ?></h2>
+                <p><?php echo esc_html($this->tr('Choose your AI provider and configure authentication.', 'Waehle deinen KI-Anbieter und richte die Authentifizierung ein.')); ?></p>
+            </div>
+
+            <!-- Provider Selection -->
+            <div class="levi-form-card">
+                <h3><?php echo esc_html($this->tr('Provider', 'Anbieter')); ?></h3>
+                <div class="levi-provider-grid">
+                    <?php foreach ($this->getProviderLabels() as $providerId => $providerLabel): 
+                        $isActive = $provider === $providerId;
+                        $providerIcons = [
+                            'openrouter' => '🌐',
+                            'openai' => '🤖',
+                            'anthropic' => '🧠',
+                        ];
+                    ?>
+                        <label class="levi-provider-option <?php echo $isActive ? 'levi-provider-active' : ''; ?>">
+                            <input type="radio" name="<?php echo esc_attr($this->optionName); ?>[ai_provider]" 
+                                   value="<?php echo esc_attr($providerId); ?>" 
+                                   <?php checked($provider, $providerId); ?>
+                                   class="levi-provider-input">
+                            <span class="levi-provider-icon"><?php echo esc_html($providerIcons[$providerId] ?? '🔌'); ?></span>
+                            <span class="levi-provider-name"><?php echo esc_html($providerLabel); ?></span>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+
+            <!-- Authentication -->
+            <div class="levi-form-card">
+                <h3><?php echo esc_html($this->tr('Authentication', 'Authentifizierung')); ?></h3>
+                
+                <div class="levi-form-group">
+                    <label class="levi-form-label"><?php echo esc_html($this->tr('Auth Method', 'Anmeldemethode')); ?></label>
+                    <select name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" class="levi-form-select">
+                        <?php foreach ($this->getAuthMethodOptions($provider) as $id => $label): ?>
+                            <option value="<?php echo esc_attr($id); ?>" <?php selected($this->getAuthMethod(), $id); ?>>
+                                <?php echo esc_html($label); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="levi-form-group">
+                    <label class="levi-form-label">
+                        <?php echo esc_html($this->tr('API Key', 'API-Schluessel')); ?>
+                        <?php 
+                        $keyField = match($provider) {
+                            'openai' => 'openai_api_key',
+                            'anthropic' => 'anthropic_api_key',
+                            default => 'openrouter_api_key',
+                        };
+                        $hasKey = !empty($this->getApiKeyForProvider($provider));
+                        ?>
+                        <?php if ($hasKey): ?>
+                            <span class="levi-badge levi-badge-success"><?php echo esc_html($this->tr('Configured', 'Konfiguriert')); ?></span>
+                        <?php endif; ?>
+                    </label>
+                    <input type="password" 
+                           name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($keyField); ?>]" 
+                           value="" 
+                           class="levi-form-input"
+                           placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : 'sk-...'; ?>">
+                    <p class="levi-form-help">
+                        <?php if ($hasKey): ?>
+                            <?php echo esc_html($this->tr('API key is saved. Enter a new key to replace it.', 'API-Schluessel ist gespeichert. Gib einen neuen ein, um ihn zu ersetzen.')); ?>
+                        <?php else: ?>
+                            <?php echo esc_html($this->tr('Enter your API key from the provider.', 'Bitte den API-Schluessel des Anbieters eintragen.')); ?>
+                        <?php endif; ?>
+                    </p>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr('Hint: The API key is stored in the database and never sent to third parties except the chosen provider (OpenRouter, OpenAI, or Anthropic). You can also set it via .env (OPEN_ROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY).', 'Hinweis: Der API-Schluessel wird in der Datenbank gespeichert und nur an den gewaehlten Anbieter (OpenRouter, OpenAI oder Anthropic) uebertragen. Alternativ per .env setzen (OPEN_ROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY).')); ?>
+                    </p>
+                </div>
+
+                <div class="levi-form-actions-inline">
+                    <button type="button" id="levi-test-connection" class="levi-btn levi-btn-secondary">
+                        <span class="dashicons dashicons-admin-site-alt3"></span>
+                        <?php echo esc_html($this->tr('Test Connection', 'Verbindung testen')); ?>
+                    </button>
+                    <span id="levi-test-result"></span>
+                </div>
+            </div>
+
+            <!-- Model Selection -->
+            <div class="levi-form-card">
+                <h3><?php echo esc_html($this->tr('Model', 'Modell')); ?></h3>
+                <div class="levi-form-group">
+                    <?php 
+                    $modelField = match($provider) {
+                        'openai' => 'openai_model',
+                        'anthropic' => 'anthropic_model',
+                        default => 'openrouter_model',
+                    };
+                    $currentModel = $settings[$modelField] ?? '';
+                    $models = $this->getAllowedModelsForProvider($provider);
+                    ?>
+                    <select name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($modelField); ?>]" class="levi-form-select">
+                        <?php foreach ($models as $modelId => $modelLabel): ?>
+                            <option value="<?php echo esc_attr($modelId); ?>" <?php selected($currentModel, $modelId); ?>>
+                                <?php echo esc_html($modelLabel); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="levi-form-help">
+                        <?php echo esc_html($this->tr('Select the AI model for chat responses.', 'Waehle das KI-Modell fuer Chat-Antworten.')); ?>
+                    </p>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr('Hint: More capable models (e.g. GPT-4o, Claude) cost more per request. Start with a free or cheaper model for testing.', 'Hinweis: Leistungsstaerkere Modelle (z. B. GPT-4o, Claude) kosten mehr pro Anfrage. Fuer Tests zuerst ein guenstiges oder freies Modell nehmen.')); ?>
+                    </p>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    private function renderMemoryTab(array $settings): void {
+        ?>
+        <div class="levi-settings-section">
+            <div class="levi-section-header">
+                <h2><span class="dashicons dashicons-database"></span> <?php echo esc_html($this->tr('Memory Configuration', 'Memory konfigurieren')); ?></h2>
+                <p><?php echo esc_html($this->tr('Configure how Levi remembers and retrieves information.', 'Steuere, wie Levi Informationen merkt und wiederfindet.')); ?></p>
+            </div>
+
+            <div class="levi-cards-grid levi-cards-2col">
+                <!-- Vector Memory Settings -->
+                <div class="levi-form-card">
+                    <h3><?php echo esc_html($this->tr('Vector Memory', 'Vector Memory Einstellungen')); ?></h3>
+                    <p class="levi-form-description">
+                        <?php echo esc_html($this->tr('Control how many memories are retrieved for each query type.', 'Definiert, wie viele Eintraege pro Typ (Identity, Reference, Episodic) aus der Vector-Memory geladen werden.')); ?>
+                    </p>
+
+                    <div class="levi-form-row">
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('Identity Memories', 'Identity-Memories')); ?></label>
+                            <input type="number" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[memory_identity_k]" 
+                                   value="<?php echo esc_attr($settings['memory_identity_k']); ?>"
+                                   min="1" max="20" class="levi-form-input levi-input-small">
+                            <p class="levi-form-help levi-hint">
+                                <?php echo esc_html($this->tr('Controls how many identity entries are loaded (persona, role, style). Higher values add more personal context but can dilute focus. Lower values are stricter and faster.', 'Steuert, wie viele Identity-Eintraege (Rolle, Persona, Stil) geladen werden. Hoehere Werte geben mehr persoenlichen Kontext, koennen aber den Fokus verwaessern. Niedrigere Werte sind strenger und schneller.')); ?>
+                            </p>
+                        </div>
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('Reference Memories', 'Reference-Memories')); ?></label>
+                            <input type="number" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[memory_reference_k]" 
+                                   value="<?php echo esc_attr($settings['memory_reference_k']); ?>"
+                                   min="1" max="20" class="levi-form-input levi-input-small">
+                            <p class="levi-form-help levi-hint">
+                                <?php echo esc_html($this->tr('Controls how many knowledge/reference entries are loaded (docs, rules, facts). Higher values increase coverage but may add noise. Lower values keep answers tighter and more selective.', 'Steuert, wie viele Wissens-/Referenz-Eintraege (Dokus, Regeln, Fakten) geladen werden. Hoehere Werte erhoehen die Abdeckung, koennen aber mehr Rauschen bringen. Niedrigere Werte machen Antworten fokussierter und selektiver.')); ?>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="levi-form-row">
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('Episodic Memories', 'Episodic-Memories')); ?></label>
+                            <input type="number" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[memory_episodic_k]" 
+                                   value="<?php echo esc_attr($settings['memory_episodic_k']); ?>"
+                                   min="1" max="20" class="levi-form-input levi-input-small">
+                            <p class="levi-form-help levi-hint">
+                                <?php echo esc_html($this->tr('Controls how many recent episode entries are loaded (recent actions/outcomes). Higher values improve continuity across longer tasks, lower values reduce carry-over from old context.', 'Steuert, wie viele episodische Eintraege (juengste Aktionen/Ergebnisse) geladen werden. Hoehere Werte verbessern Kontinuitaet bei laengeren Aufgaben, niedrigere reduzieren Altkontext.')); ?>
+                            </p>
+                        </div>
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('Min Similarity', 'Min. Aehnlichkeit')); ?></label>
+                            <input type="number" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[memory_min_similarity]" 
+                                   value="<?php echo esc_attr($settings['memory_min_similarity']); ?>"
+                                   min="0" max="1" step="0.01" class="levi-form-input levi-input-small">
+                            <p class="levi-form-help levi-hint">
+                                <?php echo esc_html($this->tr('Similarity threshold from 0 to 1. Higher values require closer semantic matches (fewer, more precise results). Lower values allow broader matches (more results, potentially less relevant).', 'Aehnlichkeitsschwelle von 0 bis 1. Hoehere Werte verlangen engere semantische Treffer (weniger, aber praeziser). Niedrigere Werte erlauben breitere Treffer (mehr Ergebnisse, evtl. weniger relevant).')); ?>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Memory Actions -->
+                <div class="levi-form-card">
+                    <h3><?php echo esc_html($this->tr('Memory Management', 'Memory-Verwaltung')); ?></h3>
+                    
+                    <?php 
+                    $loader = new \Levi\Agent\Memory\MemoryLoader();
+                    $changes = $loader->checkForChanges();
+                    $hasChanges = !empty($changes['identity']) || !empty($changes['reference']);
+                    ?>
+
+                    <?php if ($hasChanges): ?>
+                        <div class="levi-notice levi-notice-warning">
+                            <p><strong><?php echo esc_html($this->tr('Memory files have changed!', 'Memory-Dateien haben sich geaendert!')); ?></strong></p>
+                            <?php if (!empty($changes['identity'])): ?>
+                                <p><?php echo esc_html($this->tr('Identity:', 'Identity:')); ?> <?php echo esc_html(implode(', ', $changes['identity'])); ?></p>
+                            <?php endif; ?>
+                            <?php if (!empty($changes['reference'])): ?>
+                                <p><?php echo esc_html($this->tr('Reference:', 'Reference:')); ?> <?php echo esc_html(implode(', ', $changes['reference'])); ?></p>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="levi-form-actions-inline">
+                        <button type="button" id="levi-reload-memories" class="levi-btn levi-btn-secondary">
+                            <span class="dashicons dashicons-update"></span>
+                            <?php echo esc_html($this->tr('Reload All Memories', 'Alle Memories neu laden')); ?>
+                        </button>
+                        <span id="levi-reload-result"></span>
+                    </div>
+
+                    <p class="levi-form-help">
+                        <?php echo esc_html($this->tr('Reloads all .md files from identity/ and memories/ folders into the vector database.', 'Laedt alle .md-Dateien aus identity/ und memories/ in die Vector-Datenbank.')); ?>
+                    </p>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr('Hint: After changing or adding .md files in the plugin’s identity/ or memories/ folders, click "Reload All Memories" so Levi can use the new content.', 'Hinweis: Nach Aenderungen in identity/ oder memories/ bitte "Alle Memories neu laden", damit Levi die Inhalte nutzt.')); ?>
+                    </p>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    private function renderSafetyTab(array $settings): void {
+        ?>
+        <div class="levi-settings-section">
+            <div class="levi-section-header">
+                <h2><?php echo esc_html($this->tr('Limits & Safety', 'Limits & Sicherheit')); ?></h2>
+                <p><?php echo esc_html($this->tr('Configure safety measures and usage limits.', 'Konfiguriere Sicherheitsmechanismen und Nutzungsgrenzen.')); ?></p>
+            </div>
+
+            <div class="levi-cards-grid levi-cards-2col">
+                <!-- Rate Limiting -->
+                <div class="levi-form-card">
+                    <h3><?php echo esc_html($this->tr('Rate Limiting', 'Rate-Limit')); ?></h3>
+                    <div class="levi-form-group">
+                        <label class="levi-form-label"><?php echo esc_html($this->tr('Requests per Hour', 'Anfragen pro Stunde')); ?></label>
+                        <input type="number" 
+                               name="<?php echo esc_attr($this->optionName); ?>[rate_limit]" 
+                               value="<?php echo esc_attr($settings['rate_limit']); ?>"
+                               min="1" max="1000" class="levi-form-input levi-input-small">
+                        <p class="levi-form-help">
+                            <?php echo esc_html($this->tr('Maximum API requests per user per hour to control costs.', 'Maximale API-Anfragen pro Benutzer und Stunde zur Kostenkontrolle.')); ?>
+                        </p>
+                        <p class="levi-form-help levi-hint">
+                            <?php echo esc_html($this->tr('Hint: Lower values reduce API costs; increase if multiple editors use Levi frequently.', 'Hinweis: Niedrige Werte senken Kosten. Erhoehen, wenn mehrere Redakteure Levi oft nutzen.')); ?>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Confirmation Settings -->
+                <div class="levi-form-card">
+                    <h3><?php echo esc_html($this->tr('Confirmation Requirements', 'Bestaetigungsregeln')); ?></h3>
+                    
+                    <div class="levi-toggle-group">
+                        <label class="levi-toggle">
+                            <input type="checkbox" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[require_confirmation_destructive]" 
+                                   value="1"
+                                   <?php checked(!empty($settings['require_confirmation_destructive'])); ?>>
+                            <span class="levi-toggle-slider"></span>
+                            <span class="levi-toggle-label">
+                                <?php echo esc_html($this->tr('Require confirmation for destructive actions', 'Bestaetigung fuer destruktive Aktionen erforderlich')); ?>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="levi-toggle-group">
+                        <label class="levi-toggle">
+                            <input type="checkbox" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[force_exhaustive_reads]" 
+                                   value="1"
+                                   <?php checked(!empty($settings['force_exhaustive_reads'])); ?>>
+                            <span class="levi-toggle-slider"></span>
+                            <span class="levi-toggle-label">
+                                <?php echo esc_html($this->tr('Force exhaustive content analysis', 'Gruendliche Inhaltsanalyse erzwingen')); ?>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Tool Iterations -->
+                <div class="levi-form-card">
+                    <h3><?php echo esc_html($this->tr('Tool Execution', 'Tool-Ausfuehrung')); ?></h3>
+                    <div class="levi-form-group">
+                        <label class="levi-form-label"><?php echo esc_html($this->tr('Max Tool Iterations', 'Max. Tool-Iterationen')); ?></label>
+                        <input type="number" 
+                               name="<?php echo esc_attr($this->optionName); ?>[max_tool_iterations]" 
+                               value="<?php echo esc_attr($settings['max_tool_iterations']); ?>"
+                               min="1" max="30" class="levi-form-input levi-input-small">
+                        <p class="levi-form-help">
+                            <?php echo esc_html($this->tr('Maximum consecutive tool rounds per request.', 'Maximale aufeinanderfolgende Tool-Runden pro Anfrage.')); ?>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- History Context -->
+                <div class="levi-form-card">
+                    <h3><?php echo esc_html($this->tr('Conversation Context', 'Kontext-Verlauf')); ?></h3>
+                    <div class="levi-form-group">
+                        <label class="levi-form-label"><?php echo esc_html($this->tr('History Messages', 'Verlaufsnachrichten')); ?></label>
+                        <input type="number" 
+                               name="<?php echo esc_attr($this->optionName); ?>[history_context_limit]" 
+                               value="<?php echo esc_attr($settings['history_context_limit']); ?>"
+                               min="10" max="200" class="levi-form-input levi-input-small">
+                        <p class="levi-form-help">
+                            <?php echo esc_html($this->tr('Number of previous messages sent as context.', 'Anzahl vorheriger Nachrichten, die als Kontext mitgesendet werden.')); ?>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    private function renderAdvancedTab(array $settings): void {
+        ?>
+        <div class="levi-settings-section">
+            <div class="levi-section-header">
+                <h2><?php _e('Advanced', 'levi-agent'); ?></h2>
+                <p><?php _e('Advanced configuration and maintenance tools.', 'levi-agent'); ?></p>
+            </div>
+
+            <div class="levi-cards-grid">
+                <!-- Database Maintenance -->
+                <div class="levi-form-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-database"></span>
+                        <h3><?php _e('Database', 'levi-agent'); ?></h3>
+                    </div>
+                    <p class="levi-form-description">
+                        <?php _e('Repair and maintain database tables.', 'levi-agent'); ?>
+                    </p>
+                    <p class="levi-form-help levi-hint">
+                        <?php _e('Hint: Use this if conversations or settings behave incorrectly. It recreates Levi’s database tables without deleting existing data.', 'levi-agent'); ?>
+                    </p>
+                    <div class="levi-form-actions-inline">
+                        <button type="button" id="levi-repair-database" class="levi-btn levi-btn-secondary">
+                            <span class="dashicons dashicons-hammer"></span>
+                            <?php _e('Repair Tables', 'levi-agent'); ?>
+                        </button>
+                        <span id="levi-repair-result"></span>
+                    </div>
+                </div>
+
+                <!-- System Info -->
+                <div class="levi-form-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-info"></span>
+                        <h3><?php _e('System Info', 'levi-agent'); ?></h3>
+                    </div>
+                    <div class="levi-card-content">
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php _e('Plugin Version', 'levi-agent'); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html(LEVI_AGENT_VERSION); ?></span>
+                        </div>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php _e('WordPress', 'levi-agent'); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html(get_bloginfo('version')); ?></span>
+                        </div>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php _e('PHP', 'levi-agent'); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html(PHP_VERSION); ?></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    // Helper Methods
     public function getProviderLabels(): array {
         return [
             'openrouter' => 'OpenRouter',
@@ -232,15 +752,15 @@ class SettingsPage {
     public function getAuthMethodOptions(string $provider): array {
         return match ($provider) {
             'openrouter' => [
-                'api_key' => __('API Key', 'levi-agent'),
-                'oauth' => __('Login via OpenRouter (OAuth, coming soon)', 'levi-agent'),
+                'api_key' => $this->tr('API Key', 'API-Schluessel'),
+                'oauth' => $this->tr('Login via OpenRouter (OAuth, coming soon)', 'Login via OpenRouter (OAuth, bald verfuegbar)'),
             ],
             'anthropic' => [
-                'api_key' => __('API Key (Pay-as-you-go)', 'levi-agent'),
-                'subscription_token' => __('Subscription Token (sk-ant-oat-*)', 'levi-agent'),
+                'api_key' => $this->tr('API Key (Pay-as-you-go)', 'API-Schluessel (Pay-as-you-go)'),
+                'subscription_token' => $this->tr('Subscription Token (sk-ant-oat-*)', 'Subscription-Token (sk-ant-oat-*)'),
             ],
             default => [
-                'api_key' => __('API Key', 'levi-agent'),
+                'api_key' => $this->tr('API Key', 'API-Schluessel'),
             ],
         };
     }
@@ -380,343 +900,6 @@ class SettingsPage {
         return array_merge($defaults, $settings);
     }
 
-    public function renderPage(): void {
-        $settings = $this->getSettings();
-        $provider = $this->getProvider();
-        $providerLabel = $this->getProviderLabels()[$provider] ?? ucfirst($provider);
-        $apiKeyStatus = $this->getApiKeyForProvider($provider) ? 'configured' : 'missing';
-        ?>
-        <div class="wrap">
-            <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
-            
-            <div class="notice notice-<?php echo $apiKeyStatus === 'configured' ? 'success' : 'warning'; ?>">
-                <p>
-                    <strong><?php echo esc_html($providerLabel); ?> Status:</strong>
-                    <?php echo $apiKeyStatus === 'configured' 
-                        ? '✅ Connection credentials are configured'
-                        : '⚠️ Please configure authentication credentials'; ?>
-                </p>
-            </div>
-
-            <form method="post" action="options.php">
-                <?php 
-                settings_fields('levi_agent_settings_group');
-                do_settings_sections($this->pageSlug);
-                submit_button();
-                ?>
-            </form>
-
-            <hr>
-            
-            <h2><?php esc_html_e('Database', 'levi-agent'); ?></h2>
-            <p>
-                <button type="button" id="levi-repair-database" class="button button-secondary">
-                    <?php esc_html_e('Repair Database Tables', 'levi-agent'); ?>
-                </button>
-                <span id="levi-repair-result" style="margin-left: 10px;"></span>
-            </p>
-            <p class="description">
-                <?php esc_html_e('Creates missing database tables (e.g. if you get "Table doesn\'t exist" errors).', 'levi-agent'); ?>
-            </p>
-
-            <hr>
-            
-            <h2>Test Connection</h2>
-            <button type="button" id="levi-test-connection" class="button button-secondary">
-                Test Provider Connection
-            </button>
-            <span id="levi-test-result"></span>
-        </div>
-        <?php
-    }
-
-    public function renderGeneralSection(): void {
-        echo '<p>' . esc_html__('Configure provider, authentication, and model. Then test the connection.', 'levi-agent') . '</p>';
-    }
-
-    public function renderProviderField(): void {
-        $settings = $this->getSettings();
-        $current = $settings['ai_provider'] ?? 'openrouter';
-        $providers = $this->getProviderLabels();
-        ?>
-        <select name="<?php echo esc_attr($this->optionName); ?>[ai_provider]" class="regular-text">
-            <?php foreach ($providers as $id => $label): ?>
-                <option value="<?php echo esc_attr($id); ?>" <?php selected($current, $id); ?>><?php echo esc_html($label); ?></option>
-            <?php endforeach; ?>
-        </select>
-        <p class="description"><?php esc_html_e('OpenRouter is easiest for most users. OpenAI and Anthropic can be configured directly.', 'levi-agent'); ?></p>
-        <?php
-    }
-
-    public function renderAuthMethodField(): void {
-        $provider = $this->getProvider();
-        $current = $this->getAuthMethod();
-        $options = $this->getAuthMethodOptions($provider);
-        ?>
-        <select name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" class="regular-text">
-            <?php foreach ($options as $id => $label): ?>
-                <option value="<?php echo esc_attr($id); ?>" <?php selected($current, $id); ?>><?php echo esc_html($label); ?></option>
-            <?php endforeach; ?>
-        </select>
-        <p class="description">
-            <?php if ($provider === 'openai'): ?>
-                <?php esc_html_e('OpenAI API requires API keys. ChatGPT Plus/Pro subscriptions do not include API access.', 'levi-agent'); ?>
-            <?php elseif ($provider === 'anthropic'): ?>
-                <?php esc_html_e('Anthropic supports API keys and subscription-style tokens (sk-ant-oat-*).', 'levi-agent'); ?>
-            <?php else: ?>
-                <?php esc_html_e('OpenRouter supports API keys. OAuth login flow can be added later.', 'levi-agent'); ?>
-            <?php endif; ?>
-        </p>
-        <?php
-    }
-
-    public function renderApiKeyField(): void {
-        $settings = $this->getSettings();
-        $provider = $this->getProvider();
-        $settingKey = $provider === 'openai' ? 'openai_api_key' : ($provider === 'anthropic' ? 'anthropic_api_key' : 'openrouter_api_key');
-        $hasKey = !empty(trim((string) ($settings[$settingKey] ?? '')));
-        $placeholder = $provider === 'openai' ? 'sk-...' : ($provider === 'anthropic' ? 'sk-ant-...' : 'sk-or-v1-...');
-        $helpUrl = $provider === 'openai'
-            ? 'https://platform.openai.com/api-keys'
-            : ($provider === 'anthropic' ? 'https://console.anthropic.com/settings/keys' : 'https://openrouter.ai/keys');
-        ?>
-        <input 
-            type="password" 
-            name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($settingKey); ?>]" 
-            value="" 
-            class="regular-text"
-            placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : esc_attr($placeholder); ?>"
-            autocomplete="new-password"
-        >
-        <p class="description">
-            <?php if ($hasKey): ?>
-                <?php esc_html_e('API Key is saved. Enter a new key to replace it.', 'levi-agent'); ?>
-            <?php endif; ?>
-            <a href="<?php echo esc_url($helpUrl); ?>" target="_blank"><?php echo esc_html(preg_replace('#^https?://#', '', $helpUrl)); ?></a>
-        </p>
-        <?php
-    }
-
-    public function renderModelField(): void {
-        $settings = $this->getSettings();
-        $provider = $this->getProvider();
-        $settingKey = $provider === 'openai' ? 'openai_model' : ($provider === 'anthropic' ? 'anthropic_model' : 'openrouter_model');
-        $models = $this->getAllowedModelsForProvider($provider);
-        $current = (string) ($settings[$settingKey] ?? array_key_first($models));
-        ?>
-        <select name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($settingKey); ?>]" class="regular-text">
-            <?php foreach ($models as $id => $label): ?>
-                <option value="<?php echo esc_attr($id); ?>" <?php selected($current, $id); ?>><?php echo esc_html($label); ?></option>
-            <?php endforeach; ?>
-        </select>
-        <p class="description">
-            <?php if ($provider === 'openrouter'): ?>
-                <?php esc_html_e('Default for new installs: Llama 3.1 70B (kostenlos).', 'levi-agent'); ?>
-            <?php elseif ($provider === 'openai'): ?>
-                <?php esc_html_e('Recommended default: GPT-4o Mini for cost/performance.', 'levi-agent'); ?>
-            <?php else: ?>
-                <?php esc_html_e('Recommended default: Claude 3.5 Sonnet.', 'levi-agent'); ?>
-            <?php endif; ?>
-        </p>
-        <?php
-    }
-
-    public function renderRateLimitField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <input 
-            type="number" 
-            name="<?php echo esc_attr($this->optionName); ?>[rate_limit]" 
-            value="<?php echo esc_attr($settings['rate_limit']); ?>"
-            min="1"
-            max="1000"
-            class="small-text"
-        >
-        <p class="description">Begrenzt API-Anfragen pro Benutzer und Stunde, um Kosten zu kontrollieren.</p>
-        <?php
-    }
-
-    public function renderMaxToolIterationsField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <input
-            type="number"
-            name="<?php echo esc_attr($this->optionName); ?>[max_tool_iterations]"
-            value="<?php echo esc_attr($settings['max_tool_iterations']); ?>"
-            min="1"
-            max="30"
-            class="small-text"
-        >
-        <p class="description">Legt fest, wie viele aufeinanderfolgende Tool-Runden Levi in einer Antwort ausführen darf.</p>
-        <?php
-    }
-
-    public function renderHistoryContextLimitField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <input
-            type="number"
-            name="<?php echo esc_attr($this->optionName); ?>[history_context_limit]"
-            value="<?php echo esc_attr($settings['history_context_limit']); ?>"
-            min="10"
-            max="200"
-            class="small-text"
-        >
-        <p class="description">Bestimmt, wie viele frühere Chat-Nachrichten als Kontext mitgesendet werden.</p>
-        <?php
-    }
-
-    public function renderForceExhaustiveReadsField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <label>
-            <input
-                type="checkbox"
-                name="<?php echo esc_attr($this->optionName); ?>[force_exhaustive_reads]"
-                value="1"
-                <?php checked(!empty($settings['force_exhaustive_reads'])); ?>
-            >
-            Erzwingt bei Analyse-Aufgaben das vollständige Lesen von Inhalten über alle Seiten/Abschnitte hinweg.
-        </label>
-        <?php
-    }
-
-    public function renderRequireConfirmationDestructiveField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <label>
-            <input
-                type="checkbox"
-                name="<?php echo esc_attr($this->optionName); ?>[require_confirmation_destructive]"
-                value="1"
-                <?php checked(!empty($settings['require_confirmation_destructive'])); ?>
-            >
-            Verlangt eine explizite Bestätigung ("ja/confirm"), bevor potenziell destruktive Tools ausgeführt werden.
-        </label>
-        <?php
-    }
-
-    public function renderMemoryIdentityKField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <input
-            type="number"
-            name="<?php echo esc_attr($this->optionName); ?>[memory_identity_k]"
-            value="<?php echo esc_attr($settings['memory_identity_k']); ?>"
-            min="1"
-            max="20"
-            class="small-text"
-        >
-        <?php
-    }
-
-    public function renderMemoryReferenceKField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <input
-            type="number"
-            name="<?php echo esc_attr($this->optionName); ?>[memory_reference_k]"
-            value="<?php echo esc_attr($settings['memory_reference_k']); ?>"
-            min="1"
-            max="20"
-            class="small-text"
-        >
-        <?php
-    }
-
-    public function renderMemoryEpisodicKField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <input
-            type="number"
-            name="<?php echo esc_attr($this->optionName); ?>[memory_episodic_k]"
-            value="<?php echo esc_attr($settings['memory_episodic_k']); ?>"
-            min="1"
-            max="20"
-            class="small-text"
-        >
-        <?php
-    }
-
-    public function renderMemoryMinSimilarityField(): void {
-        $settings = $this->getSettings();
-        ?>
-        <input
-            type="number"
-            step="0.01"
-            name="<?php echo esc_attr($this->optionName); ?>[memory_min_similarity]"
-            value="<?php echo esc_attr($settings['memory_min_similarity']); ?>"
-            min="0"
-            max="1"
-            class="small-text"
-        >
-        <p class="description">Niedriger Wert = breitere Erinnerungssuche, höherer Wert = strengere Treffer.</p>
-        <?php
-    }
-
-    public function renderMemorySection(): void {
-        echo '<p>' . esc_html__('Verwalte das Wissen und die Erinnerungen des Agenten.', 'levi-agent') . '</p>';
-        
-        // Show stats
-        $loader = new \Levi\Agent\Memory\MemoryLoader();
-        $stats = $loader->getStats();
-        
-        echo '<div class="mohami-memory-stats">';
-        echo '<h4>' . esc_html__('Memory-Statistiken', 'levi-agent') . '</h4>';
-        echo '<ul>';
-        echo '<li>' . sprintf(esc_html__('Identity Vectors: %d', 'levi-agent'), $stats['identity_vectors'] ?? 0) . '</li>';
-        echo '<li>' . sprintf(esc_html__('Reference Vectors: %d', 'levi-agent'), $stats['reference_vectors'] ?? 0) . '</li>';
-        echo '<li>' . sprintf(esc_html__('Episodic Memories: %d', 'levi-agent'), $stats['episodic_memories'] ?? 0) . '</li>';
-        echo '</ul>';
-        echo '</div>';
-        
-        // Check for changes
-        $changes = $loader->checkForChanges();
-        $hasChanges = !empty($changes['identity']) || !empty($changes['reference']);
-        
-        if ($hasChanges) {
-            echo '<div class="notice notice-warning inline">';
-            echo '<p><strong>' . esc_html__('Memory files have changed!', 'levi-agent') . '</strong></p>';
-            if (!empty($changes['identity'])) {
-                echo '<p>' . esc_html__('Identity files: ', 'levi-agent') . esc_html(implode(', ', $changes['identity'])) . '</p>';
-            }
-            if (!empty($changes['reference'])) {
-                echo '<p>' . esc_html__('Reference files: ', 'levi-agent') . esc_html(implode(', ', $changes['reference'])) . '</p>';
-            }
-            echo '</div>';
-        }
-        
-        // Reload button
-        echo '<p>';
-        echo '<button type="button" id="levi-reload-memories" class="button button-secondary">';
-        echo esc_html__('Reload All Memories', 'levi-agent');
-        echo '</button>';
-        echo '<span id="levi-reload-result" style="margin-left: 10px;"></span>';
-        echo '</p>';
-        
-        echo '<p class="description">';
-        echo esc_html__('This will reload all .md files from identity/ and memories/ folders into the vector database.', 'levi-agent');
-        echo '</p>';
-
-        $snapshotMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMeta();
-        $snapshotStatus = (string) ($snapshotMeta['status'] ?? 'not_run');
-        $snapshotCapturedAt = (string) ($snapshotMeta['captured_at'] ?? '-');
-
-        echo '<hr style="margin:16px 0;">';
-        echo '<h4>' . esc_html__('WordPress/Plugin-Index (Daily Snapshot)', 'levi-agent') . '</h4>';
-        echo '<p style="margin:0 0 8px 0;">' . esc_html(sprintf('Letzter Stand: %s | Status: %s', $snapshotCapturedAt, $snapshotStatus)) . '</p>';
-        echo '<p>';
-        echo '<button type="button" id="levi-run-state-snapshot" class="button button-secondary">';
-        echo esc_html__('Indexierung jetzt ausführen', 'levi-agent');
-        echo '</button>';
-        echo '<span id="levi-state-snapshot-result" style="margin-left: 10px;"></span>';
-        echo '</p>';
-        echo '<div id="levi-state-snapshot-progress-wrap" style="display:none;max-width:420px;height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;">';
-        echo '<div id="levi-state-snapshot-progress" style="width:0%;height:100%;background:#2563eb;transition:width .25s ease;"></div>';
-        echo '</div>';
-        echo '<p class="description">' . esc_html__('Erfasst WordPress- und Plugin-Stand und speichert Änderungen im Langzeitgedächtnis.', 'levi-agent') . '</p>';
-    }
-
     public function ajaxRepairDatabase(): void {
         check_ajax_referer('levi_admin_nonce', 'nonce');
 
@@ -725,7 +908,7 @@ class SettingsPage {
         }
 
         require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
-        Levi\Agent\Database\Tables::create();
+        \Levi\Agent\Database\Tables::create();
 
         wp_send_json_success(['message' => __('Database tables created successfully.', 'levi-agent')]);
     }

@@ -56,6 +56,7 @@ add_action('plugins_loaded', function() {
 
 // Initialize
 add_action('plugins_loaded', function() {
+    load_plugin_textdomain('levi-agent', false, dirname(plugin_basename(__FILE__)) . '/languages');
     Plugin::instance();
 }, 10);
 
