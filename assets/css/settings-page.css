@@ -24,6 +24,14 @@
     --levi-accent-hover: #2563eb;
     --levi-accent-glow: rgba(59, 130, 246, 0.25);
     --levi-accent-glow-strong: rgba(59, 130, 246, 0.4);
+
+    /* CTA – Lila/Pink für Primary/Speichern-Buttons (Kontrast) */
+    --levi-cta: #a855f7;
+    --levi-cta-hover: #9333ea;
+    --levi-cta-glow: rgba(168, 85, 247, 0.35);
+
+    /* Secondary-Button Hover-Border (einheitlich) */
+    --levi-btn-secondary-border-hover: rgba(59, 130, 246, 0.5);
     
     /* Status Colors */
     --levi-success: #22c55e;
@@ -59,8 +67,9 @@
     --levi-transition-slow: 350ms ease;
 }
 
-/* Reset WordPress admin styles for our page */
-.settings_page_levi-agent-settings {
+/* Reset WordPress admin styles for our pages */
+.settings_page_levi-agent-settings,
+.settings_page_levi-agent-setup-wizard {
     background: var(--levi-bg-primary) !important;
 }
 
@@ -76,12 +85,12 @@
     margin: 0;
 }
 
-/* Main Container */
+/* Main Container – font matches chat widget */
 .levi-settings-wrap {
     min-height: 100vh;
     background: var(--levi-bg-primary);
     color: var(--levi-text-primary);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-family: "Courier New", Courier, monospace;
     line-height: 1.6;
 }
 
@@ -587,8 +596,10 @@
     color: var(--levi-text-primary);
 }
 
-/* Buttons */
-.levi-btn {
+/* Buttons – einheitlich für Einstellungen & Wizard */
+.levi-btn,
+.levi-settings-wrap a.levi-btn,
+.levi-setup-wrap a.levi-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -596,34 +607,102 @@
     padding: 10px 20px;
     font-size: 14px;
     font-weight: 500;
-    border: none;
     border-radius: var(--levi-radius-md);
     cursor: pointer;
-    transition: all var(--levi-transition-fast);
+    transition: background var(--levi-transition-fast), border-color var(--levi-transition-fast),
+                color var(--levi-transition-fast), box-shadow var(--levi-transition-fast),
+                transform var(--levi-transition-fast);
     text-decoration: none;
 }
 
-.levi-btn-primary {
-    background: linear-gradient(145deg, #3b82f6, #2563eb);
-    color: #f8fafc;
+/* Links als Buttons: WP-Admin-Farben überschreiben (verhindert dunkle Schrift bei Hover) */
+.levi-settings-wrap a.levi-btn,
+.levi-setup-wrap a.levi-btn {
+    color: inherit;
+}
+.levi-settings-wrap a.levi-btn:hover,
+.levi-setup-wrap a.levi-btn:hover,
+.levi-settings-wrap a.levi-btn:visited,
+.levi-setup-wrap a.levi-btn:visited,
+.levi-settings-wrap a.levi-btn:focus,
+.levi-setup-wrap a.levi-btn:focus {
+    color: inherit;
+    text-decoration: none;
+}
+
+/* Speichern/Primary-Buttons: Lila-Kontrast, einheitlich für button + input */
+.levi-btn-primary,
+.levi-settings-wrap .button-primary,
+.levi-settings-wrap .button-levi-btn-primary,
+.levi-settings-wrap .submit input[type="submit"],
+.levi-settings-wrap input[type="submit"].levi-btn-primary,
+.levi-settings-wrap input[type="submit"].button-primary,
+.levi-setup-wrap .button-primary,
+.levi-setup-wrap input[type="submit"].levi-btn-primary {
+    background: linear-gradient(145deg, var(--levi-cta), #7c3aed) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: var(--levi-radius-md);
+    padding: 10px 20px;
     font-weight: 600;
+    cursor: pointer;
 }
 
-.levi-btn-primary:hover {
-    transform: translateY(-2px) scale(1.02);
-    box-shadow: 0 6px 20px var(--levi-accent-glow-strong);
+.levi-btn-primary:hover,
+.levi-btn-primary:focus-visible,
+.levi-settings-wrap .button-primary:hover,
+.levi-settings-wrap .button-primary:focus,
+.levi-settings-wrap .button-levi-btn-primary:hover,
+.levi-settings-wrap .button-levi-btn-primary:focus,
+.levi-settings-wrap input[type="submit"].levi-btn-primary:hover,
+.levi-settings-wrap input[type="submit"].levi-btn-primary:focus,
+.levi-settings-wrap input[type="submit"].button-primary:hover,
+.levi-settings-wrap input[type="submit"].button-primary:focus,
+.levi-settings-wrap .submit input[type="submit"]:hover,
+.levi-settings-wrap .submit input[type="submit"]:focus,
+.levi-setup-wrap .button-primary:hover,
+.levi-setup-wrap .button-primary:focus,
+.levi-setup-wrap input[type="submit"].levi-btn-primary:hover,
+.levi-setup-wrap input[type="submit"].levi-btn-primary:focus,
+.levi-setup-wrap input[type="submit"].button-primary:hover,
+.levi-setup-wrap input[type="submit"].button-primary:focus {
+    color: #ffffff !important;
+    background: linear-gradient(145deg, var(--levi-cta-hover), #6d28d9) !important;
+    border-color: transparent !important;
+    box-shadow: 0 4px 16px var(--levi-cta-glow);
+    transform: translateY(-1px);
 }
 
+/* Alle Nicht-Primary-Buttons: einheitliche Border + Hover-Border (blau) */
+.levi-btn:not(.levi-btn-primary),
+.levi-settings-wrap .levi-btn:not(.levi-btn-primary),
+.levi-setup-wrap .levi-btn:not(.levi-btn-primary),
 .levi-btn-secondary {
     background: var(--levi-bg-surface);
-    color: var(--levi-text-primary);
+    color: var(--levi-text-primary) !important;
     border: 1px solid var(--levi-border-subtle);
 }
 
-.levi-btn-secondary:hover {
+.levi-btn:not(.levi-btn-primary):hover,
+.levi-btn:not(.levi-btn-primary):focus-visible,
+.levi-settings-wrap .levi-btn:not(.levi-btn-primary):hover,
+.levi-settings-wrap .levi-btn:not(.levi-btn-primary):focus,
+.levi-setup-wrap .levi-btn:not(.levi-btn-primary):hover,
+.levi-setup-wrap .levi-btn:not(.levi-btn-primary):focus,
+.levi-btn-secondary:hover,
+.levi-btn-secondary:focus-visible {
+    color: var(--levi-text-primary) !important;
     background: var(--levi-bg-hover);
-    border-color: rgba(59, 130, 246, 0.4);
+    border-color: var(--levi-btn-secondary-border-hover);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
     transform: translateY(-1px);
+}
+
+.levi-btn:disabled,
+.levi-btn[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
 }
 
 .levi-btn-small {
@@ -728,7 +807,7 @@
     color: var(--levi-text-primary);
     font-size: 13px;
     font-weight: 500;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: "Courier New", Courier, monospace;
     text-align: right;
 }
 
@@ -761,7 +840,7 @@
     font-size: 24px;
     font-weight: 700;
     color: #60a5fa;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: "Courier New", Courier, monospace;
 }
 
 .levi-stat-label {

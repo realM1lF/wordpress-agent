@@ -144,10 +144,20 @@ class SettingsPage {
 
         // Numeric & Boolean Settings
         $sanitized['rate_limit'] = max(1, min(1000, absint($input['rate_limit'] ?? 50)));
-        $sanitized['max_tool_iterations'] = max(1, min(30, absint($input['max_tool_iterations'] ?? 12)));
+        $sanitized['max_tool_iterations'] = max(1, absint($input['max_tool_iterations'] ?? 12));
+        $sanitized['max_tokens'] = max(1, min(131072, absint($input['max_tokens'] ?? 131072)));
+        $sanitized['ai_timeout'] = max(1, absint($input['ai_timeout'] ?? 120));
+        $sanitized['php_time_limit'] = max(0, absint($input['php_time_limit'] ?? 120));
+        $sanitized['max_context_tokens'] = max(1000, min(500000, absint($input['max_context_tokens'] ?? 100000)));
         $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'] ?? 50)));
         $sanitized['force_exhaustive_reads'] = !empty($input['force_exhaustive_reads']) ? 1 : 0;
         $sanitized['require_confirmation_destructive'] = !empty($input['require_confirmation_destructive']) ? 1 : 0;
+
+        $profileCandidate = sanitize_key($input['tool_profile'] ?? 'standard');
+        $sanitized['tool_profile'] = in_array($profileCandidate, \Levi\Agent\AI\Tools\Registry::VALID_PROFILES, true)
+            ? $profileCandidate
+            : 'standard';
+
         $sanitized['memory_identity_k'] = max(1, min(20, absint($input['memory_identity_k'] ?? 5)));
         $sanitized['memory_reference_k'] = max(1, min(20, absint($input['memory_reference_k'] ?? 5)));
         $sanitized['memory_episodic_k'] = max(1, min(20, absint($input['memory_episodic_k'] ?? 4)));
@@ -303,12 +313,24 @@ class SettingsPage {
                         $stats = $loader->getStats();
                         ?>
                         <div class="levi-stat-item">
-                            <span class="levi-stat-value"><?php echo number_format($stats['identity_vectors'] ?? 0); ?></span>
+                            <span class="levi-stat-value"><?php echo number_format($stats['identity_files'] ?? 0); ?></span>
                             <span class="levi-stat-label"><?php _e('Identity', 'levi-agent'); ?></span>
+                            <?php
+                            $identityNames = $stats['identity_file_names'] ?? [];
+                            if (!empty($identityNames)):
+                                ?>
+                                <p class="levi-stat-files"><?php echo esc_html(implode(', ', $identityNames)); ?></p>
+                            <?php endif; ?>
                         </div>
                         <div class="levi-stat-item">
-                            <span class="levi-stat-value"><?php echo number_format($stats['reference_vectors'] ?? 0); ?></span>
+                            <span class="levi-stat-value"><?php echo number_format($stats['reference_files'] ?? 0); ?></span>
                             <span class="levi-stat-label"><?php _e('Reference', 'levi-agent'); ?></span>
+                            <?php
+                            $referenceNames = $stats['reference_file_names'] ?? [];
+                            if (!empty($referenceNames)):
+                                ?>
+                                <p class="levi-stat-files"><?php echo esc_html(implode(', ', $referenceNames)); ?></p>
+                            <?php endif; ?>
                         </div>
                         <div class="levi-stat-item">
                             <span class="levi-stat-value"><?php echo number_format($stats['episodic_memories'] ?? 0); ?></span>
@@ -354,6 +376,42 @@ class SettingsPage {
                         <span id="levi-state-snapshot-result"></span>
                     </div>
                 </div>
+
+                <!-- Plan & Wizard Card -->
+                <div class="levi-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-admin-users"></span>
+                        <h3><?php echo esc_html($this->tr('Plan & Setup', 'Plan & Einrichtung')); ?></h3>
+                    </div>
+                    <div class="levi-card-content">
+                        <?php
+                        $planTier = (string) get_option('levi_plan_tier', '');
+                        $setupDone = (int) get_option('levi_setup_completed', 0) === 1;
+                        ?>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Active Plan', 'Aktiver Plan')); ?></span>
+                            <span class="levi-status-value">
+                                <?php if ($planTier === 'pro'): ?>
+                                    <span class="levi-badge levi-badge-success">Pro</span>
+                                <?php else: ?>
+                                    <span class="levi-badge levi-badge-warning"><?php echo esc_html($this->tr('Not set', 'Nicht gesetzt')); ?></span>
+                                <?php endif; ?>
+                            </span>
+                        </div>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Setup Wizard', 'Einrichtungsassistent')); ?></span>
+                            <span class="levi-status-value">
+                                <?php echo $setupDone ? esc_html($this->tr('Completed', 'Abgeschlossen')) : esc_html($this->tr('Pending', 'Ausstehend')); ?>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="levi-card-footer">
+                        <a href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-setup-wizard&step=1')); ?>" class="levi-btn levi-btn-small levi-btn-secondary">
+                            <span class="dashicons dashicons-admin-generic"></span>
+                            <?php echo esc_html($this->tr('Run Setup Wizard', 'Einrichtungsassistent starten')); ?>
+                        </a>
+                    </div>
+                </div>
             </div>
         </div>
         <?php
@@ -364,49 +422,17 @@ class SettingsPage {
         ?>
         <div class="levi-settings-section">
             <div class="levi-section-header">
-                <h2><?php echo esc_html($this->tr('AI Provider Configuration', 'KI-Anbieter konfigurieren')); ?></h2>
-                <p><?php echo esc_html($this->tr('Choose your AI provider and configure authentication.', 'Waehle deinen KI-Anbieter und richte die Authentifizierung ein.')); ?></p>
+                <h2><?php echo esc_html($this->tr('OpenRouter Configuration', 'OpenRouter konfigurieren')); ?></h2>
+                <p><?php echo esc_html($this->tr('Levi uses OpenRouter with Kimi K2.5. Configure your API key below.', 'Levi nutzt OpenRouter mit Kimi K2.5. Richte deinen API-Schluessel ein.')); ?></p>
             </div>
 
-            <!-- Provider Selection -->
-            <div class="levi-form-card">
-                <h3><?php echo esc_html($this->tr('Provider', 'Anbieter')); ?></h3>
-                <div class="levi-provider-grid">
-                    <?php foreach ($this->getProviderLabels() as $providerId => $providerLabel): 
-                        $isActive = $provider === $providerId;
-                        $providerIcons = [
-                            'openrouter' => '🌐',
-                            'openai' => '🤖',
-                            'anthropic' => '🧠',
-                        ];
-                    ?>
-                        <label class="levi-provider-option <?php echo $isActive ? 'levi-provider-active' : ''; ?>">
-                            <input type="radio" name="<?php echo esc_attr($this->optionName); ?>[ai_provider]" 
-                                   value="<?php echo esc_attr($providerId); ?>" 
-                                   <?php checked($provider, $providerId); ?>
-                                   class="levi-provider-input">
-                            <span class="levi-provider-icon"><?php echo esc_html($providerIcons[$providerId] ?? '🔌'); ?></span>
-                            <span class="levi-provider-name"><?php echo esc_html($providerLabel); ?></span>
-                        </label>
-                    <?php endforeach; ?>
-                </div>
-            </div>
+            <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_provider]" value="openrouter">
 
             <!-- Authentication -->
             <div class="levi-form-card">
                 <h3><?php echo esc_html($this->tr('Authentication', 'Authentifizierung')); ?></h3>
                 
-                <div class="levi-form-group">
-                    <label class="levi-form-label"><?php echo esc_html($this->tr('Auth Method', 'Anmeldemethode')); ?></label>
-                    <select name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" class="levi-form-select">
-                        <?php foreach ($this->getAuthMethodOptions($provider) as $id => $label): ?>
-                            <option value="<?php echo esc_attr($id); ?>" <?php selected($this->getAuthMethod(), $id); ?>>
-                                <?php echo esc_html($label); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
+                <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" value="api_key">
                 <div class="levi-form-group">
                     <label class="levi-form-label">
                         <?php echo esc_html($this->tr('API Key', 'API-Schluessel')); ?>
@@ -435,7 +461,7 @@ class SettingsPage {
                         <?php endif; ?>
                     </p>
                     <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr('Hint: The API key is stored in the database and never sent to third parties except the chosen provider (OpenRouter, OpenAI, or Anthropic). You can also set it via .env (OPEN_ROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY).', 'Hinweis: Der API-Schluessel wird in der Datenbank gespeichert und nur an den gewaehlten Anbieter (OpenRouter, OpenAI oder Anthropic) uebertragen. Alternativ per .env setzen (OPEN_ROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY).')); ?>
+                        <?php echo esc_html($this->tr('Hint: The API key is stored in the database and only sent to OpenRouter. You can also set it via .env (OPEN_ROUTER_API_KEY).', 'Hinweis: Der API-Schluessel wird in der Datenbank gespeichert und nur an OpenRouter uebertragen. Alternativ per .env setzen (OPEN_ROUTER_API_KEY).')); ?>
                     </p>
                 </div>
 
@@ -448,32 +474,12 @@ class SettingsPage {
                 </div>
             </div>
 
-            <!-- Model Selection -->
+            <!-- Model (fixed: Kimi K2.5) -->
             <div class="levi-form-card">
                 <h3><?php echo esc_html($this->tr('Model', 'Modell')); ?></h3>
                 <div class="levi-form-group">
-                    <?php 
-                    $modelField = match($provider) {
-                        'openai' => 'openai_model',
-                        'anthropic' => 'anthropic_model',
-                        default => 'openrouter_model',
-                    };
-                    $currentModel = $settings[$modelField] ?? '';
-                    $models = $this->getAllowedModelsForProvider($provider);
-                    ?>
-                    <select name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($modelField); ?>]" class="levi-form-select">
-                        <?php foreach ($models as $modelId => $modelLabel): ?>
-                            <option value="<?php echo esc_attr($modelId); ?>" <?php selected($currentModel, $modelId); ?>>
-                                <?php echo esc_html($modelLabel); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <p class="levi-form-help">
-                        <?php echo esc_html($this->tr('Select the AI model for chat responses.', 'Waehle das KI-Modell fuer Chat-Antworten.')); ?>
-                    </p>
-                    <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr('Hint: More capable models (e.g. GPT-4o, Claude) cost more per request. Start with a free or cheaper model for testing.', 'Hinweis: Leistungsstaerkere Modelle (z. B. GPT-4o, Claude) kosten mehr pro Anfrage. Fuer Tests zuerst ein guenstiges oder freies Modell nehmen.')); ?>
-                    </p>
+                    <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[openrouter_model]" value="moonshotai/kimi-k2.5">
+                    <p class="levi-form-help"><?php echo esc_html($this->tr('Kimi K2.5 (Moonshot) via OpenRouter', 'Kimi K2.5 (Moonshot) ueber OpenRouter')); ?></p>
                 </div>
             </div>
         </div>
@@ -593,6 +599,41 @@ class SettingsPage {
                 <p><?php echo esc_html($this->tr('Configure safety measures and usage limits.', 'Konfiguriere Sicherheitsmechanismen und Nutzungsgrenzen.')); ?></p>
             </div>
 
+            <!-- Tool Profile (full-width) -->
+            <div class="levi-form-card" style="margin-bottom: 1.5rem;">
+                <h3><?php echo esc_html($this->tr('Tool Profile', 'Tool-Profil')); ?></h3>
+                <p class="levi-form-description">
+                    <?php echo esc_html($this->tr(
+                        'Controls which tools Levi can use. Choose a profile that matches your comfort level.',
+                        'Steuert, welche Tools Levi nutzen darf. Waehle ein Profil passend zu deinem Erfahrungslevel.'
+                    )); ?>
+                </p>
+                <div class="levi-form-group">
+                    <?php
+                    $profiles = \Levi\Agent\AI\Tools\Registry::getProfileLabels();
+                    $currentProfile = $settings['tool_profile'] ?? 'standard';
+                    foreach ($profiles as $profileKey => $profileData): ?>
+                        <label class="levi-radio-card <?php echo $currentProfile === $profileKey ? 'levi-radio-card-active' : ''; ?>" style="display:flex; align-items:flex-start; gap:0.75rem; padding:0.75rem 1rem; border:1px solid <?php echo $currentProfile === $profileKey ? '#6366f1' : '#374151'; ?>; border-radius:8px; margin-bottom:0.5rem; cursor:pointer; background:<?php echo $currentProfile === $profileKey ? 'rgba(99,102,241,0.08)' : 'transparent'; ?>;">
+                            <input type="radio"
+                                   name="<?php echo esc_attr($this->optionName); ?>[tool_profile]"
+                                   value="<?php echo esc_attr($profileKey); ?>"
+                                   <?php checked($currentProfile, $profileKey); ?>
+                                   style="margin-top:3px;">
+                            <div>
+                                <strong><?php echo esc_html($profileData['label']); ?></strong>
+                                <p class="levi-form-help" style="margin:0.25rem 0 0;"><?php echo esc_html($profileData['description']); ?></p>
+                            </div>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+                <p class="levi-form-help levi-hint">
+                    <?php echo esc_html($this->tr(
+                        'Hint: "Standard" is recommended for most users. Switch to "Full" only if you need PHP code execution or HTTP fetching.',
+                        'Hinweis: "Standard" wird fuer die meisten Nutzer empfohlen. Wechsle nur zu "Voll", wenn du PHP-Code-Ausfuehrung oder HTTP-Fetch brauchst.'
+                    )); ?>
+                </p>
+            </div>
+
             <div class="levi-cards-grid levi-cards-2col">
                 <!-- Rate Limiting -->
                 <div class="levi-form-card">
@@ -651,25 +692,74 @@ class SettingsPage {
                         <input type="number" 
                                name="<?php echo esc_attr($this->optionName); ?>[max_tool_iterations]" 
                                value="<?php echo esc_attr($settings['max_tool_iterations']); ?>"
-                               min="1" max="30" class="levi-form-input levi-input-small">
+                               min="1" class="levi-form-input levi-input-small">
                         <p class="levi-form-help">
-                            <?php echo esc_html($this->tr('Maximum consecutive tool rounds per request.', 'Maximale aufeinanderfolgende Tool-Runden pro Anfrage.')); ?>
+                            <?php echo esc_html($this->tr('Maximum consecutive tool rounds per request. No upper limit.', 'Maximale aufeinanderfolgende Tool-Runden pro Anfrage. Kein Oberlimit.')); ?>
                         </p>
                     </div>
                 </div>
 
-                <!-- History Context -->
+                <!-- AI Response Settings -->
+                <div class="levi-form-card">
+                    <h3><?php echo esc_html($this->tr('AI Response', 'KI-Antwort')); ?></h3>
+                    <div class="levi-form-row">
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('Max Tokens', 'Max. Tokens')); ?></label>
+                            <input type="number" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[max_tokens]" 
+                                   value="<?php echo esc_attr($settings['max_tokens']); ?>"
+                                   min="1" max="131072" class="levi-form-input levi-input-small">
+                            <p class="levi-form-help">
+                                <?php echo esc_html($this->tr('Maximum tokens per AI response (max 131072). The AI only uses what it needs, but the provider reserves this space.', 'Maximale Tokens pro KI-Antwort (max 131072). Die KI nutzt nur so viel wie noetig, aber der Provider reserviert diesen Platz.')); ?>
+                            </p>
+                        </div>
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('AI Timeout (seconds)', 'KI-Timeout (Sekunden)')); ?></label>
+                            <input type="number" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[ai_timeout]" 
+                                   value="<?php echo esc_attr($settings['ai_timeout']); ?>"
+                                   min="1" class="levi-form-input levi-input-small">
+                            <p class="levi-form-help">
+                                <?php echo esc_html($this->tr('How long to wait for the AI provider to respond.', 'Wie lange auf Antwort des KI-Anbieters gewartet wird.')); ?>
+                            </p>
+                        </div>
+                    </div>
+                    <div class="levi-form-group">
+                        <label class="levi-form-label"><?php echo esc_html($this->tr('PHP Time Limit (seconds)', 'PHP-Zeitlimit (Sekunden)')); ?></label>
+                        <input type="number" 
+                               name="<?php echo esc_attr($this->optionName); ?>[php_time_limit]" 
+                               value="<?php echo esc_attr($settings['php_time_limit']); ?>"
+                               min="0" class="levi-form-input levi-input-small">
+                        <p class="levi-form-help">
+                            <?php echo esc_html($this->tr('PHP set_time_limit() for chat requests. 0 = unlimited. Increase for complex multi-step tasks.', 'PHP set_time_limit() fuer Chat-Anfragen. 0 = unbegrenzt. Bei komplexen mehrstufigen Aufgaben erhoehen.')); ?>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Context Budget -->
                 <div class="levi-form-card">
                     <h3><?php echo esc_html($this->tr('Conversation Context', 'Kontext-Verlauf')); ?></h3>
-                    <div class="levi-form-group">
-                        <label class="levi-form-label"><?php echo esc_html($this->tr('History Messages', 'Verlaufsnachrichten')); ?></label>
-                        <input type="number" 
-                               name="<?php echo esc_attr($this->optionName); ?>[history_context_limit]" 
-                               value="<?php echo esc_attr($settings['history_context_limit']); ?>"
-                               min="10" max="200" class="levi-form-input levi-input-small">
-                        <p class="levi-form-help">
-                            <?php echo esc_html($this->tr('Number of previous messages sent as context.', 'Anzahl vorheriger Nachrichten, die als Kontext mitgesendet werden.')); ?>
-                        </p>
+                    <div class="levi-form-row">
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('Max Context Tokens', 'Max. Kontext-Tokens')); ?></label>
+                            <input type="number" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[max_context_tokens]" 
+                                   value="<?php echo esc_attr($settings['max_context_tokens']); ?>"
+                                   min="1000" max="500000" step="1000" class="levi-form-input levi-input-small">
+                            <p class="levi-form-help">
+                                <?php echo esc_html($this->tr('Maximum input tokens sent to the AI. Older messages are trimmed if exceeded. Prevents context overflow errors.', 'Maximale Input-Tokens an die KI. Aeltere Nachrichten werden gekuerzt wenn ueberschritten. Verhindert Context-Overflow-Fehler.')); ?>
+                            </p>
+                        </div>
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('History Messages', 'Verlaufsnachrichten')); ?></label>
+                            <input type="number" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[history_context_limit]" 
+                                   value="<?php echo esc_attr($settings['history_context_limit']); ?>"
+                                   min="10" max="200" class="levi-form-input levi-input-small">
+                            <p class="levi-form-help">
+                                <?php echo esc_html($this->tr('Number of previous messages sent as context.', 'Anzahl vorheriger Nachrichten, die als Kontext mitgesendet werden.')); ?>
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -735,11 +825,7 @@ class SettingsPage {
 
     // Helper Methods
     public function getProviderLabels(): array {
-        return [
-            'openrouter' => 'OpenRouter',
-            'openai' => 'OpenAI',
-            'anthropic' => 'Anthropic',
-        ];
+        return ['openrouter' => 'OpenRouter'];
     }
 
     public function getProvider(): string {
@@ -750,19 +836,7 @@ class SettingsPage {
     }
 
     public function getAuthMethodOptions(string $provider): array {
-        return match ($provider) {
-            'openrouter' => [
-                'api_key' => $this->tr('API Key', 'API-Schluessel'),
-                'oauth' => $this->tr('Login via OpenRouter (OAuth, coming soon)', 'Login via OpenRouter (OAuth, bald verfuegbar)'),
-            ],
-            'anthropic' => [
-                'api_key' => $this->tr('API Key (Pay-as-you-go)', 'API-Schluessel (Pay-as-you-go)'),
-                'subscription_token' => $this->tr('Subscription Token (sk-ant-oat-*)', 'Subscription-Token (sk-ant-oat-*)'),
-            ],
-            default => [
-                'api_key' => $this->tr('API Key', 'API-Schluessel'),
-            ],
-        };
+        return ['api_key' => $this->tr('API Key', 'API-Schluessel')];
     }
 
     public function getAuthMethod(): string {
@@ -829,27 +903,9 @@ class SettingsPage {
     }
 
     public function getAllowedModelsForProvider(string $provider): array {
-        return match ($provider) {
-            'openai' => [
-                'gpt-4o-mini' => 'GPT-4o Mini (günstig)',
-                'gpt-4o' => 'GPT-4o',
-                'gpt-4.1-mini' => 'GPT-4.1 Mini',
-                'gpt-4.1' => 'GPT-4.1',
-            ],
-            'anthropic' => [
-                'claude-3-5-haiku-20241022' => 'Claude 3.5 Haiku',
-                'claude-3-5-sonnet-20241022' => 'Claude 3.5 Sonnet',
-                'claude-3-opus-20240229' => 'Claude 3 Opus',
-            ],
-            default => [
-                'meta-llama/llama-3.1-70b-instruct:free' => 'Llama 3.1 70B (kostenlos)',
-                'moonshotai/kimi-k2.5' => 'Kimi K2.5 (Moonshot)',
-                'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet',
-                'openai/gpt-4o' => 'GPT-4o',
-                'google/gemini-2.0-flash-001' => 'Gemini 2.0 Flash',
-                'meta-llama/llama-3.1-70b-instruct' => 'Llama 3.1 70B (kostenpflichtig)',
-            ],
-        };
+        return [
+            'moonshotai/kimi-k2.5' => 'Kimi K2.5 (Moonshot)',
+        ];
     }
 
     public function getModel(): string {
@@ -875,12 +931,17 @@ class SettingsPage {
             'openrouter_api_key' => '',
             'openai_api_key' => '',
             'anthropic_api_key' => '',
-            'openrouter_model' => 'meta-llama/llama-3.1-70b-instruct:free',
+            'openrouter_model' => 'moonshotai/kimi-k2.5',
             'openai_model' => 'gpt-4o-mini',
             'anthropic_model' => 'claude-3-5-sonnet-20241022',
             'rate_limit' => 50,
             'max_tool_iterations' => 12,
+            'max_tokens' => 131072,
+            'ai_timeout' => 120,
+            'php_time_limit' => 120,
+            'max_context_tokens' => 100000,
             'history_context_limit' => 50,
+            'tool_profile' => 'standard',
             'force_exhaustive_reads' => 1,
             'require_confirmation_destructive' => 1,
             'memory_identity_k' => 5,

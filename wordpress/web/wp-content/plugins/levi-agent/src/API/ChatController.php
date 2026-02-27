@@ -35,7 +35,8 @@ class ChatController extends WP_REST_Controller {
         $this->settings = new SettingsPage();
         $this->aiClient = AIClientFactory::create($this->settings->getProvider());
         $this->conversationRepo = new ConversationRepository();
-        $this->toolRegistry = new Registry();
+        $toolProfile = $this->settings->getSettings()['tool_profile'] ?? 'standard';
+        $this->toolRegistry = new Registry($toolProfile);
         
         add_action('rest_api_init', [$this, 'register_routes']);
     }
@@ -45,6 +46,28 @@ class ChatController extends WP_REST_Controller {
             [
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [$this, 'sendMessage'],
+                'permission_callback' => [$this, 'checkPermission'],
+                'args' => [
+                    'message' => [
+                        'required' => true,
+                        'type' => 'string',
+                        'sanitize_callback' => 'sanitize_textarea_field',
+                    ],
+                    'session_id' => [
+                        'type' => ['string', 'null'],
+                        'default' => null,
+                        'sanitize_callback' => function($value) {
+                            return $value ? sanitize_text_field($value) : null;
+                        },
+                    ],
+                ],
+            ],
+        ]);
+
+        register_rest_route($this->namespace, '/' . $this->rest_base . '/stream', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [$this, 'sendMessageStream'],
                 'permission_callback' => [$this, 'checkPermission'],
                 'args' => [
                     'message' => [
@@ -176,17 +199,390 @@ class ChatController extends WP_REST_Controller {
     }
 
     public function sendMessage(WP_REST_Request $request): WP_REST_Response {
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 120);
+        if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
+            @set_time_limit($phpTimeLimit);
+        }
+        ob_start();
         try {
-            return $this->processMessage($request);
+            $response = $this->processMessage($request);
         } catch (\Throwable $e) {
             error_log('Levi Agent Error: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
-            return new WP_REST_Response([
+            $response = new WP_REST_Response([
                 'error' => 'Internal error: ' . $e->getMessage(),
                 'session_id' => $request->get_param('session_id') ?? $this->generateSessionId(),
             ], 500);
+        } finally {
+            if (ob_get_level() > 0) {
+                ob_end_clean();
+            }
         }
+        return $response;
     }
     
+    public function sendMessageStream(WP_REST_Request $request): void {
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 120);
+        if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
+            @set_time_limit($phpTimeLimit);
+        }
+        ignore_user_abort(false);
+
+        // Disable ALL output buffering layers
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache');
+        header('Connection: keep-alive');
+        header('X-Accel-Buffering: no');
+
+        try {
+            $this->processMessageStreaming($request);
+        } catch (\Throwable $e) {
+            error_log('Levi Stream Error: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            $this->emitSSE('error', [
+                'message' => 'Internal error: ' . $e->getMessage(),
+                'session_id' => $request->get_param('session_id') ?? '',
+            ]);
+        }
+
+        die();
+    }
+
+    private function emitSSE(string $type, array $data): void {
+        $data['type'] = $type;
+        echo 'data: ' . wp_json_encode($data) . "\n\n";
+        if (function_exists('ob_flush')) {
+            @ob_flush();
+        }
+        flush();
+    }
+
+    private function processMessageStreaming(WP_REST_Request $request): void {
+        $message = $request->get_param('message');
+        $sessionId = $request->get_param('session_id') ?? $this->generateSessionId();
+        $userId = get_current_user_id();
+
+        // Session ownership check
+        if ($sessionId !== null) {
+            $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
+            if ($ownerId !== null && $ownerId !== $userId && !current_user_can('manage_options')) {
+                $this->emitSSE('error', ['message' => 'Session not found or access denied.', 'session_id' => $sessionId]);
+                return;
+            }
+        }
+
+        if (!$this->checkRateLimit($userId)) {
+            $this->emitSSE('error', ['message' => 'Rate limit exceeded. Please try again later.', 'session_id' => $sessionId]);
+            return;
+        }
+
+        if (!$this->aiClient->isConfigured()) {
+            $this->emitSSE('error', ['message' => 'AI not configured. Please set up provider credentials in Settings.', 'session_id' => $sessionId]);
+            return;
+        }
+
+        // Emit initial status immediately (keeps Nginx alive)
+        $this->emitSSE('status', ['message' => 'Levi denkt nach...', 'session_id' => $sessionId]);
+
+        try {
+            $this->conversationRepo->saveMessage($sessionId, $userId, 'user', $message);
+        } catch (\Exception $e) {
+            error_log('Levi DB Error: ' . $e->getMessage());
+        }
+
+        $hasUploadedContext = !empty($this->getSessionUploads($sessionId, $userId));
+        $messages = $this->buildMessages($sessionId, $message, true);
+        $tools = $this->toolRegistry->getDefinitions();
+
+        // Heartbeat callback for SSE keepalive during AI calls
+        $heartbeat = function () {
+            if (connection_aborted()) {
+                return;
+            }
+            $this->emitSSE('heartbeat', []);
+        };
+
+        // Call AI with heartbeat
+        $response = $this->aiClient->chat($messages, $tools, $heartbeat);
+
+        // Error handling with fallbacks (same logic as non-streaming)
+        if (is_wp_error($response)) {
+            $errMsg = $response->get_error_message();
+            $errMsgLower = mb_strtolower($errMsg);
+            $isNoEndpointFailure = $this->isNoEndpointsError($errMsgLower);
+            $isProviderFailure = str_contains($errMsgLower, 'provider') || str_contains($errMsgLower, '503');
+            $isTimeoutFailure = $this->isTimeoutError($errMsgLower);
+
+            if (!empty($tools) && ($isNoEndpointFailure || ($isProviderFailure && !$this->isActionIntent($message)))) {
+                $this->emitSSE('status', ['message' => 'Neuer Versuch ohne Tools...']);
+                $response = $this->aiClient->chat($messages, [], $heartbeat);
+            } elseif ($isTimeoutFailure && $hasUploadedContext) {
+                $this->emitSSE('status', ['message' => 'Timeout, versuche mit weniger Kontext...']);
+                $messages = $this->buildMessages($sessionId, $message, false);
+                $response = $this->aiClient->chat($messages, $tools, $heartbeat);
+                if (is_wp_error($response) && !empty($tools)) {
+                    $response = $this->aiClient->chat($messages, [], $heartbeat);
+                }
+            } elseif ($isTimeoutFailure && !empty($tools)) {
+                $this->emitSSE('status', ['message' => 'Timeout, neuer Versuch...']);
+                $response = $this->aiClient->chat($messages, [], $heartbeat);
+            }
+        }
+
+        // Context overflow auto-recovery
+        if (is_wp_error($response)) {
+            $overflowMsg = mb_strtolower($response->get_error_message());
+            if (str_contains($overflowMsg, 'context length') || str_contains($overflowMsg, 'too many tokens') || str_contains($overflowMsg, 'maximum context')) {
+                $this->emitSSE('status', ['message' => 'Kontext wird gekuerzt...']);
+                $halvedMessages = $this->halveHistory($messages);
+                $response = $this->aiClient->chat($halvedMessages, $tools, $heartbeat);
+                if (is_wp_error($response) && !empty($tools)) {
+                    $response = $this->aiClient->chat($halvedMessages, [], $heartbeat);
+                }
+                if (!is_wp_error($response)) {
+                    $messages = $halvedMessages;
+                }
+            }
+        }
+
+        if (is_wp_error($response)) {
+            $this->emitSSE('error', ['message' => $response->get_error_message(), 'session_id' => $sessionId]);
+            return;
+        }
+
+        // Auto-retry on empty AI response (up to 2 attempts)
+        if ($this->isEmptyAiResponse($response)) {
+            $originalContent = (string) ($response['choices'][0]['message']['content'] ?? '');
+            error_log('Levi: empty AI response (attempt 1), original content: ' . mb_substr($originalContent, 0, 500));
+
+            for ($retryAttempt = 1; $retryAttempt <= 2; $retryAttempt++) {
+                $this->emitSSE('status', ['message' => 'Levi versucht es erneut... (Versuch ' . ($retryAttempt + 1) . ')']);
+                $response = $this->aiClient->chat($messages, $tools, $heartbeat);
+
+                if (is_wp_error($response)) {
+                    $this->emitSSE('error', ['message' => $response->get_error_message(), 'session_id' => $sessionId]);
+                    return;
+                }
+                if (!$this->isEmptyAiResponse($response)) {
+                    break;
+                }
+                error_log('Levi: empty AI response (attempt ' . ($retryAttempt + 1) . ')');
+            }
+        }
+
+        $messageData = $response['choices'][0]['message'] ?? [];
+
+        if (isset($messageData['tool_calls']) && !empty($messageData['tool_calls'])) {
+            $this->handleToolCallsStreaming($messageData, $messages, $sessionId, $userId, (string) $message, $heartbeat);
+            return;
+        }
+
+        // Normal response (no tools)
+        $assistantMessage = $this->sanitizeAssistantMessageContent(
+            (string) ($messageData['content'] ?? '')
+        );
+
+        if ($assistantMessage === '') {
+            $assistantMessage = $this->getEmptyResponseFallback();
+        }
+
+        if ($this->wasResponseTruncated($response)) {
+            $assistantMessage = $this->appendTruncationHint($assistantMessage);
+        }
+
+        try {
+            $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+        } catch (\Exception $e) {
+            error_log('Levi DB Error: ' . $e->getMessage());
+        }
+
+        $this->emitSSE('done', [
+            'session_id' => $sessionId,
+            'message' => $assistantMessage,
+            'model' => $response['model'] ?? null,
+            'truncated' => $this->wasResponseTruncated($response),
+        ]);
+    }
+
+    private function handleToolCallsStreaming(
+        array $messageData,
+        array $messages,
+        string $sessionId,
+        int $userId,
+        string $latestUserMessage,
+        callable $heartbeat
+    ): void {
+        $toolResults = [];
+        $runtimeSettings = $this->settings->getSettings();
+        $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 12));
+        $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
+        $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
+        $iteration = 0;
+        $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
+
+        while ($iteration < $maxIterations) {
+            $toolCalls = $messageData['tool_calls'] ?? [];
+            if (empty($toolCalls)) {
+                break;
+            }
+
+            $iteration++;
+            $messages[] = $messageData;
+
+            foreach ($toolCalls as $toolCall) {
+                $functionName = $toolCall['function']['name'] ?? '';
+                $rawArgs = $toolCall['function']['arguments'] ?? '{}';
+                $functionArgs = json_decode($rawArgs, true);
+                if (!is_array($functionArgs)) {
+                    $functionArgs = [];
+                }
+                $functionArgs = $this->normalizeToolArgumentsForIntent($functionName, $functionArgs, $latestUserMessage);
+                $toolCallId = $toolCall['id'] ?? '';
+
+                $this->emitSSE('progress', [
+                    'message' => $this->getToolProgressLabel($functionName, 'start'),
+                    'tool' => $functionName,
+                    'iteration' => $iteration,
+                ]);
+
+                if ($this->shouldDeferCreationTool($functionName, $functionArgs, $taskIntent)) {
+                    $result = [
+                        'success' => false,
+                        'needs_clarification' => true,
+                        'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin.',
+                        'tool' => $functionName,
+                    ];
+                } elseif ($requireConfirmation && $this->isDestructiveTool($functionName) && !$hasConfirmation) {
+                    $result = [
+                        'success' => false,
+                        'needs_confirmation' => true,
+                        'error' => 'Fuer diese Aktion brauche ich eine explizite Bestaetigung.',
+                        'tool' => $functionName,
+                    ];
+                } else {
+                    $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                }
+
+                $toolResults[] = ['tool' => $functionName, 'result' => $result];
+
+                $this->emitSSE('progress', [
+                    'message' => $this->getToolProgressLabel($functionName, ($result['success'] ?? false) ? 'done' : 'failed'),
+                    'tool' => $functionName,
+                    'iteration' => $iteration,
+                    'success' => $result['success'] ?? false,
+                ]);
+
+                $messages[] = [
+                    'role' => 'tool',
+                    'tool_call_id' => $toolCallId,
+                    'content' => $this->compactToolResultForModel($result),
+                ];
+            }
+
+            $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
+            if (!empty($postWriteMessages)) {
+                $this->emitSSE('progress', [
+                    'message' => 'Prüfe Error-Logs...',
+                    'tool' => 'read_error_log',
+                    'iteration' => $iteration,
+                ]);
+                foreach ($postWriteMessages as $pwm) {
+                    $messages[] = $pwm;
+                }
+            }
+
+            if (connection_aborted()) {
+                error_log('Levi: client disconnected during tool loop');
+                return;
+            }
+
+            $this->emitSSE('status', ['message' => 'Levi verarbeitet Ergebnisse...']);
+
+            $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat);
+            if (is_wp_error($nextResponse)) {
+                $errMsgLower = mb_strtolower($nextResponse->get_error_message());
+                if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
+                    $nextResponse = $this->aiClient->chat($messages, [], $heartbeat);
+                }
+            }
+            if (is_wp_error($nextResponse)) {
+                $this->emitSSE('error', [
+                    'message' => $nextResponse->get_error_message(),
+                    'session_id' => $sessionId,
+                    'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
+                ]);
+                return;
+            }
+
+            $messageData = $nextResponse['choices'][0]['message'] ?? [];
+            if (empty($messageData['tool_calls'])) {
+                $finalMessage = $this->sanitizeAssistantMessageContent(
+                    (string) ($messageData['content'] ?? '')
+                );
+
+                if ($finalMessage === '') {
+                    error_log('Levi: empty AI response after tool loop, original: ' . mb_substr((string) ($messageData['content'] ?? ''), 0, 500));
+                    $finalMessage = $this->getEmptyResponseFallback();
+                }
+
+                $finalMessage = $this->applyResponseSafetyGates($finalMessage, $toolResults, $taskIntent);
+
+                if ($this->wasResponseTruncated($nextResponse)) {
+                    $finalMessage = $this->appendTruncationHint($finalMessage);
+                }
+
+                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+
+                $this->emitSSE('done', [
+                    'session_id' => $sessionId,
+                    'message' => $finalMessage,
+                    'model' => $nextResponse['model'] ?? null,
+                    'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
+                    'truncated' => $this->wasResponseTruncated($nextResponse),
+                ]);
+                return;
+            }
+        }
+
+        $finalMessage = 'Ich habe mehrere Teilaufgaben ausgefuehrt, aber brauche eine kurze Bestaetigung zum naechsten Schritt.';
+        $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+
+        $this->emitSSE('done', [
+            'session_id' => $sessionId,
+            'message' => $finalMessage,
+            'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
+        ]);
+    }
+
+    private function getToolProgressLabel(string $toolName, string $phase): string {
+        $labels = [
+            'get_posts' => ['start' => 'Beitraege werden gelesen...', 'done' => 'Beitraege gelesen', 'failed' => 'Beitraege lesen fehlgeschlagen'],
+            'get_pages' => ['start' => 'Seiten werden gelesen...', 'done' => 'Seiten gelesen', 'failed' => 'Seiten lesen fehlgeschlagen'],
+            'create_post' => ['start' => 'Beitrag wird erstellt...', 'done' => 'Beitrag erstellt', 'failed' => 'Beitrag erstellen fehlgeschlagen'],
+            'create_page' => ['start' => 'Seite wird erstellt...', 'done' => 'Seite erstellt', 'failed' => 'Seite erstellen fehlgeschlagen'],
+            'update_post' => ['start' => 'Beitrag wird aktualisiert...', 'done' => 'Beitrag aktualisiert', 'failed' => 'Beitrag aktualisieren fehlgeschlagen'],
+            'get_woocommerce_data' => ['start' => 'Shop-Daten werden gelesen...', 'done' => 'Shop-Daten gelesen', 'failed' => 'Shop-Daten lesen fehlgeschlagen'],
+            'manage_woocommerce' => ['start' => 'Shop wird bearbeitet...', 'done' => 'Shop-Aktion abgeschlossen', 'failed' => 'Shop-Aktion fehlgeschlagen'],
+            'create_plugin' => ['start' => 'Plugin wird erstellt...', 'done' => 'Plugin erstellt', 'failed' => 'Plugin erstellen fehlgeschlagen'],
+            'install_plugin' => ['start' => 'Plugin wird installiert...', 'done' => 'Plugin installiert', 'failed' => 'Plugin installieren fehlgeschlagen'],
+            'discover_content_types' => ['start' => 'Inhaltstypen werden erkannt...', 'done' => 'Inhaltstypen erkannt', 'failed' => 'Erkennung fehlgeschlagen'],
+            'manage_post_meta' => ['start' => 'Metadaten werden verarbeitet...', 'done' => 'Metadaten verarbeitet', 'failed' => 'Metadaten-Zugriff fehlgeschlagen'],
+            'manage_taxonomy' => ['start' => 'Taxonomie wird verarbeitet...', 'done' => 'Taxonomie verarbeitet', 'failed' => 'Taxonomie-Zugriff fehlgeschlagen'],
+        ];
+        $phaseLabels = $labels[$toolName] ?? null;
+        if ($phaseLabels) {
+            return $phaseLabels[$phase] ?? $phaseLabels['start'];
+        }
+        return match ($phase) {
+            'start' => 'Tool wird ausgefuehrt: ' . $toolName,
+            'done' => 'Tool abgeschlossen: ' . $toolName,
+            'failed' => 'Tool fehlgeschlagen: ' . $toolName,
+            default => $toolName,
+        };
+    }
+
     private function processMessage(WP_REST_Request $request): WP_REST_Response {
         $message = $request->get_param('message');
         $sessionId = $request->get_param('session_id') ?? $this->generateSessionId();
@@ -263,11 +659,41 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
+        // Context overflow auto-recovery: halve the history and retry once
+        if (is_wp_error($response)) {
+            $overflowMsg = mb_strtolower($response->get_error_message());
+            if (str_contains($overflowMsg, 'context length') || str_contains($overflowMsg, 'too many tokens') || str_contains($overflowMsg, 'maximum context')) {
+                error_log('Levi: context overflow detected, retrying with halved history');
+                $halvedMessages = $this->halveHistory($messages);
+                $response = $this->aiClient->chat($halvedMessages, $tools);
+                if (is_wp_error($response) && !empty($tools)) {
+                    $response = $this->aiClient->chat($halvedMessages, []);
+                }
+                if (!is_wp_error($response)) {
+                    $messages = $halvedMessages;
+                }
+            }
+        }
+
         if (is_wp_error($response)) {
             $errMsg = $response->get_error_message();
             $errMsgLower = mb_strtolower($errMsg);
-            $statusCode = $this->isNoEndpointsError($errMsgLower) ? 503 : ($this->isTimeoutError($errMsgLower) ? 504 : 500);
-            if ($statusCode === 503) {
+            $errData = $response->get_error_data();
+            $upstreamStatus = is_array($errData) ? (int) ($errData['status'] ?? 0) : 0;
+
+            if ($upstreamStatus === 429 || str_contains($errMsgLower, 'rate-limit') || str_contains($errMsgLower, 'rate limit')) {
+                $statusCode = 429;
+            } elseif ($this->isNoEndpointsError($errMsgLower)) {
+                $statusCode = 503;
+            } elseif ($this->isTimeoutError($errMsgLower)) {
+                $statusCode = 504;
+            } else {
+                $statusCode = $upstreamStatus >= 400 ? $upstreamStatus : 500;
+            }
+
+            if ($statusCode === 429) {
+                $errMsg = 'Das KI-Modell ist gerade überlastet (Rate Limit). Bitte warte einen Moment und versuche es erneut.';
+            } elseif ($statusCode === 503) {
                 $provider = $this->settings->getProvider();
                 $model = $this->settings->getModelForProvider($provider);
                 $errMsg = sprintf(
@@ -283,31 +709,61 @@ class ChatController extends WP_REST_Controller {
             ], $statusCode);
         }
 
+        // Auto-retry on empty AI response (up to 2 attempts)
+        if ($this->isEmptyAiResponse($response)) {
+            $originalContent = (string) ($response['choices'][0]['message']['content'] ?? '');
+            error_log('Levi: empty AI response (classic, attempt 1), original content: ' . mb_substr($originalContent, 0, 500));
+
+            for ($retryAttempt = 1; $retryAttempt <= 2; $retryAttempt++) {
+                $response = $this->aiClient->chat($messages, $tools);
+                if (is_wp_error($response)) {
+                    break;
+                }
+                if (!$this->isEmptyAiResponse($response)) {
+                    break;
+                }
+                error_log('Levi: empty AI response (classic, attempt ' . ($retryAttempt + 1) . ')');
+            }
+        }
+
+        if (is_wp_error($response)) {
+            return new WP_REST_Response([
+                'error' => $response->get_error_message(),
+                'session_id' => $sessionId,
+            ], 500);
+        }
+
         // Check if AI wants to use a tool
         $messageData = $response['choices'][0]['message'] ?? [];
         
         if (isset($messageData['tool_calls']) && !empty($messageData['tool_calls'])) {
-            // AI wants to use tool(s)
             return $this->handleToolCalls($messageData, $messages, $sessionId, $userId, (string) $message);
         }
 
         // Normal response (no tools)
         $assistantMessage = $this->sanitizeAssistantMessageContent(
-            (string) ($messageData['content'] ?? 'Sorry, I could not generate a response.')
+            (string) ($messageData['content'] ?? '')
         );
 
-        // Save assistant message (wrapped in try-catch)
+        if ($assistantMessage === '') {
+            $assistantMessage = $this->getEmptyResponseFallback();
+        }
+
+        if ($this->wasResponseTruncated($response)) {
+            $assistantMessage = $this->appendTruncationHint($assistantMessage);
+        }
+
         try {
             $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
         } catch (\Exception $e) {
             error_log('Levi DB Error: ' . $e->getMessage());
-            // Continue without saving
         }
 
         return new WP_REST_Response([
             'session_id' => $sessionId,
             'message' => $assistantMessage,
             'model' => $response['model'] ?? null,
+            'truncated' => $this->wasResponseTruncated($response),
             'timestamp' => current_time('mysql'),
         ], 200);
     }
@@ -395,7 +851,13 @@ class ChatController extends WP_REST_Controller {
                 ];
             }
 
-            // Ask model again with tool outputs (include tool definitions for further tool rounds)
+            $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
+            if (!empty($postWriteMessages)) {
+                foreach ($postWriteMessages as $pwm) {
+                    $messages[] = $pwm;
+                }
+            }
+
             $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions());
             if (is_wp_error($nextResponse)) {
                 $errMsg = $nextResponse->get_error_message();
@@ -429,9 +891,20 @@ class ChatController extends WP_REST_Controller {
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
                 $finalMessage = $this->sanitizeAssistantMessageContent(
-                    (string) ($messageData['content'] ?? 'Sorry, I could not process the results.')
+                    (string) ($messageData['content'] ?? '')
                 );
+
+                if ($finalMessage === '') {
+                    error_log('Levi: empty AI response after tool loop (classic), original: ' . mb_substr((string) ($messageData['content'] ?? ''), 0, 500));
+                    $finalMessage = $this->getEmptyResponseFallback();
+                }
+
                 $finalMessage = $this->applyResponseSafetyGates($finalMessage, $toolResults, $taskIntent);
+
+                if ($this->wasResponseTruncated($nextResponse)) {
+                    $finalMessage = $this->appendTruncationHint($finalMessage);
+                }
+
                 $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
                 return new WP_REST_Response([
@@ -440,6 +913,7 @@ class ChatController extends WP_REST_Controller {
                     'model' => $nextResponse['model'] ?? null,
                     'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
                     'execution_trace' => $executionTrace,
+                    'truncated' => $this->wasResponseTruncated($nextResponse),
                     'timestamp' => current_time('mysql'),
                 ], 200);
             }
@@ -485,7 +959,85 @@ class ChatController extends WP_REST_Controller {
             'content' => $newMessage,
         ];
 
-        return $messages;
+        return $this->trimMessagesToBudget($messages);
+    }
+
+    private function estimateTokenCount(string $text): int {
+        return (int) ceil(mb_strlen($text) / 3.5);
+    }
+
+    private function trimMessagesToBudget(array $messages): array {
+        $runtimeSettings = $this->settings->getSettings();
+        $maxContextTokens = max(1000, (int) ($runtimeSettings['max_context_tokens'] ?? 100000));
+
+        $totalTokens = 0;
+        foreach ($messages as $msg) {
+            $totalTokens += $this->estimateTokenCount((string) ($msg['content'] ?? ''));
+        }
+
+        if ($totalTokens <= $maxContextTokens) {
+            return $messages;
+        }
+
+        // Keep system prompt (index 0) and current user message (last) untouched.
+        // Trim oldest history messages first.
+        $systemMsg = $messages[0] ?? null;
+        $userMsg = array_pop($messages);
+        array_shift($messages); // remove system prompt from history
+        $historyMessages = $messages;
+
+        $reservedTokens = $this->estimateTokenCount((string) ($systemMsg['content'] ?? ''))
+            + $this->estimateTokenCount((string) ($userMsg['content'] ?? ''));
+
+        $availableBudget = $maxContextTokens - $reservedTokens;
+        if ($availableBudget < 500) {
+            $availableBudget = 500;
+        }
+
+        // Work backwards through history (newest first), accumulating tokens
+        $keptHistory = [];
+        $usedTokens = 0;
+        for ($i = count($historyMessages) - 1; $i >= 0; $i--) {
+            $msgTokens = $this->estimateTokenCount((string) ($historyMessages[$i]['content'] ?? ''));
+            if ($usedTokens + $msgTokens > $availableBudget) {
+                break;
+            }
+            $usedTokens += $msgTokens;
+            array_unshift($keptHistory, $historyMessages[$i]);
+        }
+
+        $trimmedCount = count($historyMessages) - count($keptHistory);
+        if ($trimmedCount > 0) {
+            error_log(sprintf(
+                'Levi Token Budget: trimmed %d older messages (estimated %d -> %d tokens)',
+                $trimmedCount,
+                $totalTokens,
+                $reservedTokens + $usedTokens
+            ));
+        }
+
+        $result = [];
+        if ($systemMsg) {
+            $result[] = $systemMsg;
+        }
+        foreach ($keptHistory as $msg) {
+            $result[] = $msg;
+        }
+        $result[] = $userMsg;
+
+        return $result;
+    }
+
+    private function halveHistory(array $messages): array {
+        if (count($messages) <= 3) {
+            return $messages;
+        }
+        $system = $messages[0];
+        $userMsg = array_pop($messages);
+        array_shift($messages);
+        $history = $messages;
+        $kept = array_slice($history, (int) ceil(count($history) / 2));
+        return array_merge([$system], $kept, [$userMsg]);
     }
 
     private function getSystemPrompt(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): string {
@@ -539,6 +1091,9 @@ class ChatController extends WP_REST_Controller {
             if (!empty($result['page_id'])) {
                 return 'OK: page_id=' . $result['page_id'];
             }
+            if (!empty($result['theme_slug']) && empty($result['relative_path'])) {
+            return 'OK: theme=' . $result['theme_slug'];
+        }
             if (!empty($result['plugin_file'])) {
                 return 'OK: plugin_file=' . $result['plugin_file'];
             }
@@ -562,7 +1117,88 @@ class ChatController extends WP_REST_Controller {
             'manage_user',
             'install_plugin',
             'delete_plugin_file',
+            'delete_theme_file',
+            'execute_wp_code',
+            'manage_woocommerce',
+            'manage_menu',
+            'manage_cron',
         ], true);
+    }
+
+    private function isWriteTool(string $toolName): bool {
+        return in_array($toolName, [
+            'write_plugin_file',
+            'write_theme_file',
+            'create_plugin',
+            'create_theme',
+            'execute_wp_code',
+        ], true);
+    }
+
+    /**
+     * After write tools, auto-inject a read_error_log check so the AI sees any PHP errors
+     * it may have caused. Returns additional messages to append to the conversation.
+     */
+    private function injectPostWriteValidation(array $toolCalls, array $toolResults): array {
+        $hadWrite = false;
+        foreach ($toolCalls as $tc) {
+            $name = $tc['function']['name'] ?? '';
+            if ($this->isWriteTool($name)) {
+                $matchingResult = null;
+                foreach ($toolResults as $tr) {
+                    if ($tr['tool'] === $name && ($tr['result']['success'] ?? false)) {
+                        $matchingResult = $tr;
+                        break;
+                    }
+                }
+                if ($matchingResult) {
+                    $hadWrite = true;
+                    break;
+                }
+            }
+        }
+
+        if (!$hadWrite) {
+            return [];
+        }
+
+        $errorLogResult = $this->toolRegistry->execute('read_error_log', [
+            'lines' => 30,
+            'filter' => 'Fatal',
+        ]);
+
+        $validationMessages = [];
+
+        $fakeToolCallId = 'auto_validation_' . bin2hex(random_bytes(8));
+
+        $validationMessages[] = [
+            'role' => 'assistant',
+            'content' => null,
+            'tool_calls' => [[
+                'id' => $fakeToolCallId,
+                'type' => 'function',
+                'function' => [
+                    'name' => 'read_error_log',
+                    'arguments' => json_encode(['lines' => 30, 'filter' => 'Fatal']),
+                ],
+            ]],
+        ];
+
+        $hasErrors = !empty($errorLogResult['lines']);
+        $content = $this->compactToolResultForModel($errorLogResult);
+
+        if ($hasErrors) {
+            $content .= "\n\n[SYSTEM] ACHTUNG: Nach deiner letzten Code-Aenderung wurden PHP-Fehler im Error-Log gefunden. "
+                . "Analysiere die Fehler und behebe sie sofort, bevor du dem Kunden antwortest.";
+        }
+
+        $validationMessages[] = [
+            'role' => 'tool',
+            'tool_call_id' => $fakeToolCallId,
+            'content' => $content,
+        ];
+
+        return $validationMessages;
     }
 
     private function hasUserConfirmationSignal(string $text): bool {
@@ -714,7 +1350,18 @@ class ChatController extends WP_REST_Controller {
         $clean = preg_replace('/<\|[^|>]+?\|>/u', '', $clean) ?? $clean;
         $clean = preg_replace('/(?:^|\R)\s*functions\.[a-z0-9_]+\s*:\s*\d+[\s\S]*$/iu', '', $clean) ?? $clean;
         $clean = trim((string) preg_replace('/\R{3,}/u', "\n\n", $clean));
-        return $clean !== '' ? $clean : 'Keine Antwort erhalten.';
+        return $clean;
+    }
+
+    private function isEmptyAiResponse(array $response): bool {
+        $content = (string) ($response['choices'][0]['message']['content'] ?? '');
+        $sanitized = $this->sanitizeAssistantMessageContent($content);
+        $hasToolCalls = !empty($response['choices'][0]['message']['tool_calls'] ?? []);
+        return $sanitized === '' && !$hasToolCalls;
+    }
+
+    private function getEmptyResponseFallback(): string {
+        return 'Ich konnte gerade keine Antwort generieren. Schreibe "mach weiter", damit ich es erneut versuche.';
     }
 
     private function normalizeToolArgumentsForIntent(string $toolName, array $args, string $latestUserMessage): array {
@@ -823,7 +1470,7 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function isCreationTool(string $toolName, array $args): bool {
-        if (in_array($toolName, ['create_post', 'create_page', 'create_plugin', 'install_plugin'], true)) {
+        if (in_array($toolName, ['create_post', 'create_page', 'create_plugin', 'create_theme', 'install_plugin'], true)) {
             return true;
         }
 
@@ -1228,4 +1875,13 @@ class ChatController extends WP_REST_Controller {
 
         return implode("\n\n", $parts);
     }
+
+    private function wasResponseTruncated(array $apiResponse): bool {
+        return ($apiResponse['choices'][0]['finish_reason'] ?? '') === 'length';
+    }
+
+    private function appendTruncationHint(string $message): string {
+        return $message . "\n\n---\n*Meine Antwort wurde aufgrund des Token-Limits abgeschnitten. Schreibe \"mach weiter\", damit ich fortfahre.*";
+    }
+
 }

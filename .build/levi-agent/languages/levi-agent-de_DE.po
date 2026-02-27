@@ -1,0 +1,327 @@
+# Levi Agent – German (de_DE)
+# Copyright (C) 2025
+# This file is distributed under the same license as the Levi AI Agent package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Levi AI Agent 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-02-21 12:00+0000\n"
+"PO-Revision-Date: 2025-02-21 12:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: de_DE\n"
+"Language: de_DE\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-Generator: Manual\n"
+
+msgid "Levi AI Agent"
+msgstr "Levi KI-Agent"
+
+msgid "Levi AI"
+msgstr "Levi KI"
+
+msgid "General"
+msgstr "Allgemein"
+
+msgid "AI Provider"
+msgstr "KI-Anbieter"
+
+msgid "Memory"
+msgstr "Speicher"
+
+msgid "Safety"
+msgstr "Sicherheit"
+
+msgid "Advanced"
+msgstr "Erweitert"
+
+msgid "Connected"
+msgstr "Verbunden"
+
+msgid "Not Connected"
+msgstr "Nicht verbunden"
+
+msgid "Save Settings"
+msgstr "Einstellungen speichern"
+
+msgid "Settings saved successfully"
+msgstr "Einstellungen wurden gespeichert"
+
+msgid "Welcome to Levi"
+msgstr "Willkommen bei Levi"
+
+msgid "Your AI-powered WordPress assistant. Configure the basic settings below."
+msgstr "Dein KI-Assistent für WordPress. Konfiguriere die Grundeinstellungen unten."
+
+msgid "Quick Start"
+msgstr "Schnellstart"
+
+msgid "Levi is ready to help you manage your WordPress site. Open the chat widget in the bottom right corner to get started."
+msgstr "Levi hilft dir bei der Verwaltung deiner WordPress-Seite. Öffne das Chat-Widget unten rechts."
+
+msgid "Open Chat"
+msgstr "Chat öffnen"
+
+msgid "Connection Status"
+msgstr "Verbindungsstatus"
+
+msgid "Provider"
+msgstr "Anbieter"
+
+msgid "Model"
+msgstr "Modell"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "Setup Required"
+msgstr "Einrichtung nötig"
+
+msgid "Configure Now"
+msgstr "Jetzt einrichten"
+
+msgid "Memory Stats"
+msgstr "Speicher-Statistik"
+
+msgid "Identity"
+msgstr "Identität"
+
+msgid "Reference"
+msgstr "Referenz"
+
+msgid "Episodic"
+msgstr "Episodisch"
+
+msgid "WordPress Snapshot"
+msgstr "WordPress-Snapshot"
+
+msgid "Last Run"
+msgstr "Letzter Lauf"
+
+msgid "Not run yet"
+msgstr "Noch nicht ausgeführt"
+
+msgid "Unchanged"
+msgstr "Unverändert"
+
+msgid "Updated and stored"
+msgstr "Aktualisiert und gespeichert"
+
+msgid "Error"
+msgstr "Fehler"
+
+msgid "Hint: The daily snapshot indexes your WordPress state (plugins, themes, config) so Levi can answer questions about your site. Run manually here or wait for the scheduled task."
+msgstr "Hinweis: Der tägliche Snapshot indiziert den WordPress-Zustand (Plugins, Themes, Konfiguration), damit Levi Fragen zu deiner Seite beantworten kann. Hier manuell ausführen oder auf den geplanten Lauf warten."
+
+msgid "Run Now"
+msgstr "Jetzt ausführen"
+
+msgid "AI Provider Configuration"
+msgstr "KI-Anbieter einrichten"
+
+msgid "Choose your AI provider and configure authentication."
+msgstr "Wähle einen KI-Anbieter und konfiguriere die Anmeldung."
+
+msgid "Authentication"
+msgstr "Anmeldung"
+
+msgid "Auth Method"
+msgstr "Anmeldemethode"
+
+msgid "API Key"
+msgstr "API-Schlüssel"
+
+msgid "Configured"
+msgstr "Eingerichtet"
+
+msgid "API key is saved. Enter a new key to replace it."
+msgstr "API-Schlüssel ist gespeichert. Neuen Schlüssel eingeben zum Ersetzen."
+
+msgid "Enter your API key from the provider."
+msgstr "API-Schlüssel vom Anbieter eingeben."
+
+msgid "Hint: The API key is stored in the database and never sent to third parties except the chosen provider (OpenRouter, OpenAI, or Anthropic). You can also set it via .env (OPEN_ROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)."
+msgstr "Hinweis: Der API-Schlüssel wird in der Datenbank gespeichert und nur an den gewählten Anbieter (OpenRouter, OpenAI oder Anthropic) gesendet. Du kannst ihn auch per .env setzen (OPEN_ROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)."
+
+msgid "Test Connection"
+msgstr "Verbindung testen"
+
+msgid "Select the AI model for chat responses."
+msgstr "KI-Modell für Chat-Antworten wählen."
+
+msgid "Hint: More capable models (e.g. GPT-4o, Claude) cost more per request. Start with a free or cheaper model for testing."
+msgstr "Hinweis: Stärkere Modelle (z. B. GPT-4o, Claude) kosten mehr pro Anfrage. Zum Testen zuerst ein kostenloses oder günstiges Modell wählen."
+
+msgid "Memory Configuration"
+msgstr "Speicher-Konfiguration"
+
+msgid "Configure how Levi remembers and retrieves information."
+msgstr "Steuere, wie Levi sich Informationen merkt und abruft."
+
+msgid "Vector Memory"
+msgstr "Vektor-Speicher"
+
+msgid "Control how many memories are retrieved for each query type."
+msgstr "Anzahl der abgerufenen Erinnerungen pro Abfragetyp."
+
+msgid "Identity Memories"
+msgstr "Identitäts-Erinnerungen"
+
+msgid "Reference Memories"
+msgstr "Referenz-Erinnerungen"
+
+msgid "Episodic Memories"
+msgstr "Episodische Erinnerungen"
+
+msgid "Min Similarity"
+msgstr "Min. Ähnlichkeit"
+
+msgid "Memory Management"
+msgstr "Speicher-Verwaltung"
+
+msgid "Memory files have changed!"
+msgstr "Speicher-Dateien haben sich geändert!"
+
+msgid "Identity:"
+msgstr "Identität:"
+
+msgid "Reference:"
+msgstr "Referenz:"
+
+msgid "Reload All Memories"
+msgstr "Alle Erinnerungen neu laden"
+
+msgid "Reloads all .md files from identity/ and memories/ folders into the vector database."
+msgstr "Lädt alle .md-Dateien aus identity/ und memories/ in die Vektor-Datenbank."
+
+msgid "Hint: After changing or adding .md files in the plugin's identity/ or memories/ folders, click \"Reload All Memories\" so Levi can use the new content."
+msgstr "Hinweis: Nach Änderung oder neuen .md-Dateien in identity/ oder memories/ auf \"Alle Erinnerungen neu laden\" klicken, damit Levi den neuen Inhalt nutzt."
+
+msgid "Safety & Limits"
+msgstr "Sicherheit & Limits"
+
+msgid "Configure safety measures and usage limits."
+msgstr "Sicherheit und Nutzungslimits einstellen."
+
+msgid "Rate Limiting"
+msgstr "Ratenbegrenzung"
+
+msgid "Requests per Hour"
+msgstr "Anfragen pro Stunde"
+
+msgid "Maximum API requests per user per hour to control costs."
+msgstr "Max. API-Anfragen pro Nutzer und Stunde zur Kostenkontrolle."
+
+msgid "Hint: Lower values reduce API costs; increase if multiple editors use Levi frequently."
+msgstr "Hinweis: Niedrigere Werte senken die API-Kosten; erhöhen, wenn mehrere Redakteure Levi oft nutzen."
+
+msgid "Confirmation Requirements"
+msgstr "Bestätigungen"
+
+msgid "Require confirmation for destructive actions"
+msgstr "Bestätigung für zerstörende Aktionen verlangen"
+
+msgid "Force exhaustive content analysis"
+msgstr "Ausführliche Inhaltsanalyse erzwingen"
+
+msgid "Tool Execution"
+msgstr "Werkzeug-Ausführung"
+
+msgid "Max Tool Iterations"
+msgstr "Max. Werkzeug-Durchläufe"
+
+msgid "Maximum consecutive tool rounds per request."
+msgstr "Max. aufeinanderfolgende Werkzeug-Runden pro Anfrage."
+
+msgid "Conversation Context"
+msgstr "Gesprächskontext"
+
+msgid "History Messages"
+msgstr "Verlauf-Nachrichten"
+
+msgid "Number of previous messages sent as context."
+msgstr "Anzahl der als Kontext mitgesendeten vorherigen Nachrichten."
+
+msgid "Advanced"
+msgstr "Erweitert"
+
+msgid "Advanced configuration and maintenance tools."
+msgstr "Erweiterte Konfiguration und Wartung."
+
+msgid "Database"
+msgstr "Datenbank"
+
+msgid "Repair and maintain database tables."
+msgstr "Datenbanktabellen reparieren und warten."
+
+msgid "Hint: Use this if conversations or settings behave incorrectly. It recreates Levi's database tables without deleting existing data."
+msgstr "Hinweis: Nutzen, wenn Chat oder Einstellungen fehlerhaft sind. Erstellt Levis Tabellen neu, ohne bestehende Daten zu löschen."
+
+msgid "Repair Tables"
+msgstr "Tabellen reparieren"
+
+msgid "System Info"
+msgstr "System-Info"
+
+msgid "Plugin Version"
+msgstr "Plugin-Version"
+
+msgid "WordPress"
+msgstr "WordPress"
+
+msgid "PHP"
+msgstr "PHP"
+
+msgid "API Key (Pay-as-you-go)"
+msgstr "API-Schlüssel (Pay-as-you-go)"
+
+msgid "Subscription Token (sk-ant-oat-*)"
+msgstr "Abonnement-Token (sk-ant-oat-*)"
+
+msgid "Login via OpenRouter (OAuth, coming soon)"
+msgstr "Anmeldung über OpenRouter (OAuth, in Kürze)"
+
+msgid "Database tables created successfully."
+msgstr "Datenbanktabellen wurden erfolgreich erstellt."
+
+msgid "Indexierung abgeschlossen."
+msgstr "Indexierung abgeschlossen."
+
+msgid "Testing…"
+msgstr "Teste…"
+
+msgid "Connection error"
+msgstr "Verbindungsfehler"
+
+msgid "Failed"
+msgstr "Fehlgeschlagen"
+
+msgid "Reload all memories? This may take a moment."
+msgstr "Alle Erinnerungen neu laden? Kann einen Moment dauern."
+
+msgid "Reloading…"
+msgstr "Lade neu…"
+
+msgid "Reloaded:"
+msgstr "Neu geladen:"
+
+msgid "identity"
+msgstr "Identität"
+
+msgid "reference"
+msgstr "Referenz"
+
+msgid "files"
+msgstr "Dateien"
+
+msgid "Done"
+msgstr "Fertig"
+
+msgid "Repairing…"
+msgstr "Repariere…"
+
+msgid "Saving…"
+msgstr "Speichern…"

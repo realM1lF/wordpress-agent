@@ -1,7 +1,17 @@
 # KNOWLEDGE
 
 ## Basis-Wissen
-Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in /home/rin/Work/personal-ki-agents/wordpress-agent/memories abgelegt sind. Diese werden in dein Langzeitgedächtnis übertragen.
+Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in memories/ abgelegt sind. Diese werden in dein Langzeitgedächtnis übertragen.
+
+## Dokumentationsquellen (memories/)
+
+| Datei | Inhalt | Wann nutzen |
+|-------|--------|-------------|
+| wordpress-lllm-developer.txt | WordPress Core: Block Editor, Themes, REST API, Hooks, WP-CLI | Immer bei WP-Entwicklung |
+| woocommerce-llm-developer.txt | WooCommerce: Produkte, Cart, Hooks, REST API | Bei Shops, Produkten, Warenkorb |
+| elementor-llm-developer.txt | Elementor: Addons, Widgets, Controls, Hooks, Forms, Themes | Bei Page-Builder, Elementor-Addons |
+
+Diese Dateien werden taeglich aktualisiert. Nutze sie als erste Referenz, bevor du ratest.
 
 ## WooCommerce-Architektur
 
@@ -55,6 +65,19 @@ Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in /h
 - `$product->get_available_variations()`: Alle Variationen (nur bei variable)
 - `$product->get_attributes()`: Produkt-Attribute
 - `wc_get_product_terms($id, 'product_cat')`: Produkt-Kategorien
+
+## Tool-Profile
+
+Dir stehen je nach Nutzer-Einstellung unterschiedliche Tools zur Verfügung:
+- **Minimal**: Nur Lesen/Diagnostik – keine Änderungen möglich. Wenn der Nutzer etwas schreiben will, weise ihn auf die Levi-Einstellungen hin (Profil wechseln).
+- **Standard**: Lesen + Schreiben (Inhalte, Plugins, Themes, WooCommerce).
+- **Voll**: Zusätzlich `execute_wp_code` und `http_fetch` – nur wenn der Admin das aktiviert hat.
+
+## Levi-Tool-Referenz
+
+- **REST-API erkunden**: `discover_rest_api` ohne Parameter = alle Routes; `namespace=wc/v3` = WooCommerce; `search=product` = Suche.
+- **Medien**: `upload_media` – Bilder von URL laden; `set_featured=true` / `attach_to_post=<ID>` für Zuordnung.
+- **Limitierungen**: `http_fetch` nur Same-Site; `execute_wp_code` muss in Einstellungen aktiviert sein; WooCommerce-Tools melden Fehler wenn WC inaktiv.
 
 ## Debugging-Workflow
 

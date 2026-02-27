@@ -3,11 +3,28 @@
 namespace Levi\Agent\AI\Tools;
 
 class Registry {
+    public const PROFILE_MINIMAL  = 'minimal';
+    public const PROFILE_STANDARD = 'standard';
+    public const PROFILE_FULL     = 'full';
+
+    public const VALID_PROFILES = [
+        self::PROFILE_MINIMAL,
+        self::PROFILE_STANDARD,
+        self::PROFILE_FULL,
+    ];
+
     /** @var ToolInterface[] */
     private array $tools = [];
 
-    public function __construct() {
+    private string $profile;
+
+    public function __construct(string $profile = self::PROFILE_STANDARD) {
+        $this->profile = in_array($profile, self::VALID_PROFILES, true) ? $profile : self::PROFILE_STANDARD;
         $this->registerDefaultTools();
+    }
+
+    public function getProfile(): string {
+        return $this->profile;
     }
 
     /**
@@ -99,11 +116,14 @@ class Registry {
     }
 
     /**
-     * Register default tools
+     * Register tools based on the active profile.
+     *
+     * minimal  = read-only / diagnostic tools (safe for non-technical users)
+     * standard = minimal + all write tools (default for most users)
+     * full     = standard + power tools like execute_wp_code / http_fetch
      */
     private function registerDefaultTools(): void {
-        $tools = [
-            // Read tools
+        $readTools = [
             new GetPostsTool(),
             new GetPostTool(),
             new GetPagesTool(),
@@ -111,7 +131,18 @@ class Registry {
             new GetPluginsTool(),
             new GetOptionsTool(),
             new GetMediaTool(),
-            // Write tools (Phase 5)
+            new ListPluginFilesTool(),
+            new ReadPluginFileTool(),
+            new ListThemeFilesTool(),
+            new ReadThemeFileTool(),
+            new DiscoverContentTypesTool(),
+            new DiscoverRestApiTool(),
+            new ReadErrorLogTool(),
+            new WooCommerceProductTool(),
+            new WooCommerceShopTool(),
+        ];
+
+        $writeTools = [
             new CreatePostTool(),
             new UpdatePostTool(),
             new CreatePageTool(),
@@ -123,14 +154,57 @@ class Registry {
             new ManageUserTool(),
             new CreatePluginTool(),
             new WritePluginFileTool(),
-            new ListPluginFilesTool(),
-            new ReadPluginFileTool(),
             new DeletePluginFileTool(),
+            new WriteThemeFileTool(),
+            new CreateThemeTool(),
+            new DeleteThemeFileTool(),
+            new PostMetaTool(),
+            new ManageTaxonomyTool(),
+            new WooCommerceManageTool(),
+            new ManageMenuTool(),
+            new ManageCronTool(),
+            new UploadMediaTool(),
         ];
+
+        $powerTools = [
+            new ExecuteWPCodeTool(),
+            new HttpFetchTool(),
+        ];
+
+        $tools = $readTools;
+
+        if ($this->profile === self::PROFILE_STANDARD || $this->profile === self::PROFILE_FULL) {
+            $tools = array_merge($tools, $writeTools);
+        }
+
+        if ($this->profile === self::PROFILE_FULL) {
+            $tools = array_merge($tools, $powerTools);
+        }
 
         foreach ($tools as $tool) {
             $this->register($tool);
         }
+    }
+
+    /**
+     * Human-readable labels for profiles (DE/EN).
+     * @return array<string, array{label: string, description: string}>
+     */
+    public static function getProfileLabels(): array {
+        return [
+            self::PROFILE_MINIMAL => [
+                'label'       => 'Minimal (nur lesen)',
+                'description' => 'Nur Lese- und Diagnose-Tools. Levi kann nichts veraendern – ideal zum Kennenlernen.',
+            ],
+            self::PROFILE_STANDARD => [
+                'label'       => 'Standard',
+                'description' => 'Lesen + Schreiben. Levi kann Inhalte, Plugins und Themes erstellen und bearbeiten.',
+            ],
+            self::PROFILE_FULL => [
+                'label'       => 'Voll (Entwickler)',
+                'description' => 'Alle Tools inkl. PHP-Code-Ausfuehrung und HTTP-Fetch. Nur fuer erfahrene Nutzer.',
+            ],
+        ];
     }
 
     /**

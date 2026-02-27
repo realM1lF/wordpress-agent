@@ -152,7 +152,12 @@ class SettingsPage {
         $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'] ?? 50)));
         $sanitized['force_exhaustive_reads'] = !empty($input['force_exhaustive_reads']) ? 1 : 0;
         $sanitized['require_confirmation_destructive'] = !empty($input['require_confirmation_destructive']) ? 1 : 0;
-        $sanitized['enable_code_execution'] = !empty($input['enable_code_execution']) ? 1 : 0;
+
+        $profileCandidate = sanitize_key($input['tool_profile'] ?? 'standard');
+        $sanitized['tool_profile'] = in_array($profileCandidate, \Levi\Agent\AI\Tools\Registry::VALID_PROFILES, true)
+            ? $profileCandidate
+            : 'standard';
+
         $sanitized['memory_identity_k'] = max(1, min(20, absint($input['memory_identity_k'] ?? 5)));
         $sanitized['memory_reference_k'] = max(1, min(20, absint($input['memory_reference_k'] ?? 5)));
         $sanitized['memory_episodic_k'] = max(1, min(20, absint($input['memory_episodic_k'] ?? 4)));
@@ -594,6 +599,41 @@ class SettingsPage {
                 <p><?php echo esc_html($this->tr('Configure safety measures and usage limits.', 'Konfiguriere Sicherheitsmechanismen und Nutzungsgrenzen.')); ?></p>
             </div>
 
+            <!-- Tool Profile (full-width) -->
+            <div class="levi-form-card" style="margin-bottom: 1.5rem;">
+                <h3><?php echo esc_html($this->tr('Tool Profile', 'Tool-Profil')); ?></h3>
+                <p class="levi-form-description">
+                    <?php echo esc_html($this->tr(
+                        'Controls which tools Levi can use. Choose a profile that matches your comfort level.',
+                        'Steuert, welche Tools Levi nutzen darf. Waehle ein Profil passend zu deinem Erfahrungslevel.'
+                    )); ?>
+                </p>
+                <div class="levi-form-group">
+                    <?php
+                    $profiles = \Levi\Agent\AI\Tools\Registry::getProfileLabels();
+                    $currentProfile = $settings['tool_profile'] ?? 'standard';
+                    foreach ($profiles as $profileKey => $profileData): ?>
+                        <label class="levi-radio-card <?php echo $currentProfile === $profileKey ? 'levi-radio-card-active' : ''; ?>" style="display:flex; align-items:flex-start; gap:0.75rem; padding:0.75rem 1rem; border:1px solid <?php echo $currentProfile === $profileKey ? '#6366f1' : '#374151'; ?>; border-radius:8px; margin-bottom:0.5rem; cursor:pointer; background:<?php echo $currentProfile === $profileKey ? 'rgba(99,102,241,0.08)' : 'transparent'; ?>;">
+                            <input type="radio"
+                                   name="<?php echo esc_attr($this->optionName); ?>[tool_profile]"
+                                   value="<?php echo esc_attr($profileKey); ?>"
+                                   <?php checked($currentProfile, $profileKey); ?>
+                                   style="margin-top:3px;">
+                            <div>
+                                <strong><?php echo esc_html($profileData['label']); ?></strong>
+                                <p class="levi-form-help" style="margin:0.25rem 0 0;"><?php echo esc_html($profileData['description']); ?></p>
+                            </div>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+                <p class="levi-form-help levi-hint">
+                    <?php echo esc_html($this->tr(
+                        'Hint: "Standard" is recommended for most users. Switch to "Full" only if you need PHP code execution or HTTP fetching.',
+                        'Hinweis: "Standard" wird fuer die meisten Nutzer empfohlen. Wechsle nur zu "Voll", wenn du PHP-Code-Ausfuehrung oder HTTP-Fetch brauchst.'
+                    )); ?>
+                </p>
+            </div>
+
             <div class="levi-cards-grid levi-cards-2col">
                 <!-- Rate Limiting -->
                 <div class="levi-form-card">
@@ -757,25 +797,6 @@ class SettingsPage {
                     </div>
                 </div>
 
-                <!-- Code Execution -->
-                <div class="levi-form-card">
-                    <div class="levi-card-header">
-                        <span class="dashicons dashicons-editor-code"></span>
-                        <h3><?php _e('Code Execution', 'levi-agent'); ?></h3>
-                    </div>
-                    <p class="levi-form-description">
-                        <?php _e('Allow Levi to execute PHP code directly in WordPress context. Powerful for diagnostics and complex operations.', 'levi-agent'); ?>
-                    </p>
-                    <p class="levi-form-help levi-hint" style="color: #f59e0b;">
-                        <?php _e('Warning: This is a powerful feature. Only enable if you trust the AI and understand the risks.', 'levi-agent'); ?>
-                    </p>
-                    <label class="levi-toggle">
-                        <input type="checkbox" name="<?php echo esc_attr($this->optionName); ?>[enable_code_execution]" value="1" <?php checked($settings['enable_code_execution'] ?? 0, 1); ?>>
-                        <span class="levi-toggle-slider"></span>
-                        <span class="levi-toggle-label"><?php _e('Enable Code Execution', 'levi-agent'); ?></span>
-                    </label>
-                </div>
-
                 <!-- System Info -->
                 <div class="levi-form-card">
                     <div class="levi-card-header">
@@ -920,6 +941,7 @@ class SettingsPage {
             'php_time_limit' => 120,
             'max_context_tokens' => 100000,
             'history_context_limit' => 50,
+            'tool_profile' => 'standard',
             'force_exhaustive_reads' => 1,
             'require_confirmation_destructive' => 1,
             'memory_identity_k' => 5,

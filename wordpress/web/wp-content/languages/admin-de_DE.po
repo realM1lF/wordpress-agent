@@ -2,7 +2,7 @@
 # This file is distributed under the same license as the WordPress - 6.9.x - Development - Administration package.
 msgid ""
 msgstr ""
-"PO-Revision-Date: 2026-02-15 00:57:15+0000\n"
+"PO-Revision-Date: 2026-02-27 18:36:02+0000\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -123,7 +123,7 @@ msgstr "Über 70 Korrekturen und Verbesserungen der Barrierefreiheit konzentrie
 
 #: wp-admin/about.php:156
 msgid "A new typography option for text-based blocks, starting with the Paragraph and Heading blocks, that automatically adjusts font size to fill its container perfectly. Ideal for banners, callouts, and standout moments in your design. No manual tweaks, just an instant clean design."
-msgstr "Eine neue Typografieoption für textbasierte Blöcke, beginnend mit den Blöcken „Absatz“ und „Überschrift“, die die Schriftgröße automatisch anpasst, um den Container perfekt auszufüllen. Ideal für Banner, Erläuterungsbeschriftungen und herausragende Momente in Ihrem Design. Keine manuellen Anpassungen sind nötig, ein klares Design im Handumdrehen."
+msgstr "Eine neue Typografieoption für textbasierte Blöcke, beginnend mit den Blöcken „Absatz“ und „Überschrift“, die die Schriftgröße automatisch anpasst, um den Container perfekt auszufüllen. Ideal für Banner, Erläuterungsbeschriftungen und herausragende Momente in deinem Design. Keine manuellen Anpassungen sind nötig, ein klares Design im Handumdrehen."
 
 #: wp-admin/about.php:155
 msgid "Content that adapts."
@@ -6728,7 +6728,7 @@ msgstr "Antrag für einen Datenexport hinzufügen"
 
 #: wp-admin/includes/privacy-tools.php:171
 msgid "Confirmation request initiated successfully."
-msgstr "Die Bestätigungs-Anfrage wurde erfolgreich initiiert."
+msgstr "Die Bestätigungsanfrage wurde erfolgreich initiiert."
 
 #: wp-admin/includes/privacy-tools.php:135
 msgid "Unable to add this request. A valid email address or username must be supplied."
@@ -6736,7 +6736,7 @@ msgstr "Diese Anfrage kann nicht hinzugefügt werden. Es muss eine gültige E-Ma
 
 #: wp-admin/includes/privacy-tools.php:91
 msgid "Confirmation request sent again successfully."
-msgstr "Die Bestätigungs-Anfrage wurde erfolgreich erneut versendet."
+msgstr "Die Bestätigungsanfrage wurde erfolgreich erneut versendet."
 
 #: wp-admin/includes/privacy-tools.php:155
 msgid "Unable to initiate confirmation request."
@@ -6825,11 +6825,11 @@ msgstr "Hervorzuhebende Mitwirkende"
 
 #: wp-admin/theme-editor.php:461
 msgid "If you decide to go ahead with direct edits anyway, use a file manager to create a copy with a new name and hang on to the original. That way, you can re-enable a functional version if something goes wrong."
-msgstr "Solltest du dich dennoch dazu entscheiden, direkt zu editieren, empfehlen wir dir mittels Dateimanager eine Kopie mit neuem Namen zu erstellen und das Original zu behalten. So hast du die Möglichkeit, eine funktionierende Version wiederherzustellen, falls etwas schief geht."
+msgstr "Solltest du dich dennoch dazu entscheiden, direkt zu editieren, empfehlen wir dir mittels Dateimanager eine Kopie mit neuem Namen zu erstellen und das Original zu behalten. So hast du die Möglichkeit, eine funktionierende Version wiederherzustellen, falls etwas schiefgeht."
 
 #: wp-admin/plugin-editor.php:373
 msgid "If you absolutely have to make direct edits to this plugin, use a file manager to create a copy with a new name and hang on to the original. That way, you can re-enable a functional version if something goes wrong."
-msgstr "Falls du dieses Plugin tatsächlich direkt ändern musst, empfehlen wir dir mittels Dateimanager eine Kopie mit neuem Namen zu erstellen und das Original zu behalten. So hast du die Möglichkeit, eine funktionierende Version wiederherzustellen, falls etwas schief geht."
+msgstr "Falls du dieses Plugin tatsächlich direkt ändern musst, empfehlen wir dir mittels Dateimanager eine Kopie mit neuem Namen zu erstellen und das Original zu behalten. So hast du die Möglichkeit, eine funktionierende Version wiederherzustellen, falls etwas schiefgeht."
 
 #: wp-admin/plugin-editor.php:372
 msgid "You appear to be making direct edits to your plugin in the WordPress dashboard. Editing plugins directly is not recommended as it may introduce incompatibilities that break your site and your changes may be lost in future updates."
@@ -7292,7 +7292,7 @@ msgstr "Position im Theme"
 #. translators: 1: User ID, 2: User login.
 #: wp-admin/users.php:539
 msgid "ID #%1$s: %2$s <strong>Sorry, you are not allowed to remove this user.</strong>"
-msgstr "ID #%1$s: %2$s <strong>Du bist leider nicht berechtigt diesen Benutzer zu entfernen.</strong>"
+msgstr "ID #%1$s: %2$s <strong>Du bist leider nicht berechtigt, diesen Benutzer zu entfernen.</strong>"
 
 #: wp-admin/user-edit.php:62
 msgid "You can select the language you wish to use while using the WordPress administration screen without affecting the language site visitors see."
@@ -7309,7 +7309,7 @@ msgstr "Aktuelle Filter entfernen"
 #. translators: Hidden accessibility text.
 #: wp-admin/theme-install.php:73
 msgid "Select one or more Theme features to filter by"
-msgstr "Wähle ein oder mehrere Funktionen nach denen die Themes gefiltert werden"
+msgstr "Wähle eine oder mehrere Funktionen, nach denen die Themes gefiltert werden"
 
 #. translators: %s: Number of ratings.
 #: wp-admin/includes/theme.php:885 wp-admin/theme-install.php:526
@@ -7446,7 +7446,7 @@ msgstr "%s wurde erfolgreich gelöscht."
 
 #: wp-admin/plugins.php:566
 msgid "The search for installed plugins will search for terms in their name, description, or author."
-msgstr "Die Suche nach installierten Plugins sucht nach Begriffen in deren Namen, in der Beschreibung oder sucht nach Autor."
+msgstr "Die Suche nach installierten Plugins durchsucht deren Namen, Beschreibungen oder den Autor nach den Begriffen."
 
 #: wp-admin/includes/theme.php:337
 msgid "Custom Logo"
@@ -7923,8 +7923,8 @@ msgstr "Bild zum Bearbeiten oder Ändern anklicken"
 #: wp-admin/includes/plugin-install.php:743
 msgid "Reviews with %1$d star: %2$s. Opens in a new tab."
 msgid_plural "Reviews with %1$d stars: %2$s. Opens in a new tab."
-msgstr[0] "Rezensionen mit %1$d Stern: %2$s. Wird in neuem Tab geöffnet."
-msgstr[1] "Rezensionen mit %1$d Sternen: %2$s. Wird in neuem Tab geöffnet."
+msgstr[0] "Rezensionen mit %1$d Stern: %2$s. Wird in neuem Tab geöffnet."
+msgstr[1] "Rezensionen mit %1$d Sternen: %2$s. Wird in neuem Tab geöffnet."
 
 #: wp-admin/includes/plugin-install.php:735
 msgid "Read all reviews on WordPress.org or write your own!"
@@ -8322,7 +8322,7 @@ msgstr "Dateien im Verzeichnis %s werden automatisch ausgeführt."
 
 #: wp-admin/widgets-form.php:512
 msgid "This will clear all items from the inactive widgets list. You will not be able to restore any customizations."
-msgstr "Damit werden alle Elemente von deiner Liste inaktiver Widgets gelöscht. Du wirst keine Anpassungen wiederherstellen können."
+msgstr "Damit werden alle Elemente aus deiner Liste inaktiver Widgets gelöscht. Du wirst keine Anpassungen wiederherstellen können."
 
 #: wp-admin/widgets-form.php:502
 msgid "Clear Inactive Widgets"
@@ -8550,8 +8550,8 @@ msgstr "Ansichtsmodus"
 #: wp-admin/includes/class-wp-screen.php:1218
 msgid "%s column"
 msgid_plural "%s columns"
-msgstr[0] "%s Spalte"
-msgstr[1] "%s Spalten"
+msgstr[0] "%s Spalte"
+msgstr[1] "%s Spalten"
 
 #: wp-admin/includes/class-wp-screen.php:1007
 msgid "Additional settings"
@@ -8866,7 +8866,7 @@ msgstr "Erste Seite"
 #. translators: %s: Post link.
 #: wp-admin/edit-form-comment.php:197
 msgid "In response to: %s"
-msgstr "Als Antwort auf: %s"
+msgstr "Kommentar zu: %s"
 
 #. translators: Hidden accessibility text.
 #: wp-admin/edit-form-comment.php:169 wp-admin/includes/meta-boxes.php:304
@@ -9142,7 +9142,7 @@ msgstr "Eingereicht am"
 #: wp-admin/comment.php:201
 #: wp-admin/includes/class-wp-comments-list-table.php:486
 msgid "In response to"
-msgstr "Als Antwort auf"
+msgstr "Kommentar zu"
 
 #. translators: 1: Month, 2: Day, 3: Year, 4: Hour, 5: Minute.
 #: wp-admin/includes/template.php:866 wp-admin/js/comment.js:89
@@ -9599,7 +9599,7 @@ msgstr "In den meisten Fällen wird WordPress Wartungs- und Sicherheits-Updates 
 
 #: wp-admin/update-core.php:1001
 msgid "<strong>WordPress</strong> &mdash; Updating your WordPress installation is a simple one-click procedure: just <strong>click on the &#8220;Update now&#8221; button</strong> when you are notified that a new version is available."
-msgstr "<strong>WordPress</strong> &ndash; Die Aktualisierung deiner WordPress-Installation ist jetzt noch einfacher: <strong>klick auf den Button &#8222;Jetzt Aktualisieren&#8220;</strong> sobald du einen Hinweis erhältst, dass eine neue Version verfügbar ist."
+msgstr "<strong>WordPress</strong> &ndash; Die Aktualisierung deiner WordPress-Installation ist jetzt noch einfacher: <strong>Klicke auf den Button &#8222;Jetzt aktualisieren&#8220;</strong>, sobald du einen Hinweis erhältst, dass eine neue Version verfügbar ist."
 
 #: wp-admin/update-core.php:991
 msgid "If an update is available, you&#8127;ll see a notification appear in the Toolbar and navigation menu."
@@ -11163,7 +11163,7 @@ msgstr "https://ma.tt/"
 #. Description of the plugin
 #: hello.php
 msgid "This is not just a plugin, it symbolizes the hope and enthusiasm of an entire generation summed up in two words sung most famously by Louis Armstrong: Hello, Dolly. When activated you will randomly see a lyric from <cite>Hello, Dolly</cite> in the upper right of your admin screen on every page."
-msgstr "Dies ist nicht nur ein Plugin, es symbolisiert in zwei Worten, gesungen von Louis Amstrong, die Hoffnung und den Enthusiasmus einer ganzen Generation: <cite>Hello, Dolly</cite>. Nach Aktivierung werden im Zufallsprinzip aus dem Liedtext von „Hello, Dolly“ Zeilen oben rechts im Administrationsbereich angezeigt."
+msgstr "Dies ist nicht nur ein Plugin, es symbolisiert in zwei Worten, gesungen von Louis Armstrong, die Hoffnung und den Enthusiasmus einer ganzen Generation: Hello, Dolly. Nach Aktivierung werden nach dem Zufallsprinzip aus dem Liedtext von <cite>Hello, Dolly</cite> Zeilen oben rechts im Administrationsbereich angezeigt."
 
 #. Plugin Name of the plugin
 #: hello.php
@@ -11372,7 +11372,7 @@ msgstr "Die Datei %s ist erforderlich. Bitte lade diese erneut zu deiner WordPre
 #. translators: %s: wp-config.php
 #: wp-admin/maint/repair.php:38
 msgid "To allow use of this page to automatically repair database problems, please add the following line to your %s file. Once this line is added to your config, reload this page."
-msgstr "Um dieser Seite zu erlauben, Datenbank-Probleme automatisch zu reparieren, füge bitte deiner %s Datei folgende Zeile hinzu. Und danach lade diese Seite erneut."
+msgstr "Um dieser Seite zu erlauben, Datenbank-Probleme automatisch zu reparieren, füge bitte deiner %s-Datei folgende Zeile hinzu. Und danach lade diese Seite erneut."
 
 #: wp-admin/includes/class-wp-comments-list-table.php:226
 msgid "No comments awaiting moderation."
@@ -11435,7 +11435,7 @@ msgstr "Die Einstellungen zu „per E-Mail veröffentlichen“ geben dir die Mö
 
 #: wp-admin/users.php:47
 msgid "You can filter the list of users by User Role using the text links above the users list to show All, Administrator, Editor, Author, Contributor, or Subscriber. The default view is to show all users. Unused User Roles are not listed."
-msgstr "Du kannst die Liste der Benutzer nach ihrer Rolle filtern. Benutze die Links über der Liste, um alle Benutzer, Administratoren, Editoren, Autoren, Beitragende oder Abonnenten anzuzeigen. Standardmäßig werden alle Benutzer angezeigt. Unbenutzte Rollen werden nicht aufgezählt."
+msgstr "Du kannst die Liste der Benutzer nach ihrer Rolle filtern. Benutze die Links über der Liste, um alle Benutzer, Administratoren, Redakteuren, Autoren, Beitragende oder Abonnenten anzuzeigen. Standardmäßig werden alle Benutzer angezeigt. Unbenutzte Rollen werden nicht aufgezählt."
 
 #: wp-admin/import.php:26
 msgid "In previous versions of WordPress, all importers were built-in. They have been turned into plugins since most people only use them once or infrequently."
@@ -12331,7 +12331,7 @@ msgstr "Jegliche Änderungen an Dateien über diese Bearbeitungsfunktion betreff
 
 #: wp-admin/users.php:35
 msgid "This screen lists all the existing users for your site. Each user has one of five defined roles as set by the site admin: Site Administrator, Editor, Author, Contributor, or Subscriber. Users with roles other than Administrator will see fewer options in the dashboard navigation when they are logged in, based on their role."
-msgstr "Diese Übersichtsseite zeigt alle Benutzer deiner Website an. Jeder Benutzer hat eine von fünf vordefinierten Rollen, welche durch den Administrator vergeben werden können: Administrator, Redakteur, Autor, Mitarbeiter, Abonnent. Benutzer die keine Administrator-Rolle haben, sehen je nach Benutzerrolle, nicht alle Einstellungen, Optionen etc."
+msgstr "Auf diesem Bildschirm werden alle vorhandenen Benutzer deiner Website aufgelistet. Jeder Benutzer hat eine von fünf Rollen, die durch den Website-Administrator festgelegt wurden: Administrator, Redakteur, Autor, Mitarbeiter oder Abonnent. Benutzer mit anderen Rollen als Administrator sehen nach der Anmeldung je nach ihrer Rolle weniger Optionen in der Dashboard-Navigation."
 
 #: wp-admin/plugin-editor.php:150
 msgid "If you want to make changes but do not want them to be overwritten when the plugin is updated, you may be ready to think about writing your own plugin. For information on how to edit plugins, write your own from scratch, or just better understand their anatomy, check out the links below."
@@ -12507,11 +12507,11 @@ msgstr "%s &#8211; WordPress"
 #: wp-admin/includes/class-wp-comments-list-table.php:556
 msgctxt "column name"
 msgid "In Response To"
-msgstr "Als Antwort auf"
+msgstr "Kommentar zu"
 
 #: wp-admin/widgets-form.php:46
 msgid "The Available Widgets section contains all the widgets you can choose from. Once you drag a widget into a sidebar, it will open to allow you to configure its settings. When you are happy with the widget settings, click the Save button and the widget will go live on your site. If you click Delete, it will remove the widget."
-msgstr "Im Bereich <strong>Verfügbare Widgets</strong> siehst du alle Widgets, die du benutzen kannst, indem du sie einfach auf eine Seitenleiste bzw. Widget-Bereich ziehst. Mit einem Klick auf den Pfeil im Widget-Titel werden alle Optionen des Widgets angezeigt. Vergiss nicht, nach den Änderungen eines Widgets auf „Speichern“ zu klicken. Mit einem Klick auf „Löschen“ wird das Widget und seine Einstellungen entfernt."
+msgstr "Der Abschnitt „Verfügbare Widgets“ enthält alle Widgets, aus denen du auswählen kannst. Sobald du ein Widget in eine Seitenleiste ziehst, wird es geöffnet, sodass du seine Einstellungen konfigurieren kannst. Wenn du mit den Widget-Einstellungen zufrieden bist, klicke auf den Button „Speichern“, und das Widget wird auf deiner Website angezeigt. Wenn du auf „Löschen“ klickst, wird das Widget entfernt."
 
 #: wp-admin/edit-form-advanced.php:342
 msgid "Remember to click Update to save metadata entered or changed."
@@ -12614,15 +12614,15 @@ msgstr "Du hast %1$s und %2$s."
 #: wp-admin/includes/dashboard.php:463
 msgid "%s site"
 msgid_plural "%s sites"
-msgstr[0] "%s Website"
-msgstr[1] "%s Websites"
+msgstr[0] "%s Website"
+msgstr[1] "%s Websites"
 
 #. translators: %s: Number of users on the network.
 #: wp-admin/includes/dashboard.php:461
 msgid "%s user"
 msgid_plural "%s users"
-msgstr[0] "%s Benutzer"
-msgstr[1] "%s Benutzer"
+msgstr[0] "%s Benutzer"
+msgstr[1] "%s Benutzer"
 
 #: wp-admin/includes/dashboard.php:1547
 msgid "https://wordpress.org/news/feed/"
@@ -12933,7 +12933,7 @@ msgstr "Widgets können auch mehrfach verwendet werden. Du kannst Widgets auch T
 
 #: wp-admin/widgets-form.php:45
 msgid "Widgets are independent sections of content that can be placed into any widgetized area provided by your theme (commonly called sidebars). To populate your sidebars/widget areas with individual widgets, drag and drop the title bars into the desired area. By default, only the first widget area is expanded. To populate additional widget areas, click on their title bars to expand them."
-msgstr "Widgets sind eigenständige Module mit Inhalt, die in allen für Widgets vorgesehene Bereiche deines Themes platziert werden können. (Dies ist meistens die Seitenleiste.) Um diese Widget-Bereiche, wie Seitenleiste oder Footer, individuell mit Widgets zu gestalten, ziehe einfach per Drag-and-drop vom Titel des Widgets dieses in den entsprechenden Bereich. Standardmäßig ist nur der erste Widget-Bereich aufgeklappt. Um weitere Inhalte in Widget-Bereiche einzupflegen, klicke auf den Pfeil im Titel des Widget-Bereichs, um diesen aufzuklappen, die enthaltenen Widgets zu sehen und neue hinzuzufügen oder zu entfernen."
+msgstr "Widgets sind eigenständige Module mit Inhalt, die in allen für Widgets vorgesehenen Bereichen deines Themes platziert werden können. (Dies ist meistens die Seitenleiste.) Um diese Widget-Bereiche, wie Seitenleiste oder Footer, individuell mit Widgets zu gestalten, ziehe das Widget einfach an seinem Titel per Drag-and-drop in den entsprechenden Bereich. Standardmäßig ist nur der erste Widget-Bereich aufgeklappt. Um weitere Inhalte in Widget-Bereiche einzupflegen, klicke auf den Pfeil im Titel des Widget-Bereichs, um diesen aufzuklappen, die enthaltenen Widgets zu sehen und neue hinzuzufügen oder zu entfernen."
 
 #: wp-admin/theme-editor.php:40
 msgid "<strong>Advice:</strong> Think very carefully about your site crashing if you are live-editing the theme currently in use."
@@ -12989,9 +12989,7 @@ msgstr "Wenn du eine neue Kategorie anlegst, musst du folgende Eingabefelder aus
 
 #: wp-admin/edit-tags.php:265
 msgid "What&#8217;s the difference between categories and tags? Normally, tags are ad-hoc keywords that identify important information in your post (names, subjects, etc) that may or may not recur in other posts, while categories are pre-determined sections. If you think of your site like a book, the categories are like the Table of Contents and the tags are like the terms in the index."
-msgstr ""
-"Worin besteht der Unterschied zwischen Schlagwörtern und Kategorien? \n"
-"Kategorien können hierarchisch angeordnet und verschachtelt werden und dienen der generellen und eher groben Einordnung von Beiträgen. Schlagwörter werden direkt beim Erstellen des Beitrags eingegeben – und nicht bloß ausgewählt – und schlüsseln viel feiner den Inhalt eines Beitrags in Stichworten auf. Verglichen mit einem Buch, entsprechen Kategorien dem Inhaltsverzeichnis und Schlagwörter dem Stichwortverzeichnis."
+msgstr "Worin besteht der Unterschied zwischen Schlagwörtern und Kategorien? Kategorien können hierarchisch angeordnet und verschachtelt werden und dienen der generellen und eher groben Einordnung von Beiträgen. Schlagwörter werden direkt beim Erstellen des Beitrags eingegeben – und nicht bloß ausgewählt – und schlüsseln viel feiner den Inhalt eines Beitrags in Stichworten auf. Verglichen mit einem Buch entsprechen Kategorien dem Inhaltsverzeichnis und Schlagwörter dem Stichwortverzeichnis."
 
 #. translators: %s: URL to Writing Settings screen.
 #: wp-admin/edit-tags.php:253
@@ -13645,7 +13643,7 @@ msgstr "Verfügbare Widgets"
 
 #: wp-admin/widgets-form.php:380
 msgid "Error in displaying the widget settings form."
-msgstr "Fehler beim Anzeigen des Einstellungsformular für Widgets."
+msgstr "Fehler beim Anzeigen des Einstellungsformulars für Widgets."
 
 #: wp-admin/includes/misc.php:1362 wp-admin/includes/post.php:2158
 #: wp-admin/widgets-form.php:379
@@ -15960,7 +15958,7 @@ msgstr "Die FTP-PHP-Erweiterung ist nicht verfügbar"
 #. translators: %s: Directory name.
 #: wp-admin/includes/class-wp-filesystem-base.php:317
 msgid "Found %s"
-msgstr "Gefunden %s"
+msgstr "%s gefunden"
 
 #. translators: %s: Directory name.
 #: wp-admin/includes/class-wp-filesystem-base.php:297
