@@ -257,9 +257,57 @@ class MemoryLoader {
     }
 
     /**
-     * Get statistics about loaded memories
+     * Get statistics about loaded memories (file counts + episodic from DB)
      */
     public function getStats(): array {
-        return $this->vectorStore->getStats();
+        $vectorStats = $this->vectorStore->getStats();
+        $identityFiles = $this->getIdentityFileNames();
+        $referenceFiles = $this->getReferenceFileNames();
+
+        return [
+            'identity_files' => count($identityFiles),
+            'identity_file_names' => $identityFiles,
+            'reference_files' => count($referenceFiles),
+            'reference_file_names' => $referenceFiles,
+            'episodic_memories' => $vectorStats['episodic_memories'] ?? 0,
+        ];
+    }
+
+    /**
+     * Get list of existing identity file names (soul.md, rules.md, knowledge.md)
+     */
+    private function getIdentityFileNames(): array {
+        $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
+        $candidates = ['soul.md', 'rules.md', 'knowledge.md'];
+        $found = [];
+        foreach ($candidates as $file) {
+            if (file_exists($identityDir . $file)) {
+                $found[] = $file;
+            }
+        }
+        return $found;
+    }
+
+    /**
+     * Get list of reference file names from memories/ folder
+     */
+    private function getReferenceFileNames(): array {
+        $memoriesDir = LEVI_AGENT_PLUGIN_DIR . 'memories/';
+        if (!is_dir($memoriesDir)) {
+            return [];
+        }
+        $files = array_merge(
+            glob($memoriesDir . '*.md') ?: [],
+            glob($memoriesDir . '*.txt') ?: []
+        );
+        $names = [];
+        foreach ($files as $file) {
+            $name = basename($file);
+            if ($name !== 'README.md') {
+                $names[] = $name;
+            }
+        }
+        sort($names);
+        return $names;
     }
 }

@@ -126,6 +126,33 @@ class Registry {
             new ListPluginFilesTool(),
             new ReadPluginFileTool(),
             new DeletePluginFileTool(),
+            // Theme tools
+            new ListThemeFilesTool(),
+            new ReadThemeFileTool(),
+            new WriteThemeFileTool(),
+            new CreateThemeTool(),
+            new DeleteThemeFileTool(),
+            // Generic content tools (works with any post type, plugin, taxonomy)
+            new DiscoverContentTypesTool(),
+            new PostMetaTool(),
+            new ManageTaxonomyTool(),
+            // Diagnostics
+            new ReadErrorLogTool(),
+            // WooCommerce tools (gracefully return error if WC not active)
+            new WooCommerceProductTool(),
+            new WooCommerceShopTool(),
+            new WooCommerceManageTool(),
+            // Power tools
+            new ExecuteWPCodeTool(),
+            new HttpFetchTool(),
+            // Navigation & widgets
+            new ManageMenuTool(),
+            // Cron management
+            new ManageCronTool(),
+            // REST API discovery
+            new DiscoverRestApiTool(),
+            // Media
+            new UploadMediaTool(),
         ];
 
         foreach ($tools as $tool) {

@@ -9,12 +9,16 @@ class AnthropicClient implements AIClientInterface {
     private const API_BASE = 'https://api.anthropic.com/v1';
     private ?string $apiKey;
     private string $model;
-    private int $timeout = 120;
+    private int $timeout;
+    private int $maxTokens;
 
     public function __construct() {
         $settings = new SettingsPage();
         $this->apiKey = $settings->getApiKeyForProvider('anthropic');
         $this->model = $settings->getModelForProvider('anthropic');
+        $allSettings = $settings->getSettings();
+        $this->timeout = max(1, (int) ($allSettings['ai_timeout'] ?? 120));
+        $this->maxTokens = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
     }
 
     public function isConfigured(): bool {
@@ -177,7 +181,7 @@ class AnthropicClient implements AIClientInterface {
 
         $payload = [
             'model' => $this->model,
-            'max_tokens' => 4096,
+            'max_tokens' => $this->maxTokens,
             'messages' => $anthropicMessages,
         ];
 
@@ -251,7 +255,7 @@ class AnthropicClient implements AIClientInterface {
                 [
                     'index' => 0,
                     'message' => $message,
-                    'finish_reason' => empty($toolCalls) ? 'stop' : 'tool_calls',
+                    'finish_reason' => !empty($toolCalls) ? 'tool_calls' : (($anthropic['stop_reason'] ?? '') === 'max_tokens' ? 'length' : 'stop'),
                 ],
             ],
         ];

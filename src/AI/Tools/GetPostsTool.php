@@ -9,11 +9,16 @@ class GetPostsTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get WordPress posts with optional full content. Supports pagination to fetch all posts.';
+        return 'Get WordPress posts/content of any post type (post, page, product, etc.) with optional full content. Use post_type parameter for custom types like WooCommerce products.';
     }
 
     public function getParameters(): array {
         return [
+            'post_type' => [
+                'type' => 'string',
+                'description' => 'WordPress post type to query. Default: post. Use "product" for WooCommerce products, "page" for pages, or any registered custom post type.',
+                'default' => 'post',
+            ],
             'number' => [
                 'type' => 'integer',
                 'description' => 'Number of posts to retrieve per request (max 200)',
@@ -82,8 +87,9 @@ class GetPostsTool implements ToolInterface {
 
         $includeContent = (bool) ($params['include_content'] ?? false);
 
+        $postType = sanitize_key($params['post_type'] ?? 'post');
         $args = [
-            'post_type' => 'post',
+            'post_type' => $postType,
             'posts_per_page' => $perPage,
             'paged' => $pageNum,
             'post_status' => $params['status'] ?? 'publish',
@@ -140,19 +146,29 @@ class GetPostsTool implements ToolInterface {
 
     private function formatPost(\WP_Post $post, bool $includeContent): array {
         $author = get_user_by('id', $post->post_author);
-        $categories = get_the_category($post->ID);
         $result = [
             'id' => $post->ID,
             'title' => $post->post_title,
+            'post_type' => $post->post_type,
             'excerpt' => wp_trim_words($post->post_content, 30),
             'status' => $post->post_status,
             'date' => $post->post_date,
             'modified' => $post->post_modified,
             'author' => $author ? $author->display_name : 'Unknown',
-            'categories' => array_map(fn($cat) => $cat->name, $categories),
             'permalink' => get_permalink($post->ID),
-            'comment_count' => $post->comment_count,
         ];
+
+        // Include taxonomies assigned to this post type
+        $taxonomies = get_object_taxonomies($post->post_type, 'objects');
+        foreach ($taxonomies as $taxSlug => $taxObj) {
+            if (!$taxObj->public) {
+                continue;
+            }
+            $terms = get_the_terms($post->ID, $taxSlug);
+            if (!empty($terms) && !is_wp_error($terms)) {
+                $result['taxonomies'][$taxSlug] = array_map(fn($t) => ['id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug], $terms);
+            }
+        }
 
         if ($includeContent) {
             $result['content'] = $post->post_content;

@@ -179,9 +179,12 @@
 .levi-message-assistant .levi-message-content h1,
 .levi-message-assistant .levi-message-content h2,
 .levi-message-assistant .levi-message-content h3,
-.levi-message-assistant .levi-message-content h4 {
+.levi-message-assistant .levi-message-content h4,
+.levi-message-assistant .levi-message-content h5,
+.levi-message-assistant .levi-message-content h6 {
     margin: 0.2em 0 0.5em;
     line-height: 1.3;
+    color: #f9fafb;
 }
 
 .levi-message-assistant .levi-message-content h1 {
@@ -225,6 +228,39 @@
 .levi-message-assistant .levi-message-content code {
     font-family: "Courier New", Courier, monospace;
     font-size: 1em;
+}
+
+.levi-message-assistant .levi-message-content strong,
+.levi-message-assistant .levi-message-content b {
+    color: #f9fafb;
+}
+
+.levi-message-assistant .levi-message-content blockquote {
+    margin: 0.4em 0;
+    padding: 6px 12px;
+    border-left: 3px solid #334155;
+    color: #d1d5db;
+}
+
+.levi-message-assistant .levi-message-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.4em 0;
+    font-size: 0.95em;
+}
+
+.levi-message-assistant .levi-message-content th,
+.levi-message-assistant .levi-message-content td {
+    border: 1px solid #1f2937;
+    padding: 5px 8px;
+    text-align: left;
+    color: #e5e7eb;
+}
+
+.levi-message-assistant .levi-message-content th {
+    background: #1e293b;
+    color: #f9fafb;
+    font-weight: 600;
 }
 
 .levi-message-assistant .levi-message-content a,
@@ -453,6 +489,34 @@
     transition: width 0.28s ease;
 }
 
+/* Indeterminate progress: honest "working" indicator, no fake percentage */
+.levi-chat-progress-indeterminate {
+    position: relative;
+}
+
+.levi-chat-progress-shimmer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 40%;
+    background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.6), rgba(59, 130, 246, 0.8), transparent);
+    border-radius: 999px;
+    animation: levi-progress-shimmer 1.8s ease-in-out infinite;
+}
+
+.levi-typing-complete .levi-chat-progress-shimmer {
+    animation: none;
+    width: 100%;
+    background: linear-gradient(90deg, #38bdf8, #3b82f6);
+    transition: width 0.2s ease;
+}
+
+@keyframes levi-progress-shimmer {
+    0% { left: -40%; }
+    100% { left: 100%; }
+}
+
 @keyframes levi-typing {
     0%, 60%, 100% { transform: translateY(0); }
     30% { transform: translateY(-10px); }
@@ -476,4 +540,3 @@
     .levi-message-user .levi-message-content {
         max-width: min(48ch, 100%);
     }
-}

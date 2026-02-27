@@ -9,11 +9,16 @@ class CreatePostTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Create a new WordPress post. Can publish directly or save as draft.';
+        return 'Create a new WordPress post or custom post type (product, event, etc.). Can publish directly or save as draft.';
     }
 
     public function getParameters(): array {
         return [
+            'post_type' => [
+                'type' => 'string',
+                'description' => 'Post type to create. Default: post. Use "product" for WooCommerce, or any custom post type.',
+                'default' => 'post',
+            ],
             'title' => [
                 'type' => 'string',
                 'description' => 'The post title',
@@ -76,7 +81,7 @@ class CreatePostTool implements ToolInterface {
             'post_title'   => sanitize_text_field($params['title']),
             'post_content' => wp_kses_post($params['content']),
             'post_status'  => $status,
-            'post_type'    => 'post',
+            'post_type'    => sanitize_key($params['post_type'] ?? 'post'),
             'post_author'  => get_current_user_id(),
         ];
 

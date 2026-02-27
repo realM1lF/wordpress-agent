@@ -81,6 +81,11 @@ for p in "${required_paths[@]}"; do
   fi
 done
 
+# Ensure data/ directory exists with .htaccess for security
+mkdir -p "$PKG_DIR/data"
+echo "Deny from all" > "$PKG_DIR/data/.htaccess"
+touch "$PKG_DIR/data/.gitkeep"
+
 if [[ -f "$ROOT_DIR/composer.json" && ! -d "$PKG_DIR/vendor" ]]; then
   echo "WARNING: composer.json exists but vendor/ is missing."
   echo "If runtime depends on Composer packages, run composer install before build."

@@ -115,22 +115,151 @@
             }
         });
 
+        function supportsReadableStream() {
+            try {
+                return typeof ReadableStream !== 'undefined'
+                    && typeof TextDecoder !== 'undefined'
+                    && leviAgent.streamUrl;
+            } catch (e) {
+                return false;
+            }
+        }
+
         function sendMessage() {
             if (sendInFlight) return;
             const text = input.value.trim();
             if (!text) return;
 
-            // Add user message
             addMessage(text, 'user');
             input.value = '';
 
             const taskMode = inferTaskMode(text);
-            // Show typing indicator
             const typing = addTypingIndicator(taskMode);
             const phaseTimers = scheduleTypingPhases(typing, taskMode);
             setSendingState(true);
 
-            // Send to API
+            if (supportsReadableStream()) {
+                sendMessageSSE(text, typing, phaseTimers);
+            } else {
+                sendMessageClassic(text, typing, phaseTimers);
+            }
+        }
+
+        async function sendMessageSSE(text, typing, phaseTimers) {
+            try {
+                const response = await fetch(leviAgent.streamUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-WP-Nonce': leviAgent.nonce,
+                    },
+                    body: JSON.stringify({
+                        message: text,
+                        session_id: sessionId,
+                    }),
+                });
+
+                if (!response.ok && !response.body) {
+                    throw new Error('Server error: ' + response.status);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let finalHandled = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    while (buffer.includes('\n\n')) {
+                        const eventEnd = buffer.indexOf('\n\n');
+                        const eventStr = buffer.substring(0, eventEnd);
+                        buffer = buffer.substring(eventEnd + 2);
+
+                        const lines = eventStr.split('\n');
+                        for (const line of lines) {
+                            if (!line.startsWith('data: ')) continue;
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                finalHandled = handleSSEEvent(data, typing, phaseTimers) || finalHandled;
+                            } catch (e) {
+                                console.warn('SSE parse error:', e, line);
+                            }
+                        }
+                    }
+                }
+
+                if (!finalHandled) {
+                    clearPhaseTimers(phaseTimers);
+                    typing.complete();
+                    setSendingState(false);
+                    addMessage('Ich konnte gerade keine Antwort generieren. Schreibe "mach weiter", damit ich es erneut versuche.', 'assistant');
+                    console.warn('Levi SSE: stream ended without done/error event');
+                }
+            } catch (error) {
+                clearPhaseTimers(phaseTimers);
+                typing.remove();
+                setSendingState(false);
+                addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
+                console.error('SSE Error:', error);
+            }
+        }
+
+        function handleSSEEvent(data, typing, phaseTimers) {
+            if (!data || !data.type) return false;
+
+            switch (data.type) {
+                case 'status':
+                    if (data.message) {
+                        typing.setLabel(data.message);
+                    }
+                    return false;
+
+                case 'progress':
+                    if (data.message) {
+                        typing.setLabel(data.message);
+                    }
+                    return false;
+
+                case 'heartbeat':
+                    return false;
+
+                case 'done':
+                    clearPhaseTimers(phaseTimers);
+                    typing.complete();
+                    setSendingState(false);
+
+                    if (data.session_id) {
+                        sessionId = data.session_id;
+                        localStorage.setItem(sessionKey, sessionId);
+                    }
+
+                    const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
+                    addMessage(cleanedMessage, 'assistant');
+                    return true;
+
+                case 'error':
+                    clearPhaseTimers(phaseTimers);
+                    typing.complete();
+                    setSendingState(false);
+
+                    if (data.session_id) {
+                        sessionId = data.session_id;
+                        localStorage.setItem(sessionKey, sessionId);
+                    }
+
+                    addMessage('❌ ' + (data.message || 'Unbekannter Fehler'), 'assistant');
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        function sendMessageClassic(text, typing, phaseTimers) {
             fetch(leviAgent.restUrl + 'chat', {
                 method: 'POST',
                 headers: {
@@ -144,37 +273,30 @@
             })
             .then(async response => {
                 const text = await response.text();
-                
-                // Try to parse as JSON
                 try {
                     const data = JSON.parse(text);
                     data.__httpStatus = response.status;
                     return data;
                 } catch (e) {
-                    // Not JSON - likely PHP error output
                     console.error('Server returned non-JSON:', text.substring(0, 500));
                     throw new Error('Server error: Invalid response format');
                 }
             })
             .then(data => {
-                // Remove typing indicator
                 clearPhaseTimers(phaseTimers);
                 typing.complete();
                 setSendingState(false);
 
-                // Check for API errors
                 if (data.error) {
                     addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
                     return;
                 }
 
-                // Store session ID
                 if (data.session_id) {
                     sessionId = data.session_id;
                     localStorage.setItem(sessionKey, sessionId);
                 }
 
-                // Add assistant response
                 const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                 addMessage(cleanedMessage, 'assistant');
             })
@@ -513,15 +635,12 @@
                 '<span></span><span></span><span></span>' +
                 '<small class="levi-typing-label"></small>' +
                 '</div>' +
-                '<div class="levi-chat-progress-track"><div class="levi-chat-progress-fill"></div></div>' +
+                '<div class="levi-chat-progress-track levi-chat-progress-indeterminate"><div class="levi-chat-progress-shimmer"></div></div>' +
                 '</div>';
             messages.appendChild(typingDiv);
             messages.scrollTop = messages.scrollHeight;
 
             const labelEl = typingDiv.querySelector('.levi-typing-label');
-            const progressFillEl = typingDiv.querySelector('.levi-chat-progress-fill');
-            let progress = 6;
-            let intervalId = null;
 
             const setLabel = (label) => {
                 if (labelEl) {
@@ -529,35 +648,15 @@
                 }
             };
 
-            const setProgress = (next) => {
-                progress = Math.max(0, Math.min(100, next));
-                if (progressFillEl) {
-                    progressFillEl.style.width = progress + '%';
-                }
-            };
-
             setLabel(getTypingLabel(taskMode, 'start'));
-            setProgress(progress);
-
-            intervalId = setInterval(() => {
-                setProgress(Math.min(90, progress + 3));
-            }, 420);
 
             return {
                 setLabel,
                 complete: () => {
-                    if (intervalId) {
-                        clearInterval(intervalId);
-                        intervalId = null;
-                    }
-                    setProgress(100);
-                    setTimeout(() => typingDiv.remove(), 180);
+                    typingDiv.classList.add('levi-typing-complete');
+                    setTimeout(() => typingDiv.remove(), 200);
                 },
                 remove: () => {
-                    if (intervalId) {
-                        clearInterval(intervalId);
-                        intervalId = null;
-                    }
                     typingDiv.remove();
                 },
             };
@@ -656,7 +755,7 @@
             cleaned = cleaned.replace(/<\|[^|>]+?\|>/g, '');
             cleaned = cleaned.replace(/(?:^|\n)\s*functions\.[a-z0-9_]+\s*:\s*\d+[\s\S]*$/i, '');
             cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
-            return cleaned || 'Keine Antwort erhalten';
+            return cleaned || 'Ich konnte gerade keine Antwort generieren. Schreibe "mach weiter", damit ich es erneut versuche.';
         }
 
         function fallbackPlainText(text) {

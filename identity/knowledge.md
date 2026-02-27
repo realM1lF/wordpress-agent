@@ -1,103 +1,65 @@
-# Wissen
+# KNOWLEDGE
 
-## WordPress Kontext
+## Basis-Wissen
+Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in /home/rin/Work/personal-ki-agents/wordpress-agent/memories abgelegt sind. Diese werden in dein Langzeitgedächtnis übertragen.
 
-Diese WordPress-Installation kann über folgende Wege angepasst werden:
+## WooCommerce-Architektur
 
-### Website-Informationen
-- Website-Name und Beschreibung sind konfigurierbar
-- Permalink-Struktur (typischerweise /%postname%/)
-- Standard-Post-Kategorie und -Format
-- Zeitzone und Datumsformat-Einstellungen
+### Produkttypen
+- **Simple Product** (`product`): Einfaches Produkt mit einem Preis
+- **Variable Product** (`product`): Hat untergeordnete Variationen (z.B. Größe, Farbe)
+- **Product Variation** (`product_variation`): Child-Post eines variablen Produkts, eigener Preis/Lager/SKU
+- **Grouped Product**: Sammlung von einfachen Produkten
+- **External/Affiliate**: Link auf externes Produkt
 
-### Inhaltstypen
-- **Posts:** Blog-Artikel, Nachrichten, Updates
-- **Seiten:** Statische Inhalte (Über uns, Kontakt, etc.)
-- **Medien:** Bilder, Dokumente, Videos in der Mediathek
-- **Eigene Post-Types:** Variieren je nach installierten Plugins
+### Preisspeicherung
+- `_regular_price`: Normalpreis
+- `_sale_price`: Angebotspreis (wenn gesetzt, aktiver Preis)
+- `_price`: Effektiver Preis (wird automatisch von WC berechnet: sale > regular)
+- Bei Variationen: Jede Variation hat eigene `_regular_price`, `_sale_price`, `_price`
 
-### Häufige Plugins (falls installiert)
-- SEO-Plugins (Yoast, RankMath)
-- Page-Builder (Elementor, Divi, Gutenberg-Patterns)
-- Caching-Plugins (WP Rocket, W3 Total Cache)
-- Formular-Plugins (Contact Form 7, Gravity Forms)
-- E-Commerce (WooCommerce)
+### Variable Produkte & Variationen
+- Ein variables Produkt hat `product_type = variable` in der Taxonomie `product_type`
+- Variationen sind eigene Posts mit `post_type = product_variation` und `post_parent = <parent_product_id>`
+- Attribute werden als Taxonomie-Terms (`pa_farbe`, `pa_groesse`) oder als Custom-Attribute gespeichert
+- Jede Variation hat Meta-Keys wie `attribute_pa_farbe = schwarz`
+- `wc_get_product($id)` gibt ein `WC_Product_Variable` Objekt zurück, `$product->get_available_variations()` listet alle Variationen
 
-## Best Practices
+### Warenkorb (Cart)
+- Einfache Produkte: `?add-to-cart=<product_id>` oder AJAX POST an `/?wc-ajax=add_to_cart` mit `product_id`
+- Variable Produkte: Man MUSS zusätzlich `variation_id=<variation_id>` und die Attribute (z.B. `attribute_pa_farbe=schwarz`) mitschicken
+- Ohne `variation_id` bei variablen Produkten → WooCommerce-Fehler: "Bitte wähle Produktoptionen aus"
+- Cart-Item-Data kann über `woocommerce_add_cart_item_data` Filter erweitert werden (z.B. Bundle-Preise)
 
-### Inhaltserstellung
-- Verwende Gutenberg-Blöcke für strukturierte Inhalte
-- Füge Alt-Text zu Bildern hinzu
-- Verwende Überschriften hierarchisch (H1 → H2 → H3)
-- Halte Absätze kurz (2-4 Sätze)
-- Füge interne Links hinzu, wenn relevant
+### Wichtige WooCommerce-Hooks
+- `woocommerce_before_cart`: Vor dem gesamten Warenkorb
+- `woocommerce_cart_contents`: Innerhalb der Cart-Tabelle
+- `woocommerce_after_cart_table`: Nach der Cart-Tabelle
+- `woocommerce_before_cart_totals`: Vor der Summen-Box
+- `woocommerce_cart_calculate_fees`: Gebühren/Rabatte hinzufügen
+- `woocommerce_add_to_cart`: Nach Hinzufügen zum Warenkorb
+- `woocommerce_cart_item_price`: Preis pro Artikel im Warenkorb filtern
 
-### SEO-Grundlagen
-- Eine H1 pro Seite/Post
-- Meta-Beschreibung unter 160 Zeichen
-- Verwende Fokus-Keyword im ersten Absatz
-- Optimiere Bilder (komprimieren, beschreibende Dateinamen)
-- Erstelle beschreibende Permalinks
+### Versand
+- Versandzonen: `WC_Shipping_Zones::get_zones()` listet alle Zonen
+- Versandmethoden pro Zone: Flat Rate, Free Shipping, Local Pickup
+- Free Shipping hat oft Bedingung: Mindestbestellwert (`min_amount`)
+- `WC()->shipping()->get_packages()` gibt aktive Versandpakete zurück
 
-### Performance
-- Verwende passende Bildgrößen
-- Lade keine unnötigen Skripte
-- Minimiere Plugin-Nutzung
-- Halte WordPress und Plugins aktuell
+### WooCommerce PHP-API
+- `wc_get_product($id)`: Produkt-Objekt laden
+- `wc_get_products($args)`: Mehrere Produkte abfragen
+- `$product->get_type()`: simple, variable, variation, grouped, external
+- `$product->get_price()`, `$product->get_regular_price()`, `$product->get_sale_price()`
+- `$product->is_in_stock()`, `$product->get_stock_quantity()`
+- `$product->get_available_variations()`: Alle Variationen (nur bei variable)
+- `$product->get_attributes()`: Produkt-Attribute
+- `wc_get_product_terms($id, 'product_cat')`: Produkt-Kategorien
 
-## Häufige Benutzer-Workflows
+## Debugging-Workflow
 
-### Blogpost veröffentlichen
-1. Entwurf mit Titel und Inhalt erstellen
-2. Kategorien und Tags hinzufügen
-3. Featured-Image setzen
-4. Vorschau prüfen
-5. Planen oder veröffentlichen
-
-### Seite aktualisieren
-1. Inhalt bearbeiten
-2. Defekte Links aktualisieren
-3. Mobile-Vorschau prüfen
-4. Änderungen speichern
-5. Cache leeren falls erforderlich
-
-### Medien verwalten
-1. In die Mediathek hochladen
-2. Alt-Text und Beschreibung hinzufügen
-3. Dateigröße optimieren
-4. In Ordnern organisieren (falls Media-Organization-Plugin genutzt wird)
-
-## Fehlerbehebungs-Wissen
-
-### Häufige Probleme
-- **Weiße Seite:** Meist PHP-Fehler, Fehlerprotokolle prüfen
-- **Permalink 404:** Permalink-Einstellungen zurücksetzen
-- **Langsamer Admin:** Wahrscheinlich Plugin-Konflikt oder unzureichendes Hosting
-- **Bild-Upload fehlgeschlagen:** Dateiberechtigungen und Größenlimits prüfen
-- **Update fehlgeschlagen:** Dateiberechtigungen prüfen (wp-content sollte beschreibbar sein)
-
-### Gesundheits-Checks
-- WordPress-Version aktuell?
-- PHP-Version 8.0+?
-- SSL-Zertifikat gültig?
-- Datenbank-Tabellen optimiert?
-- Backups funktionieren?
-
-## Integrationspunkte
-
-### Verfügbare Tools
-Der Agent kann mit WordPress interagieren über:
-- Post/Page CRUD-Operationen
-- Mediathek-Zugriff
-- Benutzerverwaltung (eingeschränkt)
-- Einstellungen (ausgewählte, sichere)
-- Taxonomie (Kategorien, Tags) Verwaltung
-- Options-API (get/update)
-
-### REST API Endpoints
-Alle Agent-Operationen nutzen die WordPress REST API:
-- `/wp/v2/posts` - Posts
-- `/wp/v2/pages` - Seiten
-- `/wp/v2/media` - Medien
-- `/wp/v2/users` - Benutzer
-- `/wp/v2/settings` - Einstellungen
+Wenn etwas nicht funktioniert:
+1. `read_error_log` nutzen um PHP-Fehler zu finden
+2. `read_plugin_file` nutzen um den eigenen Code zu prüfen
+3. `http_fetch` nutzen um den Frontend-Output zu sehen (falls verfügbar)
+4. `execute_wp_code` nutzen um WP-Funktionen direkt zu testen (falls verfügbar)

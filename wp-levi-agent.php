@@ -65,6 +65,12 @@ register_activation_hook(__FILE__, function() {
     require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
     Levi\Agent\Database\Tables::create();
     StateSnapshotService::scheduleEvent();
+
+    // Trigger one-time setup wizard redirect after activation.
+    update_option('levi_setup_wizard_pending', 1);
+    if (get_option('levi_setup_completed', null) === null) {
+        update_option('levi_setup_completed', 0);
+    }
 });
 
 // Deactivation hook

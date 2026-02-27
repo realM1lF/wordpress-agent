@@ -15,23 +15,36 @@ class VectorStore {
         $this->init();
     }
 
+    public function isAvailable(): bool {
+        return $this->db !== null;
+    }
+
     private function init(): void {
-        // Ensure data directory exists
+        if (!class_exists('\SQLite3')) {
+            error_log('Levi Agent: SQLite3 PHP extension not available. Vector memory disabled.');
+            return;
+        }
+
         $dataDir = dirname($this->dbPath);
         if (!is_dir($dataDir)) {
             wp_mkdir_p($dataDir);
         }
+        if (!is_dir($dataDir) || !is_writable($dataDir)) {
+            error_log('Levi Agent: data directory not writable: ' . $dataDir);
+            return;
+        }
 
-        // Open database
-        $this->db = new \SQLite3($this->dbPath);
-        $this->db->enableExceptions(true);
-
-        // Create tables if not exist
-        $this->createTables();
+        try {
+            $this->db = new \SQLite3($this->dbPath);
+            $this->db->enableExceptions(true);
+            $this->createTables();
+        } catch (\Throwable $e) {
+            error_log('Levi Agent: SQLite3 init failed: ' . $e->getMessage());
+            $this->db = null;
+        }
     }
 
     private function createTables(): void {
-        // Memory vectors table
         $this->db->exec('
             CREATE TABLE IF NOT EXISTS memory_vectors (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,12 +57,10 @@ class VectorStore {
             )
         ');
 
-        // Create index for memory type
         $this->db->exec('
             CREATE INDEX IF NOT EXISTS idx_memory_type ON memory_vectors(memory_type)
         ');
 
-        // Episodic memory table (learned facts)
         $this->db->exec('
             CREATE TABLE IF NOT EXISTS episodic_memory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,7 +72,6 @@ class VectorStore {
             )
         ');
 
-        // Track which files are loaded
         $this->db->exec('
             CREATE TABLE IF NOT EXISTS loaded_files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +91,6 @@ class VectorStore {
             return $config;
         }
 
-        // Trim text to token limit (approx 8000 chars for 2000 tokens)
         $text = substr($text, 0, 8000);
 
         $response = wp_remote_post($config['endpoint'], [
@@ -108,9 +117,6 @@ class VectorStore {
         return $body['data'][0]['embedding'] ?? [];
     }
 
-    /**
-     * Store a memory vector
-     */
     public function storeVector(
         string $content,
         array $embedding,
@@ -118,6 +124,10 @@ class VectorStore {
         string $sourceFile = '',
         int $chunkIndex = 0
     ): bool {
+        if (!$this->db) {
+            return false;
+        }
+
         try {
             $stmt = $this->db->prepare('
                 INSERT INTO memory_vectors (source_file, content, embedding, memory_type, chunk_index)
@@ -138,15 +148,16 @@ class VectorStore {
         }
     }
 
-    /**
-     * Store episodic memory (learned fact)
-     */
     public function storeEpisodicMemory(
         string $fact,
         array $embedding,
         ?int $userId = null,
         string $context = ''
     ): bool {
+        if (!$this->db) {
+            return false;
+        }
+
         try {
             $stmt = $this->db->prepare('
                 INSERT INTO episodic_memory (user_id, fact, embedding, context)
@@ -166,22 +177,20 @@ class VectorStore {
         }
     }
 
-    /**
-     * Search similar vectors using cosine similarity
-     */
     public function searchSimilar(
         array $queryEmbedding,
         string $memoryType = '',
         int $limit = 5,
         float $minSimilarity = 0.7
     ): array {
-        // Get all vectors of the specified type
+        if (!$this->db) {
+            return [];
+        }
+
         $sql = 'SELECT id, content, embedding, memory_type, source_file FROM memory_vectors';
-        $params = [];
 
         if ($memoryType) {
             $sql .= ' WHERE memory_type = :memory_type';
-            $params[':memory_type'] = $memoryType;
         }
 
         $stmt = $this->db->prepare($sql);
@@ -191,7 +200,6 @@ class VectorStore {
         }
 
         $result = $stmt->execute();
-
         $similarities = [];
 
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
@@ -211,23 +219,22 @@ class VectorStore {
             }
         }
 
-        // Sort by similarity (highest first)
         usort($similarities, fn($a, $b) => $b['similarity'] <=> $a['similarity']);
 
         return array_slice($similarities, 0, $limit);
     }
 
-    /**
-     * Search episodic memories for a user
-     */
     public function searchEpisodicMemories(
         array $queryEmbedding,
         ?int $userId = null,
         int $limit = 3,
         float $minSimilarity = 0.75
     ): array {
+        if (!$this->db) {
+            return [];
+        }
+
         $sql = 'SELECT id, fact, context FROM episodic_memory';
-        $params = [];
 
         if ($userId) {
             $sql .= ' WHERE user_id = :user_id';
@@ -240,11 +247,9 @@ class VectorStore {
         }
 
         $result = $stmt->execute();
-
         $similarities = [];
 
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-            // Note: We need to get embedding for each row
             $embedStmt = $this->db->prepare('SELECT embedding FROM episodic_memory WHERE id = :id');
             $embedStmt->bindValue(':id', $row['id'], SQLITE3_INTEGER);
             $embedResult = $embedStmt->execute();
@@ -272,9 +277,6 @@ class VectorStore {
         return array_slice($similarities, 0, $limit);
     }
 
-    /**
-     * Calculate cosine similarity between two vectors
-     */
     private function cosineSimilarity(array $a, array $b): float {
         $dotProduct = 0;
         $normA = 0;
@@ -293,10 +295,11 @@ class VectorStore {
         return $dotProduct / (sqrt($normA) * sqrt($normB));
     }
 
-    /**
-     * Clear all memories of a type
-     */
     public function clearMemory(string $memoryType): bool {
+        if (!$this->db) {
+            return false;
+        }
+
         try {
             $stmt = $this->db->prepare('DELETE FROM memory_vectors WHERE memory_type = :memory_type');
             $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
@@ -308,10 +311,11 @@ class VectorStore {
         }
     }
 
-    /**
-     * Keep only the latest N vectors for a memory type.
-     */
     public function pruneMemoryType(string $memoryType, int $keepLatest = 60): bool {
+        if (!$this->db) {
+            return false;
+        }
+
         if ($keepLatest <= 0) {
             return $this->clearMemory($memoryType);
         }
@@ -339,22 +343,27 @@ class VectorStore {
         }
     }
 
-    /**
-     * Check if file was already loaded (by hash)
-     */
     public function isFileLoaded(string $filePath, string $fileHash): bool {
-        $stmt = $this->db->prepare('SELECT file_hash FROM loaded_files WHERE file_path = :file_path');
-        $stmt->bindValue(':file_path', $filePath, SQLITE3_TEXT);
-        $result = $stmt->execute();
-        $row = $result->fetchArray(SQLITE3_ASSOC);
+        if (!$this->db) {
+            return false;
+        }
 
-        return $row && $row['file_hash'] === $fileHash;
+        try {
+            $stmt = $this->db->prepare('SELECT file_hash FROM loaded_files WHERE file_path = :file_path');
+            $stmt->bindValue(':file_path', $filePath, SQLITE3_TEXT);
+            $result = $stmt->execute();
+            $row = $result->fetchArray(SQLITE3_ASSOC);
+            return $row && $row['file_hash'] === $fileHash;
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 
-    /**
-     * Mark file as loaded
-     */
     public function markFileLoaded(string $filePath, string $fileHash): bool {
+        if (!$this->db) {
+            return false;
+        }
+
         try {
             $stmt = $this->db->prepare('
                 INSERT OR REPLACE INTO loaded_files (file_path, file_hash, loaded_at)
@@ -370,16 +379,10 @@ class VectorStore {
         }
     }
 
-    /**
-     * Get file hash
-     */
     public function getFileHash(string $filePath): string {
         return hash_file('sha256', $filePath);
     }
 
-    /**
-     * Get statistics
-     */
     public function getStats(): array {
         $stats = [
             'identity_vectors' => 0,
@@ -387,26 +390,31 @@ class VectorStore {
             'episodic_memories' => 0,
         ];
 
-        $result = $this->db->query('
-            SELECT memory_type, COUNT(*) as count 
-            FROM memory_vectors 
-            GROUP BY memory_type
-        ');
-
-        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-            $stats[$row['memory_type'] . '_vectors'] = $row['count'];
+        if (!$this->db) {
+            return $stats;
         }
 
-        $result = $this->db->query('SELECT COUNT(*) as count FROM episodic_memory');
-        $row = $result->fetchArray(SQLITE3_ASSOC);
-        $stats['episodic_memories'] = $row['count'];
+        try {
+            $result = $this->db->query('
+                SELECT memory_type, COUNT(*) as count 
+                FROM memory_vectors 
+                GROUP BY memory_type
+            ');
+
+            while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+                $stats[$row['memory_type'] . '_vectors'] = $row['count'];
+            }
+
+            $result = $this->db->query('SELECT COUNT(*) as count FROM episodic_memory');
+            $row = $result->fetchArray(SQLITE3_ASSOC);
+            $stats['episodic_memories'] = $row['count'];
+        } catch (\Exception $e) {
+            error_log('VectorStore stats error: ' . $e->getMessage());
+        }
 
         return $stats;
     }
 
-    /**
-     * Build embedding request config from current settings.
-     */
     private function getEmbeddingRequestConfig(): array|WP_Error {
         $settings = new \Levi\Agent\Admin\SettingsPage();
         $provider = $settings->getProvider();
@@ -416,7 +424,6 @@ class VectorStore {
             return new WP_Error('no_api_key', sprintf('Kein API-Key für den ausgewählten Provider (%s) hinterlegt.', $provider));
         }
 
-        // Anthropic does not provide a compatible embeddings endpoint in this plugin.
         if ($provider === 'anthropic') {
             return new WP_Error(
                 'embedding_provider_unsupported',

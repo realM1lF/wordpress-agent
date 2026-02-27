@@ -3,6 +3,7 @@
 namespace Levi\Agent\Core;
 
 use Levi\Agent\Admin\ChatWidget;
+use Levi\Agent\Admin\SetupWizardPage;
 use Levi\Agent\Admin\SettingsPage;
 use Levi\Agent\AI\AIClientFactory;
 use Levi\Agent\API\ChatController;
@@ -26,6 +27,7 @@ class Plugin {
         // Admin
         new ChatWidget();
         new SettingsPage();
+        new SetupWizardPage();
         
         // REST API
         new ChatController();
@@ -115,6 +117,7 @@ class Plugin {
 
         wp_localize_script('levi-agent-chat', 'leviAgent', [
             'restUrl' => rest_url('levi-agent/v1/'),
+            'streamUrl' => rest_url('levi-agent/v1/chat/stream'),
             'nonce' => wp_create_nonce('wp_rest'),
             'userName' => wp_get_current_user()->display_name,
             'ajaxUrl' => admin_url('admin-ajax.php'),

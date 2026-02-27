@@ -9,12 +9,16 @@ class OpenAIClient implements AIClientInterface {
     private const API_BASE = 'https://api.openai.com/v1';
     private ?string $apiKey;
     private string $model;
-    private int $timeout = 120;
+    private int $timeout;
+    private int $maxTokens;
 
     public function __construct() {
         $settings = new SettingsPage();
         $this->apiKey = $settings->getApiKeyForProvider('openai');
         $this->model = $settings->getModelForProvider('openai');
+        $allSettings = $settings->getSettings();
+        $this->timeout = max(1, (int) ($allSettings['ai_timeout'] ?? 120));
+        $this->maxTokens = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
     }
 
     public function isConfigured(): bool {
@@ -31,7 +35,7 @@ class OpenAIClient implements AIClientInterface {
             'model' => $this->model,
             'messages' => $messages,
             'temperature' => $temperature,
-            'max_tokens' => 4096,
+            'max_tokens' => $this->maxTokens,
         ];
 
         if (!empty($tools)) {
@@ -91,7 +95,7 @@ class OpenAIClient implements AIClientInterface {
             'model' => $this->model,
             'messages' => $messages,
             'temperature' => 0.7,
-            'max_tokens' => 4096,
+            'max_tokens' => $this->maxTokens,
             'stream' => true,
         ];
 

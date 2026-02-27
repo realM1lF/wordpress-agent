@@ -772,6 +772,14 @@
     margin-top: var(--levi-space-xs);
 }
 
+.levi-stat-files {
+    font-size: 11px;
+    color: var(--levi-text-muted);
+    margin: var(--levi-space-xs) 0 0;
+    word-break: break-word;
+    max-width: 100%;
+}
+
 /* Progress Bar */
 .levi-progress-wrap {
     width: 100%;
