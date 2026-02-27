@@ -2,6 +2,8 @@
 
 namespace Levi\Agent\AI\Tools;
 
+use Levi\Agent\AI\PIIRedactor;
+
 class GetPostsTool implements ToolInterface {
 
     public function getName(): string {
@@ -88,6 +90,11 @@ class GetPostsTool implements ToolInterface {
         $includeContent = (bool) ($params['include_content'] ?? false);
 
         $postType = sanitize_key($params['post_type'] ?? 'post');
+
+        if (PIIRedactor::getInstance()->isBlockedPostType($postType)) {
+            return ['success' => false, 'error' => sprintf('Post type "%s" is restricted for data protection.', $postType)];
+        }
+
         $args = [
             'post_type' => $postType,
             'posts_per_page' => $perPage,
