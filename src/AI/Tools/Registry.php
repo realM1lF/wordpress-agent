@@ -164,6 +164,7 @@ class Registry {
             new ManageMenuTool(),
             new ManageCronTool(),
             new UploadMediaTool(),
+            new StoreSessionImageTool(),
         ];
 
         $powerTools = [

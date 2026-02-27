@@ -26,7 +26,7 @@
         </div>
         <div class="levi-chat-input-area">
             <div class="levi-chat-upload-row">
-                <button id="levi-chat-upload-btn" class="levi-chat-upload-btn" type="button" title="Datei hochladen (.txt, .md)">
+                <button id="levi-chat-upload-btn" class="levi-chat-upload-btn" type="button" title="Datei oder Bild hochladen">
                     <span class="dashicons dashicons-paperclip"></span>
                     <span>Datei</span>
                 </button>
@@ -34,7 +34,7 @@
                     <span class="dashicons dashicons-dismiss"></span>
                     <span>Uploads löschen</span>
                 </button>
-                <input id="levi-chat-file-input" type="file" accept=".txt,.md,text/plain,text/markdown" multiple hidden>
+                <input id="levi-chat-file-input" type="file" accept=".txt,.md,.csv,.json,.xml,.log,.jpg,.jpeg,.png,.gif,.webp,text/plain,text/markdown,text/csv,application/json,image/*" multiple hidden>
                 <div id="levi-chat-upload-status" class="levi-chat-upload-status"></div>
             </div>
             <div id="levi-chat-context-hint" class="levi-chat-context-hint"></div>
@@ -48,6 +48,9 @@
                 ></textarea>
                 <button id="levi-chat-send" class="levi-chat-send">
                     <span class="dashicons dashicons-arrow-right-alt2"></span>
+                </button>
+                <button id="levi-chat-stop" class="levi-chat-stop" style="display:none;" title="Abbrechen">
+                    <span class="dashicons dashicons-no"></span>
                 </button>
             </div>
         </div>

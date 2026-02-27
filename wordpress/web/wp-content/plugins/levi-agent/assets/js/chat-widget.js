@@ -20,6 +20,8 @@
         const contextHint = document.getElementById('levi-chat-context-hint');
         const fileList = document.getElementById('levi-chat-file-list');
 
+        const stop = document.getElementById('levi-chat-stop');
+
         const sessionKey = 'levi_session_id';
         const openKey = 'levi_chat_open';
         const fullWidthKey = 'levi_chat_fullwidth';
@@ -28,6 +30,8 @@
         let sendInFlight = false;
         let uploadInFlight = false;
         let uploadedFiles = [];
+        let currentAbortController = null;
+        let editingMessageEl = null;
 
         function setChatOpen(isOpen) {
             window_.style.display = isOpen ? 'flex' : 'none';
@@ -107,6 +111,16 @@
         // Send message on button click
         send.addEventListener('click', sendMessage);
 
+        // Stop button aborts current request
+        if (stop) {
+            stop.addEventListener('click', function() {
+                if (currentAbortController) {
+                    currentAbortController.abort();
+                    currentAbortController = null;
+                }
+            });
+        }
+
         // Send message on Enter (Shift+Enter for new line)
         input.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -130,6 +144,18 @@
             const text = input.value.trim();
             if (!text) return;
 
+            // If editing, remove the old user message and its assistant reply from DOM
+            const isEdit = editingMessageEl !== null;
+            if (isEdit && editingMessageEl) {
+                const nextSibling = editingMessageEl.nextElementSibling;
+                if (nextSibling && nextSibling.classList.contains('levi-message-assistant')) {
+                    nextSibling.remove();
+                }
+                editingMessageEl.remove();
+                editingMessageEl = null;
+            }
+
+            currentAbortController = new AbortController();
             addMessage(text, 'user');
             input.value = '';
 
@@ -139,13 +165,13 @@
             setSendingState(true);
 
             if (supportsReadableStream()) {
-                sendMessageSSE(text, typing, phaseTimers);
+                sendMessageSSE(text, typing, phaseTimers, isEdit);
             } else {
-                sendMessageClassic(text, typing, phaseTimers);
+                sendMessageClassic(text, typing, phaseTimers, isEdit);
             }
         }
 
-        async function sendMessageSSE(text, typing, phaseTimers) {
+        async function sendMessageSSE(text, typing, phaseTimers, isEdit) {
             try {
                 const response = await fetch(leviAgent.streamUrl, {
                     method: 'POST',
@@ -156,7 +182,9 @@
                     body: JSON.stringify({
                         message: text,
                         session_id: sessionId,
+                        replace_last: isEdit || false,
                     }),
+                    signal: currentAbortController ? currentAbortController.signal : undefined,
                 });
 
                 if (!response.ok && !response.body) {
@@ -203,8 +231,13 @@
                 clearPhaseTimers(phaseTimers);
                 typing.remove();
                 setSendingState(false);
-                addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
-                console.error('SSE Error:', error);
+                currentAbortController = null;
+                if (error.name === 'AbortError') {
+                    addMessage('⏹ Abgebrochen.', 'assistant');
+                } else {
+                    addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
+                    console.error('SSE Error:', error);
+                }
             }
         }
 
@@ -259,7 +292,7 @@
             }
         }
 
-        function sendMessageClassic(text, typing, phaseTimers) {
+        function sendMessageClassic(text, typing, phaseTimers, isEdit) {
             fetch(leviAgent.restUrl + 'chat', {
                 method: 'POST',
                 headers: {
@@ -269,7 +302,9 @@
                 body: JSON.stringify({
                     message: text,
                     session_id: sessionId,
+                    replace_last: isEdit || false,
                 }),
+                signal: currentAbortController ? currentAbortController.signal : undefined,
             })
             .then(async response => {
                 const text = await response.text();
@@ -304,8 +339,13 @@
                 clearPhaseTimers(phaseTimers);
                 typing.remove();
                 setSendingState(false);
-                addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
-                console.error('Error:', error);
+                currentAbortController = null;
+                if (error.name === 'AbortError') {
+                    addMessage('⏹ Abgebrochen.', 'assistant');
+                } else {
+                    addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
+                    console.error('Error:', error);
+                }
             });
         }
 
@@ -314,8 +354,11 @@
             send.disabled = !!isSending;
             input.disabled = !!isSending;
             if (isSending) {
-                send.style.opacity = '0.7';
+                send.style.display = 'none';
+                if (stop) stop.style.display = 'inline-flex';
             } else {
+                send.style.display = '';
+                if (stop) stop.style.display = 'none';
                 send.style.opacity = '1';
                 input.focus();
             }
@@ -409,7 +452,10 @@
                 chip.className = 'levi-chat-file-chip';
                 const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
                 const fileId = escapeHtml((f && f.id) ? String(f.id) : '');
-                chip.innerHTML = '<span class="dashicons dashicons-media-text"></span><span>' + name + '</span>'
+                const fileType = (f && f.type) ? String(f.type) : '';
+                const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
+                const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
+                chip.innerHTML = '<span class="dashicons ' + icon + '"></span><span>' + name + '</span>'
                     + '<button type="button" class="levi-chat-file-chip-remove" data-file-id="' + fileId + '" title="Datei entfernen">×</button>';
                 fileList.appendChild(chip);
             });
@@ -576,7 +622,27 @@
         function addMessage(text, role) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'levi-message levi-message-' + role;
-            messageDiv.innerHTML = '<div class="levi-message-content">' + renderMessageContent(text, role) + '</div>';
+
+            let html = '<div class="levi-message-content">' + renderMessageContent(text, role) + '</div>';
+
+            if (role === 'user') {
+                html += '<button type="button" class="levi-message-edit-btn" title="Nachricht bearbeiten"><span class="dashicons dashicons-edit"></span></button>';
+            }
+
+            messageDiv.innerHTML = html;
+
+            if (role === 'user') {
+                const editBtn = messageDiv.querySelector('.levi-message-edit-btn');
+                if (editBtn) {
+                    editBtn.addEventListener('click', function() {
+                        if (sendInFlight) return;
+                        input.value = text;
+                        input.focus();
+                        editingMessageEl = messageDiv;
+                    });
+                }
+            }
+
             messages.appendChild(messageDiv);
             messages.scrollTop = messages.scrollHeight;
         }

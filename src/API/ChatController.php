@@ -42,25 +42,31 @@ class ChatController extends WP_REST_Controller {
     }
 
     public function register_routes(): void {
+        $sharedArgs = [
+            'message' => [
+                'required' => true,
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_textarea_field',
+            ],
+            'session_id' => [
+                'type' => ['string', 'null'],
+                'default' => null,
+                'sanitize_callback' => function($value) {
+                    return $value ? sanitize_text_field($value) : null;
+                },
+            ],
+            'replace_last' => [
+                'type' => 'boolean',
+                'default' => false,
+            ],
+        ];
+
         register_rest_route($this->namespace, '/' . $this->rest_base, [
             [
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [$this, 'sendMessage'],
                 'permission_callback' => [$this, 'checkPermission'],
-                'args' => [
-                    'message' => [
-                        'required' => true,
-                        'type' => 'string',
-                        'sanitize_callback' => 'sanitize_textarea_field',
-                    ],
-                    'session_id' => [
-                        'type' => ['string', 'null'],
-                        'default' => null,
-                        'sanitize_callback' => function($value) {
-                            return $value ? sanitize_text_field($value) : null;
-                        },
-                    ],
-                ],
+                'args' => $sharedArgs,
             ],
         ]);
 
@@ -69,20 +75,7 @@ class ChatController extends WP_REST_Controller {
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [$this, 'sendMessageStream'],
                 'permission_callback' => [$this, 'checkPermission'],
-                'args' => [
-                    'message' => [
-                        'required' => true,
-                        'type' => 'string',
-                        'sanitize_callback' => 'sanitize_textarea_field',
-                    ],
-                    'session_id' => [
-                        'type' => ['string', 'null'],
-                        'default' => null,
-                        'sanitize_callback' => function($value) {
-                            return $value ? sanitize_text_field($value) : null;
-                        },
-                    ],
-                ],
+                'args' => $sharedArgs,
             ],
         ]);
 
@@ -285,6 +278,15 @@ class ChatController extends WP_REST_Controller {
 
         // Emit initial status immediately (keeps Nginx alive)
         $this->emitSSE('status', ['message' => 'Levi denkt nach...', 'session_id' => $sessionId]);
+
+        $replaceLast = (bool) $request->get_param('replace_last');
+        if ($replaceLast) {
+            try {
+                $this->conversationRepo->deleteLastUserAssistantPair($sessionId);
+            } catch (\Exception $e) {
+                error_log('Levi DB Error (replace_last): ' . $e->getMessage());
+            }
+        }
 
         try {
             $this->conversationRepo->saveMessage($sessionId, $userId, 'user', $message);
@@ -615,12 +617,19 @@ class ChatController extends WP_REST_Controller {
             ], 503);
         }
 
-        // Save user message (wrapped in try-catch for DB errors)
+        $replaceLast = (bool) $request->get_param('replace_last');
+        if ($replaceLast) {
+            try {
+                $this->conversationRepo->deleteLastUserAssistantPair($sessionId);
+            } catch (\Exception $e) {
+                error_log('Levi DB Error (replace_last): ' . $e->getMessage());
+            }
+        }
+
         try {
             $this->conversationRepo->saveMessage($sessionId, $userId, 'user', $message);
         } catch (\Exception $e) {
             error_log('Levi DB Error: ' . $e->getMessage());
-            // Continue without saving - don't break the chat
         }
 
         $hasUploadedContext = !empty($this->getSessionUploads($sessionId, $userId));
@@ -953,17 +962,42 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
-        // Current message
-        $messages[] = [
-            'role' => 'user',
-            'content' => $newMessage,
-        ];
+        // Current message – attach session images as Vision content if present
+        $userId = get_current_user_id();
+        $sessionImages = $includeUploadedContext ? $this->getSessionImages($sessionId, $userId) : [];
+
+        if (!empty($sessionImages)) {
+            $contentParts = [['type' => 'text', 'text' => $newMessage]];
+            foreach ($sessionImages as $img) {
+                $contentParts[] = [
+                    'type' => 'image_url',
+                    'image_url' => ['url' => $img['base64']],
+                ];
+            }
+            $messages[] = ['role' => 'user', 'content' => $contentParts];
+        } else {
+            $messages[] = ['role' => 'user', 'content' => $newMessage];
+        }
 
         return $this->trimMessagesToBudget($messages);
     }
 
-    private function estimateTokenCount(string $text): int {
-        return (int) ceil(mb_strlen($text) / 3.5);
+    private function estimateTokenCount($content): int {
+        if (is_string($content)) {
+            return (int) ceil(mb_strlen($content) / 3.5);
+        }
+        if (is_array($content)) {
+            $tokens = 0;
+            foreach ($content as $part) {
+                if (is_array($part) && ($part['type'] ?? '') === 'text') {
+                    $tokens += (int) ceil(mb_strlen((string) ($part['text'] ?? '')) / 3.5);
+                } elseif (is_array($part) && ($part['type'] ?? '') === 'image_url') {
+                    $tokens += 1000;
+                }
+            }
+            return $tokens;
+        }
+        return 0;
     }
 
     private function trimMessagesToBudget(array $messages): array {
@@ -972,7 +1006,7 @@ class ChatController extends WP_REST_Controller {
 
         $totalTokens = 0;
         foreach ($messages as $msg) {
-            $totalTokens += $this->estimateTokenCount((string) ($msg['content'] ?? ''));
+            $totalTokens += $this->estimateTokenCount($msg['content'] ?? '');
         }
 
         if ($totalTokens <= $maxContextTokens) {
@@ -986,8 +1020,8 @@ class ChatController extends WP_REST_Controller {
         array_shift($messages); // remove system prompt from history
         $historyMessages = $messages;
 
-        $reservedTokens = $this->estimateTokenCount((string) ($systemMsg['content'] ?? ''))
-            + $this->estimateTokenCount((string) ($userMsg['content'] ?? ''));
+        $reservedTokens = $this->estimateTokenCount($systemMsg['content'] ?? '')
+            + $this->estimateTokenCount($userMsg['content'] ?? '');
 
         $availableBudget = $maxContextTokens - $reservedTokens;
         if ($availableBudget < 500) {
@@ -998,7 +1032,7 @@ class ChatController extends WP_REST_Controller {
         $keptHistory = [];
         $usedTokens = 0;
         for ($i = count($historyMessages) - 1; $i >= 0; $i--) {
-            $msgTokens = $this->estimateTokenCount((string) ($historyMessages[$i]['content'] ?? ''));
+            $msgTokens = $this->estimateTokenCount($historyMessages[$i]['content'] ?? '');
             if ($usedTokens + $msgTokens > $availableBudget) {
                 break;
             }
@@ -1814,22 +1848,38 @@ class ChatController extends WP_REST_Controller {
         }
 
         $ext = strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
-        if (!in_array($ext, ['txt', 'md'], true)) {
+        $textExtensions = ['txt', 'md', 'csv', 'json', 'xml', 'log'];
+        $imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        $isText = in_array($ext, $textExtensions, true);
+        $isImage = in_array($ext, $imageExtensions, true);
+
+        if (!$isText && !$isImage) {
             return ['success' => false, 'error' => sprintf('Unsupported file type: %s', $name)];
         }
         if ($size <= 0) {
             return ['success' => false, 'error' => sprintf('Empty file: %s', $name)];
         }
-        if ($size > 1024 * 1024) {
-            return ['success' => false, 'error' => sprintf('File too large (max 1MB): %s', $name)];
+
+        $maxSize = $isImage ? 5 * 1024 * 1024 : 2 * 1024 * 1024;
+        if ($size > $maxSize) {
+            $label = $isImage ? '5 MB' : '2 MB';
+            return ['success' => false, 'error' => sprintf('File too large (max %s): %s', $label, $name)];
         }
         if (!is_uploaded_file($tmpName) && !file_exists($tmpName)) {
             return ['success' => false, 'error' => sprintf('Temporary file missing: %s', $name)];
         }
 
+        if ($isImage) {
+            return $this->processUploadedImage($tmpName, $name, $ext, $size);
+        }
+
         $content = file_get_contents($tmpName);
         if (!is_string($content)) {
             return ['success' => false, 'error' => sprintf('Could not read file: %s', $name)];
+        }
+
+        if ($ext === 'csv') {
+            $content = $this->csvToMarkdownTable($content);
         }
 
         // Keep context bounded for prompt stability and provider latency.
@@ -1864,6 +1914,12 @@ class ChatController extends WP_REST_Controller {
             }
             $name = (string) ($file['name'] ?? 'unknown');
             $type = (string) ($file['type'] ?? 'txt');
+
+            if (!empty($file['image_base64'])) {
+                $parts[] = "## Bild: {$name}\nDieses Bild wird dir als Vision-Input mitgeschickt. Du kannst es sehen und analysieren. Session-File-ID: " . ($file['id'] ?? '?');
+                continue;
+            }
+
             $content = (string) ($file['content'] ?? '');
             if ($content === '' || $remainingBudget <= 0) {
                 continue;
@@ -1874,6 +1930,87 @@ class ChatController extends WP_REST_Controller {
         }
 
         return implode("\n\n", $parts);
+    }
+
+    /**
+     * Get image data URLs from session uploads for Vision API.
+     * @return array<array{name: string, base64: string}>
+     */
+    private function getSessionImages(string $sessionId, int $userId): array {
+        $files = $this->getSessionUploads($sessionId, $userId);
+        $images = [];
+        foreach ($files as $file) {
+            if (!is_array($file) || empty($file['image_base64'])) {
+                continue;
+            }
+            $images[] = [
+                'name' => (string) ($file['name'] ?? 'image'),
+                'base64' => (string) $file['image_base64'],
+            ];
+        }
+        return $images;
+    }
+
+    private function csvToMarkdownTable(string $csv, int $maxRows = 200): string {
+        $lines = preg_split('/\R/', $csv, -1, PREG_SPLIT_NO_EMPTY);
+        if (empty($lines)) {
+            return $csv;
+        }
+
+        $rows = [];
+        foreach (array_slice($lines, 0, $maxRows + 1) as $line) {
+            $parsed = str_getcsv($line);
+            if ($parsed !== false) {
+                $rows[] = $parsed;
+            }
+        }
+        if (count($rows) < 2) {
+            return $csv;
+        }
+
+        $header = array_shift($rows);
+        $md = '| ' . implode(' | ', $header) . " |\n";
+        $md .= '| ' . implode(' | ', array_fill(0, count($header), '---')) . " |\n";
+        foreach ($rows as $row) {
+            $padded = array_pad($row, count($header), '');
+            $md .= '| ' . implode(' | ', $padded) . " |\n";
+        }
+
+        $totalLines = count($lines);
+        if ($totalLines > $maxRows + 1) {
+            $md .= "\n*(" . ($totalLines - $maxRows - 1) . " weitere Zeilen nicht angezeigt)*\n";
+        }
+
+        return $md;
+    }
+
+    private function processUploadedImage(string $tmpName, string $name, string $ext, int $size): array {
+        $raw = file_get_contents($tmpName);
+        if (!is_string($raw) || $raw === '') {
+            return ['success' => false, 'error' => sprintf('Could not read image: %s', $name)];
+        }
+
+        $mimeMap = [
+            'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png', 'gif' => 'image/gif', 'webp' => 'image/webp',
+        ];
+        $mime = $mimeMap[$ext] ?? 'image/jpeg';
+        $base64 = 'data:' . $mime . ';base64,' . base64_encode($raw);
+        $preview = '[Bild: ' . $name . ' (' . size_format($size) . ')]';
+
+        return [
+            'success' => true,
+            'file' => [
+                'id' => 'f_' . wp_generate_uuid4(),
+                'name' => sanitize_file_name($name),
+                'type' => $ext,
+                'size' => $size,
+                'content' => '',
+                'image_base64' => $base64,
+                'preview' => $preview,
+                'uploaded_at' => current_time('mysql'),
+            ],
+        ];
     }
 
     private function wasResponseTruncated(array $apiResponse): bool {

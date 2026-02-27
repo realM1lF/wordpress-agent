@@ -104,6 +104,37 @@ class ConversationRepository {
         return $wpdb->get_results($sql, ARRAY_A) ?: [];
     }
 
+    /**
+     * Delete the last user message and its assistant reply (if any) from a session.
+     * Used when the user edits their last message.
+     */
+    public function deleteLastUserAssistantPair(string $sessionId): void {
+        global $wpdb;
+
+        $lastTwo = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, role FROM {$this->tableConversations}
+             WHERE session_id = %s
+             ORDER BY created_at DESC, id DESC
+             LIMIT 2",
+            $sessionId
+        ), ARRAY_A);
+
+        if (empty($lastTwo)) {
+            return;
+        }
+
+        $idsToDelete = [];
+        foreach ($lastTwo as $row) {
+            if (in_array($row['role'], ['user', 'assistant'], true)) {
+                $idsToDelete[] = (int) $row['id'];
+            }
+        }
+
+        foreach ($idsToDelete as $id) {
+            $wpdb->delete($this->tableConversations, ['id' => $id], ['%d']);
+        }
+    }
+
     public function deleteSession(string $sessionId): bool {
         global $wpdb;
 
