@@ -2,6 +2,8 @@
 
 namespace Levi\Agent\AI\Tools;
 
+use Levi\Agent\AI\PIIRedactor;
+
 class GetPostTool implements ToolInterface {
 
     public function getName(): string {
@@ -60,7 +62,13 @@ class GetPostTool implements ToolInterface {
             ];
         }
 
-        // Check if user can read this post
+        if (PIIRedactor::getInstance()->isBlockedPostType($post->post_type)) {
+            return [
+                'success' => false,
+                'error' => sprintf('Post type "%s" is restricted for data protection.', $post->post_type),
+            ];
+        }
+
         if ($post->post_status !== 'publish' && !current_user_can('read_post', $post->ID)) {
             return [
                 'success' => false,

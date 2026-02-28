@@ -9,15 +9,15 @@ class ManageUserTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Create, update, or delete WordPress users.';
+        return 'Create or update WordPress users.';
     }
 
     public function getParameters(): array {
         return [
             'action' => [
                 'type' => 'string',
-                'description' => 'Action: create, update, delete',
-                'enum' => ['create', 'update', 'delete'],
+                'description' => 'Action: create, update',
+                'enum' => ['create', 'update'],
                 'required' => true,
             ],
             'user_id' => [
@@ -49,31 +49,21 @@ class ManageUserTool implements ToolInterface {
     }
 
     public function checkPermission(): bool {
-        return current_user_can('create_users') || current_user_can('edit_users') || current_user_can('delete_users');
+        return current_user_can('create_users') || current_user_can('edit_users');
     }
 
     public function execute(array $params): array {
         $action = $params['action'];
 
-        switch ($action) {
-            case 'create':
-                if (!current_user_can('create_users')) {
-                    return ['success' => false, 'error' => 'Permission denied to create users'];
-                }
-                return $this->createUser($params);
-            case 'update':
-                if (!current_user_can('edit_users')) {
-                    return ['success' => false, 'error' => 'Permission denied to update users'];
-                }
-                return $this->updateUser($params);
-            case 'delete':
-                if (!current_user_can('delete_users')) {
-                    return ['success' => false, 'error' => 'Permission denied to delete users'];
-                }
-                return $this->deleteUser($params);
-            default:
-                return ['success' => false, 'error' => 'Unknown action'];
-        }
+        return match ($action) {
+            'create' => !current_user_can('create_users')
+                ? ['success' => false, 'error' => 'Permission denied to create users']
+                : $this->createUser($params),
+            'update' => !current_user_can('edit_users')
+                ? ['success' => false, 'error' => 'Permission denied to update users']
+                : $this->updateUser($params),
+            default => ['success' => false, 'error' => 'Unknown action. Allowed: create, update'],
+        };
     }
 
     private function createUser(array $params): array {
@@ -155,47 +145,4 @@ class ManageUserTool implements ToolInterface {
         ];
     }
 
-    private function deleteUser(array $params): array {
-        if (empty($params['user_id'])) {
-            return [
-                'success' => false,
-                'error' => 'User ID required',
-            ];
-        }
-
-        $userId = intval($params['user_id']);
-        
-        // Don't allow deleting yourself
-        if ($userId === get_current_user_id()) {
-            return [
-                'success' => false,
-                'error' => 'Cannot delete yourself.',
-            ];
-        }
-
-        $user = get_user_by('id', $userId);
-        if (!$user) {
-            return [
-                'success' => false,
-                'error' => 'User not found',
-            ];
-        }
-
-        require_once ABSPATH . 'wp-admin/includes/user.php';
-        $result = wp_delete_user($userId);
-
-        if (!$result) {
-            return [
-                'success' => false,
-                'error' => 'Failed to delete user',
-            ];
-        }
-
-        return [
-            'success' => true,
-            'user_id' => $userId,
-            'username' => $user->user_login,
-            'message' => 'User deleted successfully.',
-        ];
-    }
 }

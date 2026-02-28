@@ -1,0 +1,102 @@
+/**
+ * Levi Admin – Tailwind + FlyonUI
+ * Build: npm run build:admin
+ */
+@import "tailwindcss";
+
+@plugin "flyonui" {
+  themes: dark --default, levi;
+}
+
+/* Custom Levi theme – full dark mode, Levi branding (blue accent, purple CTA) */
+@plugin "flyonui/theme" {
+  name: "levi";
+  color-scheme: dark;
+  /* Base – Levi dark palette (all dark) */
+  --color-base-100: #0b1220;
+  --color-base-200: #111827;
+  --color-base-300: #1e293b;
+  --color-base-content: #f1f5f9;
+  /* Primary – Levi CTA purple */
+  --color-primary: #a855f7;
+  --color-primary-content: #ffffff;
+  /* Secondary – muted dark */
+  --color-secondary: #334155;
+  --color-secondary-content: #f1f5f9;
+  /* Accent – Levi blue */
+  --color-accent: #3b82f6;
+  --color-accent-content: #ffffff;
+  /* Neutral – for inputs, borders */
+  --color-neutral: #1e293b;
+  --color-neutral-content: #f1f5f9;
+  /* Semantic – for badges, alerts (vibrant bg + contrasting text) */
+  --color-info: #3b82f6;
+  --color-info-content: #ffffff;
+  --color-success: #22c55e;
+  --color-success-content: #ffffff;
+  --color-warning: #f59e0b;
+  --color-warning-content: #0f172a;
+  --color-error: #ef4444;
+  --color-error-content: #ffffff;
+  /* Radius, size, border */
+  --radius-selector: 0.375rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+/* Scan admin PHP templates for class names */
+@source "../../src/Admin/*.php";
+@source "../../templates/**/*.php";
+
+/* Levi admin – theme applies via data-theme="levi" on wrapper.
+ * FlyonUI components use theme variables; only WP-admin-specific overrides here. */
+[data-theme="levi"].levi-settings-wrap,
+[data-theme="levi"].levi-setup-wrap {
+  color-scheme: dark;
+  background-color: var(--color-base-100);
+  color: var(--color-base-content);
+}
+
+/* WP admin can override form colors – ensure Levi theme wins inside our wrapper */
+[data-theme="levi"] .input,
+[data-theme="levi"] .select,
+[data-theme="levi"] .textarea {
+  background-color: var(--color-base-200) !important;
+  border-color: var(--color-base-300) !important;
+  color: var(--color-base-content) !important;
+}
+
+/* Save indicator – JS adds .show to display */
+.levi-save-indicator.show {
+  display: flex !important;
+}
+
+/* AJAX result styling (settings-page.js) */
+.levi-success {
+  color: var(--color-success, #22c55e);
+}
+
+.levi-error {
+  color: var(--color-error, #ef4444);
+}
+
+.levi-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: levi-spin 0.6s linear infinite;
+}
+
+@keyframes levi-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -54,6 +54,13 @@ class SetupWizardPage {
             ['levi-agent-settings'],
             LEVI_AGENT_VERSION
         );
+
+        wp_enqueue_style(
+            'levi-agent-admin-tailwind',
+            LEVI_AGENT_PLUGIN_URL . 'assets/css/admin-tailwind.css',
+            ['levi-agent-setup-wizard'],
+            LEVI_AGENT_VERSION
+        );
     }
 
     public function maybeHandleRedirect(): void {
@@ -257,63 +264,61 @@ class SetupWizardPage {
         $planTier = (string) get_option('levi_plan_tier', '');
         $progressPercent = max(0, min(100, ($step - 1) * 33));
         ?>
-        <div class="levi-settings-wrap levi-setup-wrap">
-            <header class="levi-settings-header">
-                <div class="levi-header-content">
-                    <div class="levi-logo">
-                        <span class="levi-logo-icon">🤖</span>
-                        <div class="levi-logo-text">
-                            <h1><?php echo esc_html('Levi Einrichtungsassistent'); ?></h1>
-                            <span class="levi-version"><?php echo esc_html(sprintf('Schritt %d von 4', $step)); ?></span>
+        <div class="levi-settings-wrap levi-setup-wrap min-h-screen bg-base-100 text-base-content font-mono" data-theme="levi">
+            <header class="border-b border-base-300 bg-base-200 px-6 py-6 md:px-12">
+                <div class="mx-auto flex max-w-4xl items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <span class="text-4xl">🤖</span>
+                        <div>
+                            <h1 class="m-0 text-2xl font-extrabold text-base-content"><?php echo esc_html('Levi Einrichtungsassistent'); ?></h1>
+                            <span class="mt-1 inline-block rounded-full border border-base-300 bg-base-300 px-2 py-0.5 text-xs font-semibold text-base-content/70"><?php echo esc_html(sprintf('Schritt %d von 4', $step)); ?></span>
                         </div>
                     </div>
-                    <div>
-                        <a class="levi-btn levi-btn-secondary levi-btn-small" href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-settings')); ?>"><?php echo esc_html('Assistent überspringen →'); ?></a>
-                    </div>
+                    <a class="btn btn-outline btn-secondary btn-sm" href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-settings')); ?>"><?php echo esc_html('Assistent überspringen →'); ?></a>
                 </div>
             </header>
 
-            <main class="levi-settings-main">
-                <div class="levi-setup-progress">
-                    <div class="levi-setup-progress-fill" style="width: <?php echo esc_attr((string) $progressPercent); ?>%;"></div>
+            <main class="mx-auto max-w-4xl px-6 py-12 md:px-12">
+                <div class="mb-8 h-2 w-full overflow-hidden rounded-full bg-primary/20">
+                    <div class="h-full rounded-full bg-primary transition-[width] duration-300" style="width: <?php echo esc_attr((string) $progressPercent); ?>%;"></div>
                 </div>
 
                 <?php if ($step === 1): ?>
-                    <section class="levi-form-card levi-setup-card">
-                        <h2><?php _e('Willkommen bei Levi', 'levi-agent'); ?></h2>
-                        <p><?php _e('Danke, dass du Levi nutzt! Levi ist dein KI-Assistent für WordPress. Er kann:', 'levi-agent'); ?></p>
-                        <ul class="levi-setup-list">
-                            <li><?php _e('Seiten und Beiträge erstellen, bearbeiten und verwalten', 'levi-agent'); ?></li>
-                            <li><?php _e('Plugins installieren, aktivieren und konfigurieren', 'levi-agent'); ?></li>
-                            <li><?php _e('Fragen zu deiner WordPress-Seite beantworten', 'levi-agent'); ?></li>
-                            <li><?php _e('Code generieren und technische Aufgaben übernehmen', 'levi-agent'); ?></li>
+                    <section class="card card-border bg-base-300 p-6">
+                        <h2 class="mb-4 text-xl font-bold"><?php _e('Willkommen bei Levi', 'levi-agent'); ?></h2>
+                        <p class="mb-4 text-base-content/70"><?php _e('Danke, dass du Levi nutzt! Levi ist dein KI-Assistent für WordPress. Er kann:', 'levi-agent'); ?></p>
+                        <ul class="mb-4 list-disc pl-6 text-base-content/70">
+                            <li class="mb-2"><?php _e('Seiten und Beiträge erstellen, bearbeiten und verwalten', 'levi-agent'); ?></li>
+                            <li class="mb-2"><?php _e('Plugins installieren, aktivieren und konfigurieren', 'levi-agent'); ?></li>
+                            <li class="mb-2"><?php _e('Fragen zu deiner WordPress-Seite beantworten', 'levi-agent'); ?></li>
+                            <li class="mb-2"><?php _e('Code generieren und technische Aufgaben übernehmen', 'levi-agent'); ?></li>
                         </ul>
-                        <p><?php _e('Auf den nächsten Seiten führen wir dich sicher durch die Einrichtung.', 'levi-agent'); ?></p>
+                        <p class="mb-6 text-base-content/70"><?php _e('Auf den nächsten Seiten führen wir dich sicher durch die Einrichtung.', 'levi-agent'); ?></p>
 
-                        <div class="levi-form-actions">
-                            <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Los geht\'s', 'levi-agent'); ?></a>
+                        <div class="flex gap-4">
+                            <a class="btn btn-primary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Los geht\'s', 'levi-agent'); ?></a>
                         </div>
                     </section>
                 <?php endif; ?>
 
                 <?php if ($step === 2): ?>
-                    <section class="levi-form-card levi-setup-card">
-                        <h2><?php _e('Schritt 2: API-Key', 'levi-agent'); ?></h2>
-                        <p><?php _e('Levi nutzt OpenRouter mit Kimi K2.5 als KI-Modell. Erstelle einen API-Key auf openrouter.ai — die Kosten werden direkt von deinem OpenRouter-Konto abgebucht.', 'levi-agent'); ?></p>
+                    <section class="card card-border bg-base-300 p-6">
+                        <h2 class="mb-4 text-xl font-bold"><?php _e('Schritt 2: API-Key', 'levi-agent'); ?></h2>
+                        <p class="mb-4 text-base-content/70"><?php _e('Levi nutzt OpenRouter mit Kimi K2.5 als KI-Modell. Erstelle einen API-Key auf openrouter.ai — die Kosten werden direkt von deinem OpenRouter-Konto abgebucht.', 'levi-agent'); ?></p>
 
-                        <div class="levi-setup-info-box">
-                            <strong><?php _e('So bekommst du deinen Key:', 'levi-agent'); ?></strong>
-                            <ol class="levi-setup-list levi-setup-list-numbered">
-                                <li><?php _e('Gehe zu', 'levi-agent'); ?> <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a></li>
-                                <li><?php _e('Erstelle einen Account (Google/GitHub Login)', 'levi-agent'); ?></li>
-                                <li><?php _e('Lade Credits auf (mind. 5 $) und erstelle einen API-Key', 'levi-agent'); ?></li>
-                                <li><?php _e('Füge den Key unten ein — fertig!', 'levi-agent'); ?></li>
+                        <div class="mb-6 rounded-lg border border-primary/30 bg-primary/10 px-4 py-4 text-base-content/70">
+                            <strong class="mb-2 block text-base-content"><?php _e('So bekommst du deinen Key:', 'levi-agent'); ?></strong>
+                            <ol class="list-decimal pl-6">
+                                <li class="mb-1"><?php _e('Gehe zu', 'levi-agent'); ?> <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" class="link link-primary">openrouter.ai/keys</a></li>
+                                <li class="mb-1"><?php _e('Erstelle einen Account (Google/GitHub Login)', 'levi-agent'); ?></li>
+                                <li class="mb-1"><?php _e('Lade Credits auf (mind. 5 $) und erstelle einen API-Key', 'levi-agent'); ?></li>
+                                <li class="mb-1"><?php _e('Füge den Key unten ein — fertig!', 'levi-agent'); ?></li>
                             </ol>
                         </div>
 
                         <?php if ($error === 'missing_key'): ?>
-                            <div class="levi-notice levi-notice-error">
-                                <p><?php _e('Bitte gib einen API-Key ein.', 'levi-agent'); ?></p>
+                            <div class="alert alert-error mb-4">
+                                <p class="m-0"><?php _e('Bitte gib einen API-Key ein.', 'levi-agent'); ?></p>
                             </div>
                         <?php endif; ?>
 
@@ -321,30 +326,30 @@ class SetupWizardPage {
                             <?php wp_nonce_field('levi_setup_wizard_step2'); ?>
                             <input type="hidden" name="levi_setup_action" value="save_pro_setup">
 
-                            <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_openrouter_api_key"><?php _e('OpenRouter API-Key', 'levi-agent'); ?></label>
-                                <input id="levi_openrouter_api_key" name="levi_openrouter_api_key" type="password" class="levi-form-input" placeholder="sk-or-..." required>
-                                <p class="levi-form-help"><?php _e('Dein Key wird sicher gespeichert und nur an OpenRouter gesendet.', 'levi-agent'); ?></p>
+                            <div class="form-control mb-4">
+                                <label class="label-text mb-1 font-medium" for="levi_openrouter_api_key"><?php _e('OpenRouter API-Key', 'levi-agent'); ?></label>
+                                <input id="levi_openrouter_api_key" name="levi_openrouter_api_key" type="password" class="input input-bordered w-full" placeholder="sk-or-..." required>
+                                <p class="helper-text mt-1"><?php _e('Dein Key wird sicher gespeichert und nur an OpenRouter gesendet.', 'levi-agent'); ?></p>
                             </div>
 
-                            <p class="levi-form-help"><?php _e('Modell: Kimi K2.5 (Moonshot)', 'levi-agent'); ?></p>
+                            <p class="helper-text mb-6"><?php _e('Modell: Kimi K2.5 (Moonshot)', 'levi-agent'); ?></p>
 
-                            <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=1')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
-                                <button type="submit" class="levi-btn levi-btn-primary"><?php _e('Weiter', 'levi-agent'); ?></button>
+                            <div class="flex gap-4">
+                                <a class="btn btn-outline btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=1')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                <button type="submit" class="btn btn-primary"><?php _e('Weiter', 'levi-agent'); ?></button>
                             </div>
                         </form>
                     </section>
                 <?php endif; ?>
 
                 <?php if ($step === 3): ?>
-                    <section class="levi-form-card levi-setup-card">
-                        <h2><?php _e('Schritt 3: Levi auf dich abstimmen', 'levi-agent'); ?></h2>
-                        <p><?php _e('Hier stellst du ein, wie gründlich, sicher und schnell Levi arbeiten soll. Du kannst alles später in den Einstellungen ändern.', 'levi-agent'); ?></p>
+                    <section class="card card-border bg-base-300 p-6">
+                        <h2 class="mb-4 text-xl font-bold"><?php _e('Schritt 3: Levi auf dich abstimmen', 'levi-agent'); ?></h2>
+                        <p class="mb-6 text-base-content/70"><?php _e('Hier stellst du ein, wie gründlich, sicher und schnell Levi arbeiten soll. Du kannst alles später in den Einstellungen ändern.', 'levi-agent'); ?></p>
 
                         <?php if ($saved === 'pro'): ?>
-                            <div class="levi-notice levi-notice-success">
-                                <p><?php _e('Pro-Setup wurde erfolgreich gespeichert!', 'levi-agent'); ?></p>
+                            <div class="alert alert-success mb-6">
+                                <p class="m-0"><?php _e('Pro-Setup wurde erfolgreich gespeichert!', 'levi-agent'); ?></p>
                             </div>
                         <?php endif; ?>
 
@@ -352,95 +357,95 @@ class SetupWizardPage {
                             <?php wp_nonce_field('levi_setup_wizard_step4'); ?>
                             <input type="hidden" name="levi_setup_action" value="save_tuning">
 
-                            <div class="levi-form-group">
-                                <label class="levi-form-label"><?php _e('Welche Fähigkeiten soll Levi haben?', 'levi-agent'); ?></label>
-                                <p class="levi-form-help" style="margin-bottom: 0.75rem;"><?php _e('Bestimmt, welche Tools Levi nutzen darf. Später in den Einstellungen änderbar.', 'levi-agent'); ?></p>
+                            <div class="form-control mb-6">
+                                <label class="label-text mb-2 font-medium"><?php _e('Welche Fähigkeiten soll Levi haben?', 'levi-agent'); ?></label>
+                                <p class="helper-text mb-3"><?php _e('Bestimmt, welche Tools Levi nutzen darf. Später in den Einstellungen änderbar.', 'levi-agent'); ?></p>
                                 <?php
                                 $profiles = \Levi\Agent\AI\Tools\Registry::getProfileLabels();
                                 $currentProfile = $tuning['tool_profile'];
                                 foreach ($profiles as $profileKey => $profileData):
                                     $isActive = $currentProfile === $profileKey;
                                 ?>
-                                <label class="levi-setup-profile-option <?php echo $isActive ? 'levi-setup-profile-option-active' : ''; ?>">
-                                    <input type="radio" name="levi_tool_profile" value="<?php echo esc_attr($profileKey); ?>" <?php checked($currentProfile, $profileKey); ?>>
-                                    <span class="levi-setup-profile-option-content">
-                                        <strong><?php echo esc_html($profileData['label']); ?></strong>
-                                        <span class="levi-setup-profile-option-desc"><?php echo esc_html($profileData['description']); ?></span>
+                                <label class="mb-2 flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors <?php echo $isActive ? 'border-primary bg-primary/10' : 'border-base-300 hover:border-primary/50'; ?>">
+                                    <input type="radio" name="levi_tool_profile" value="<?php echo esc_attr($profileKey); ?>" <?php checked($currentProfile, $profileKey); ?> class="radio radio-primary mt-1">
+                                    <span>
+                                        <strong class="block"><?php echo esc_html($profileData['label']); ?></strong>
+                                        <span class="text-sm text-base-content/70"><?php echo esc_html($profileData['description']); ?></span>
                                     </span>
                                 </label>
                                 <?php endforeach; ?>
                             </div>
 
-                            <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_thoroughness"><?php _e('Wie gründlich soll Levi lesen?', 'levi-agent'); ?></label>
-                                <select id="levi_thoroughness" name="levi_thoroughness" class="levi-form-select">
+                            <div class="form-control mb-6">
+                                <label class="label-text mb-1 font-medium" for="levi_thoroughness"><?php _e('Wie gründlich soll Levi lesen?', 'levi-agent'); ?></label>
+                                <select id="levi_thoroughness" name="levi_thoroughness" class="select select-bordered w-full">
                                     <option value="low" <?php selected($tuning['thoroughness'], 'low'); ?>><?php _e('Schnell — liest nur das Nötigste', 'levi-agent'); ?></option>
                                     <option value="balanced" <?php selected($tuning['thoroughness'], 'balanced'); ?>><?php _e('Ausgewogen (empfohlen) — guter Kompromiss', 'levi-agent'); ?></option>
                                     <option value="high" <?php selected($tuning['thoroughness'], 'high'); ?>><?php _e('Sehr gründlich — liest mehr Inhalte, braucht länger', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Beeinflusst, wie viel Kontext Levi bei jeder Anfrage berücksichtigt.', 'levi-agent'); ?></p>
+                                <p class="helper-text mt-1"><?php _e('Beeinflusst, wie viel Kontext Levi bei jeder Anfrage berücksichtigt.', 'levi-agent'); ?></p>
                             </div>
 
-                            <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_safety_mode"><?php _e('Wie vorsichtig soll Levi bei Änderungen sein?', 'levi-agent'); ?></label>
-                                <select id="levi_safety_mode" name="levi_safety_mode" class="levi-form-select">
+                            <div class="form-control mb-6">
+                                <label class="label-text mb-1 font-medium" for="levi_safety_mode"><?php _e('Wie vorsichtig soll Levi bei Änderungen sein?', 'levi-agent'); ?></label>
+                                <select id="levi_safety_mode" name="levi_safety_mode" class="select select-bordered w-full">
                                     <option value="strict" <?php selected($tuning['safety'], 'strict'); ?>><?php _e('Sicher — fragt vor dem Löschen/Ändern nach', 'levi-agent'); ?></option>
                                     <option value="standard" <?php selected($tuning['safety'], 'standard'); ?>><?php _e('Standard — weniger Nachfragen, schneller', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Im sicheren Modus bestätigt Levi jede Lösch- oder Änderungs-Aktion mit dir.', 'levi-agent'); ?></p>
+                                <p class="helper-text mt-1"><?php _e('Im sicheren Modus bestätigt Levi jede Lösch- oder Änderungs-Aktion mit dir.', 'levi-agent'); ?></p>
                             </div>
 
-                            <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_speed_mode"><?php _e('Wie schnell soll Levi antworten?', 'levi-agent'); ?></label>
-                                <select id="levi_speed_mode" name="levi_speed_mode" class="levi-form-select">
+                            <div class="form-control mb-6">
+                                <label class="label-text mb-1 font-medium" for="levi_speed_mode"><?php _e('Wie schnell soll Levi antworten?', 'levi-agent'); ?></label>
+                                <select id="levi_speed_mode" name="levi_speed_mode" class="select select-bordered w-full">
                                     <option value="fast" <?php selected($tuning['speed'], 'fast'); ?>><?php _e('Schnell — weniger Schritte, kürzere Antworten', 'levi-agent'); ?></option>
                                     <option value="balanced" <?php selected($tuning['speed'], 'balanced'); ?>><?php _e('Ausgewogen (empfohlen)', 'levi-agent'); ?></option>
                                     <option value="careful" <?php selected($tuning['speed'], 'careful'); ?>><?php _e('Sorgfältig — mehr Schritte, gründlichere Ergebnisse', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Bestimmt, wie viele Tool-Schritte Levi pro Anfrage ausführen darf.', 'levi-agent'); ?></p>
+                                <p class="helper-text mt-1"><?php _e('Bestimmt, wie viele Tool-Schritte Levi pro Anfrage ausführen darf.', 'levi-agent'); ?></p>
                             </div>
 
-                            <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
-                                <button type="submit" class="levi-btn levi-btn-primary"><?php _e('Einstellungen übernehmen', 'levi-agent'); ?></button>
+                            <div class="flex gap-4">
+                                <a class="btn btn-outline btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                <button type="submit" class="btn btn-primary"><?php _e('Einstellungen übernehmen', 'levi-agent'); ?></button>
                             </div>
                         </form>
                     </section>
                 <?php endif; ?>
 
                 <?php if ($step === 4): ?>
-                    <section class="levi-form-card levi-setup-card">
-                        <h2><?php _e('Schritt 4: Abschluss', 'levi-agent'); ?></h2>
+                    <section class="card card-border bg-base-300 p-6">
+                        <h2 class="mb-4 text-xl font-bold"><?php _e('Schritt 4: Abschluss', 'levi-agent'); ?></h2>
 
                         <?php if ($saved === 'tuning'): ?>
-                            <div class="levi-notice levi-notice-success">
-                                <p><?php _e('Deine Einstellungen wurden gespeichert!', 'levi-agent'); ?></p>
+                            <div class="alert alert-success mb-6">
+                                <p class="m-0"><?php _e('Deine Einstellungen wurden gespeichert!', 'levi-agent'); ?></p>
                             </div>
                         <?php endif; ?>
 
                         <?php if ($done): ?>
-                            <div class="levi-setup-payment-state is-active">
-                                <strong><?php _e('Levi ist eingerichtet!', 'levi-agent'); ?></strong>
-                                <p><?php echo esc_html(sprintf('Snapshot-Status: %s', $this->translateSnapshotStatus($snapshot !== '' ? $snapshot : 'done'))); ?></p>
+                            <div class="mb-6 rounded-lg border border-success/50 bg-success/10 p-4 text-success">
+                                <strong class="block"><?php _e('Levi ist eingerichtet!', 'levi-agent'); ?></strong>
+                                <p class="m-0 mt-1"><?php echo esc_html(sprintf('Snapshot-Status: %s', $this->translateSnapshotStatus($snapshot !== '' ? $snapshot : 'done'))); ?></p>
                                 <?php if ($planTier !== ''): ?>
-                                    <p><?php echo esc_html(sprintf('Aktiver Plan: %s', 'Pro')); ?></p>
+                                    <p class="m-0 mt-1"><?php echo esc_html(sprintf('Aktiver Plan: %s', 'Pro')); ?></p>
                                 <?php endif; ?>
                             </div>
 
-                            <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-settings')); ?>"><?php _e('Zu den Einstellungen', 'levi-agent'); ?></a>
-                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url()); ?>" onclick="setTimeout(function(){ var t = document.getElementById('levi-chat-toggle'); if(t) t.click(); }, 500); return true;"><?php _e('Chat öffnen', 'levi-agent'); ?></a>
+                            <div class="flex gap-4">
+                                <a class="btn btn-primary" href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-settings')); ?>"><?php _e('Zu den Einstellungen', 'levi-agent'); ?></a>
+                                <a class="btn btn-outline btn-secondary" href="<?php echo esc_url(admin_url()); ?>" onclick="setTimeout(function(){ var t = document.getElementById('levi-chat-toggle'); if(t) t.click(); }, 500); return true;"><?php _e('Chat öffnen', 'levi-agent'); ?></a>
                             </div>
                         <?php else: ?>
-                            <p><?php _e('Zum Abschluss erstellt Levi einen Snapshot deiner WordPress-Instanz. Damit kennt er deine Seite, Plugins und Einstellungen.', 'levi-agent'); ?></p>
-                            <p class="levi-form-help levi-hint"><?php _e('Das kann einige Sekunden dauern. Bitte die Seite nicht schließen.', 'levi-agent'); ?></p>
+                            <p class="mb-4 text-base-content/70"><?php _e('Zum Abschluss erstellt Levi einen Snapshot deiner WordPress-Instanz. Damit kennt er deine Seite, Plugins und Einstellungen.', 'levi-agent'); ?></p>
+                            <p class="mb-6 rounded-r border-l-4 border-primary bg-primary/10 px-4 py-2 text-sm text-base-content/70"><?php _e('Das kann einige Sekunden dauern. Bitte die Seite nicht schließen.', 'levi-agent'); ?></p>
 
                             <form method="post" action="" id="levi-setup-complete-form">
                                 <?php wp_nonce_field('levi_setup_wizard_step5'); ?>
                                 <input type="hidden" name="levi_setup_action" value="complete_setup">
-                                <div class="levi-form-actions">
-                                    <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=3')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
-                                    <button type="submit" class="levi-btn levi-btn-primary" id="levi-setup-complete-btn"><?php _e('Levi jetzt starten', 'levi-agent'); ?></button>
+                                <div class="flex gap-4">
+                                    <a class="btn btn-outline btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=3')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                    <button type="submit" class="btn btn-primary" id="levi-setup-complete-btn"><?php _e('Levi jetzt starten', 'levi-agent'); ?></button>
                                 </div>
                             </form>
                             <script>
