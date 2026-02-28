@@ -227,8 +227,8 @@
         // Helper function to update connection status indicator
         function updateConnectionStatus(isConnected) {
             const $status = $('.levi-connection-status');
-            $status.removeClass('levi-status-connected levi-status-disconnected');
-            $status.addClass(isConnected ? 'levi-status-connected' : 'levi-status-disconnected');
+            $status.removeClass('levi-status-connected levi-status-disconnected badge-success badge-warning');
+            $status.addClass(isConnected ? 'levi-status-connected badge-success' : 'levi-status-disconnected badge-warning');
             var conn = (leviSettings.i18n && leviSettings.i18n.connected) ? leviSettings.i18n.connected : 'Connected';
             var notConn = (leviSettings.i18n && leviSettings.i18n.notConnected) ? leviSettings.i18n.notConnected : 'Not Connected';
             $status.find('.levi-status-text').text(isConnected ? conn : notConn);

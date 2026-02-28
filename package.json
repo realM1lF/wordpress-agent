@@ -1,0 +1,16 @@
+{
+  "name": "levi-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Levi AI Agent – WordPress Admin UI",
+  "scripts": {
+    "build:admin": "npx @tailwindcss/cli -i ./assets/src/admin.css -o ./assets/css/admin-tailwind.css --minify",
+    "build:admin:watch": "npx @tailwindcss/cli -i ./assets/src/admin.css -o ./assets/css/admin-tailwind.css --watch",
+    "build": "npm run build:admin"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.4",
+    "flyonui": "^2.4.1",
+    "tailwindcss": "^4.1.4"
+  }
+}
