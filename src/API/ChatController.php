@@ -25,6 +25,8 @@ class ChatController extends WP_REST_Controller {
     private SettingsPage $settings;
     private Registry $toolRegistry;
     private static bool $initialized = false;
+    private ?string $activeJobSessionId = null;
+    private bool $connectionLost = false;
 
     public function __construct() {
         // Prevent multiple initializations
@@ -115,6 +117,14 @@ class ChatController extends WP_REST_Controller {
             [
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => [$this, 'getHistory'],
+                'permission_callback' => [$this, 'checkPermission'],
+            ],
+        ]);
+
+        register_rest_route($this->namespace, '/' . $this->rest_base . '/(?P<session_id>[a-zA-Z0-9_.-]+)/job-status', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [$this, 'getJobStatus'],
                 'permission_callback' => [$this, 'checkPermission'],
             ],
         ]);
@@ -221,7 +231,11 @@ class ChatController extends WP_REST_Controller {
         if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
             @set_time_limit($phpTimeLimit);
         }
-        ignore_user_abort(false);
+        ignore_user_abort(true);
+
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
 
         // Disable ALL output buffering layers
         while (ob_get_level() > 0) {
@@ -247,12 +261,29 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function emitSSE(string $type, array $data): void {
+        if ($this->activeJobSessionId !== null) {
+            if (in_array($type, ['status', 'progress'], true)) {
+                $this->updateJobStatus($this->activeJobSessionId, $type, (string) ($data['message'] ?? ''));
+            } elseif (in_array($type, ['done', 'error'], true)) {
+                $this->clearJobStatus($this->activeJobSessionId);
+                $this->activeJobSessionId = null;
+            }
+        }
+
+        if ($this->connectionLost) {
+            return;
+        }
+
         $data['type'] = $type;
         echo 'data: ' . wp_json_encode($data) . "\n\n";
         if (function_exists('ob_flush')) {
             @ob_flush();
         }
         flush();
+
+        if (connection_aborted()) {
+            $this->connectionLost = true;
+        }
     }
 
     private function processMessageStreaming(WP_REST_Request $request): void {
@@ -279,6 +310,9 @@ class ChatController extends WP_REST_Controller {
             return;
         }
 
+        $this->activeJobSessionId = $sessionId;
+        $this->setJobStatus($sessionId, $userId, 'thinking', 'Levi denkt nach...');
+
         // Emit initial status immediately (keeps Nginx alive)
         $this->emitSSE('status', ['message' => 'Levi denkt nach...', 'session_id' => $sessionId]);
 
@@ -301,16 +335,14 @@ class ChatController extends WP_REST_Controller {
         $messages = $this->buildMessages($sessionId, $message, true);
         $tools = $this->toolRegistry->getDefinitions();
 
-        // Heartbeat callback for SSE keepalive during AI calls
         $heartbeat = function () {
-            if (connection_aborted()) {
-                return;
-            }
             $this->emitSSE('heartbeat', []);
         };
 
+        $toolChoice = $this->getToolChoiceForIntent($message, $tools);
+
         // Call AI with heartbeat
-        $response = $this->aiClient->chat($messages, $tools, $heartbeat);
+        $response = $this->aiClient->chat($messages, $tools, $heartbeat, $toolChoice);
 
         // Error handling with fallbacks (same logic as non-streaming)
         if (is_wp_error($response)) {
@@ -321,17 +353,21 @@ class ChatController extends WP_REST_Controller {
             $isTimeoutFailure = $this->isTimeoutError($errMsgLower);
 
             if (!empty($tools) && ($isNoEndpointFailure || ($isProviderFailure && !$this->isActionIntent($message)))) {
+                error_log('Levi: tool-mode unavailable, falling back to no-tools. Error: ' . $errMsg);
                 $this->emitSSE('status', ['message' => 'Neuer Versuch ohne Tools...']);
+                $messages = $this->injectNoToolsGuardrail($messages);
                 $response = $this->aiClient->chat($messages, [], $heartbeat);
             } elseif ($isTimeoutFailure && $hasUploadedContext) {
                 $this->emitSSE('status', ['message' => 'Timeout, versuche mit weniger Kontext...']);
                 $messages = $this->buildMessages($sessionId, $message, false);
-                $response = $this->aiClient->chat($messages, $tools, $heartbeat);
+                $response = $this->aiClient->chat($messages, $tools, $heartbeat, $toolChoice);
                 if (is_wp_error($response) && !empty($tools)) {
+                    $messages = $this->injectNoToolsGuardrail($messages);
                     $response = $this->aiClient->chat($messages, [], $heartbeat);
                 }
             } elseif ($isTimeoutFailure && !empty($tools)) {
                 $this->emitSSE('status', ['message' => 'Timeout, neuer Versuch...']);
+                $messages = $this->injectNoToolsGuardrail($messages);
                 $response = $this->aiClient->chat($messages, [], $heartbeat);
             }
         }
@@ -342,8 +378,9 @@ class ChatController extends WP_REST_Controller {
             if (str_contains($overflowMsg, 'context length') || str_contains($overflowMsg, 'too many tokens') || str_contains($overflowMsg, 'maximum context')) {
                 $this->emitSSE('status', ['message' => 'Kontext wird gekuerzt...']);
                 $halvedMessages = $this->halveHistory($messages);
-                $response = $this->aiClient->chat($halvedMessages, $tools, $heartbeat);
+                $response = $this->aiClient->chat($halvedMessages, $tools, $heartbeat, $toolChoice);
                 if (is_wp_error($response) && !empty($tools)) {
+                    $halvedMessages = $this->injectNoToolsGuardrail($halvedMessages);
                     $response = $this->aiClient->chat($halvedMessages, [], $heartbeat);
                 }
                 if (!is_wp_error($response)) {
@@ -364,7 +401,7 @@ class ChatController extends WP_REST_Controller {
 
             for ($retryAttempt = 1; $retryAttempt <= 2; $retryAttempt++) {
                 $this->emitSSE('status', ['message' => 'Levi versucht es erneut... (Versuch ' . ($retryAttempt + 1) . ')']);
-                $response = $this->aiClient->chat($messages, $tools, $heartbeat);
+                $response = $this->aiClient->chat($messages, $tools, $heartbeat, $toolChoice);
 
                 if (is_wp_error($response)) {
                     $this->emitSSE('error', ['message' => $response->get_error_message(), 'session_id' => $sessionId]);
@@ -387,10 +424,28 @@ class ChatController extends WP_REST_Controller {
             return;
         }
 
-        // Normal response (no tools)
+        // Normal response (no tools) – check for hallucination
         $assistantMessage = $this->sanitizeAssistantMessageContent(
             (string) ($messageData['content'] ?? '')
         );
+
+        if ($this->isHallucinatedActionResponse($assistantMessage, (string) $message) && !empty($tools)) {
+            error_log('Levi: hallucinated action response detected, retrying with tool_choice=required');
+            $this->emitSSE('status', ['message' => 'Levi nutzt die Werkzeuge...']);
+            $retryMessages = $this->injectForceToolsHint($messages);
+            $retryResponse = $this->aiClient->chat($retryMessages, $tools, $heartbeat, 'required');
+            if (!is_wp_error($retryResponse)) {
+                $retryData = $retryResponse['choices'][0]['message'] ?? [];
+                if (!empty($retryData['tool_calls'])) {
+                    $this->handleToolCallsStreaming($retryData, $retryMessages, $sessionId, $userId, (string) $message, $heartbeat);
+                    if ($hasUploadedContext) {
+                        $this->clearSessionUploads($sessionId, $userId);
+                    }
+                    return;
+                }
+            }
+            $assistantMessage = 'Ich konnte die Aktion leider nicht ausführen. Bitte versuche es erneut – bei Bedarf starte eine neue Chat-Session.';
+        }
 
         if ($assistantMessage === '') {
             $assistantMessage = $this->getEmptyResponseFallback();
@@ -399,6 +454,8 @@ class ChatController extends WP_REST_Controller {
         if ($this->wasResponseTruncated($response)) {
             $assistantMessage = $this->appendTruncationHint($assistantMessage);
         }
+
+        $this->emitSSE('status', ['message' => 'Levi formuliert die Antwort...']);
 
         try {
             $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
@@ -505,17 +562,14 @@ class ChatController extends WP_REST_Controller {
                 }
             }
 
-            if (connection_aborted()) {
-                error_log('Levi: client disconnected during tool loop');
-                return;
-            }
-
             $this->emitSSE('status', ['message' => 'Levi verarbeitet Ergebnisse...']);
 
             $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat);
             if (is_wp_error($nextResponse)) {
                 $errMsgLower = mb_strtolower($nextResponse->get_error_message());
                 if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
+                    error_log('Levi: tool-mode unavailable in tool-loop, falling back. Error: ' . $nextResponse->get_error_message());
+                    $messages = $this->injectNoToolsGuardrail($messages);
                     $nextResponse = $this->aiClient->chat($messages, [], $heartbeat);
                 }
             }
@@ -530,6 +584,8 @@ class ChatController extends WP_REST_Controller {
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
+                $this->emitSSE('status', ['message' => 'Levi formuliert die Antwort...']);
+
                 $finalMessage = $this->sanitizeAssistantMessageContent(
                     (string) ($messageData['content'] ?? '')
                 );
@@ -570,18 +626,49 @@ class ChatController extends WP_REST_Controller {
 
     private function getToolProgressLabel(string $toolName, string $phase): string {
         $labels = [
-            'get_posts' => ['start' => 'Beitraege werden gelesen...', 'done' => 'Beitraege gelesen', 'failed' => 'Beitraege lesen fehlgeschlagen'],
-            'get_pages' => ['start' => 'Seiten werden gelesen...', 'done' => 'Seiten gelesen', 'failed' => 'Seiten lesen fehlgeschlagen'],
-            'create_post' => ['start' => 'Beitrag wird erstellt...', 'done' => 'Beitrag erstellt', 'failed' => 'Beitrag erstellen fehlgeschlagen'],
-            'create_page' => ['start' => 'Seite wird erstellt...', 'done' => 'Seite erstellt', 'failed' => 'Seite erstellen fehlgeschlagen'],
-            'update_post' => ['start' => 'Beitrag wird aktualisiert...', 'done' => 'Beitrag aktualisiert', 'failed' => 'Beitrag aktualisieren fehlgeschlagen'],
-            'get_woocommerce_data' => ['start' => 'Shop-Daten werden gelesen...', 'done' => 'Shop-Daten gelesen', 'failed' => 'Shop-Daten lesen fehlgeschlagen'],
-            'manage_woocommerce' => ['start' => 'Shop wird bearbeitet...', 'done' => 'Shop-Aktion abgeschlossen', 'failed' => 'Shop-Aktion fehlgeschlagen'],
-            'create_plugin' => ['start' => 'Plugin wird erstellt...', 'done' => 'Plugin erstellt', 'failed' => 'Plugin erstellen fehlgeschlagen'],
-            'install_plugin' => ['start' => 'Plugin wird installiert...', 'done' => 'Plugin installiert', 'failed' => 'Plugin installieren fehlgeschlagen'],
+            // Read tools
+            'get_posts'              => ['start' => 'Beitraege werden gelesen...', 'done' => 'Beitraege gelesen', 'failed' => 'Beitraege lesen fehlgeschlagen'],
+            'get_post'               => ['start' => 'Beitrag wird geladen...', 'done' => 'Beitrag geladen', 'failed' => 'Beitrag laden fehlgeschlagen'],
+            'get_pages'              => ['start' => 'Seiten werden gelesen...', 'done' => 'Seiten gelesen', 'failed' => 'Seiten lesen fehlgeschlagen'],
+            'get_users'              => ['start' => 'Benutzer werden geladen...', 'done' => 'Benutzer geladen', 'failed' => 'Benutzer laden fehlgeschlagen'],
+            'get_plugins'            => ['start' => 'Plugins werden geladen...', 'done' => 'Plugins geladen', 'failed' => 'Plugins laden fehlgeschlagen'],
+            'get_option'             => ['start' => 'Einstellung wird gelesen...', 'done' => 'Einstellung gelesen', 'failed' => 'Einstellung lesen fehlgeschlagen'],
+            'get_media'              => ['start' => 'Medien werden geladen...', 'done' => 'Medien geladen', 'failed' => 'Medien laden fehlgeschlagen'],
+            'list_plugin_files'      => ['start' => 'Plugin-Dateien werden aufgelistet...', 'done' => 'Plugin-Dateien aufgelistet', 'failed' => 'Plugin-Dateien auflisten fehlgeschlagen'],
+            'read_plugin_file'       => ['start' => 'Plugin-Datei wird gelesen...', 'done' => 'Plugin-Datei gelesen', 'failed' => 'Plugin-Datei lesen fehlgeschlagen'],
+            'list_theme_files'       => ['start' => 'Theme-Dateien werden aufgelistet...', 'done' => 'Theme-Dateien aufgelistet', 'failed' => 'Theme-Dateien auflisten fehlgeschlagen'],
+            'read_theme_file'        => ['start' => 'Theme-Datei wird gelesen...', 'done' => 'Theme-Datei gelesen', 'failed' => 'Theme-Datei lesen fehlgeschlagen'],
             'discover_content_types' => ['start' => 'Inhaltstypen werden erkannt...', 'done' => 'Inhaltstypen erkannt', 'failed' => 'Erkennung fehlgeschlagen'],
-            'manage_post_meta' => ['start' => 'Metadaten werden verarbeitet...', 'done' => 'Metadaten verarbeitet', 'failed' => 'Metadaten-Zugriff fehlgeschlagen'],
-            'manage_taxonomy' => ['start' => 'Taxonomie wird verarbeitet...', 'done' => 'Taxonomie verarbeitet', 'failed' => 'Taxonomie-Zugriff fehlgeschlagen'],
+            'discover_rest_api'      => ['start' => 'REST-API wird analysiert...', 'done' => 'REST-API analysiert', 'failed' => 'REST-API Analyse fehlgeschlagen'],
+            'read_error_log'         => ['start' => 'Error-Log wird gelesen...', 'done' => 'Error-Log gelesen', 'failed' => 'Error-Log lesen fehlgeschlagen'],
+            'get_woocommerce_data'   => ['start' => 'Shop-Daten werden gelesen...', 'done' => 'Shop-Daten gelesen', 'failed' => 'Shop-Daten lesen fehlgeschlagen'],
+            'get_woocommerce_shop'   => ['start' => 'Shop-Info wird geladen...', 'done' => 'Shop-Info geladen', 'failed' => 'Shop-Info laden fehlgeschlagen'],
+            // Write tools
+            'create_post'            => ['start' => 'Beitrag wird erstellt...', 'done' => 'Beitrag erstellt', 'failed' => 'Beitrag erstellen fehlgeschlagen'],
+            'update_post'            => ['start' => 'Beitrag wird aktualisiert...', 'done' => 'Beitrag aktualisiert', 'failed' => 'Beitrag aktualisieren fehlgeschlagen'],
+            'create_page'            => ['start' => 'Seite wird erstellt...', 'done' => 'Seite erstellt', 'failed' => 'Seite erstellen fehlgeschlagen'],
+            'update_option'          => ['start' => 'Einstellung wird aktualisiert...', 'done' => 'Einstellung aktualisiert', 'failed' => 'Einstellung aktualisieren fehlgeschlagen'],
+            'update_any_option'      => ['start' => 'Option wird aktualisiert...', 'done' => 'Option aktualisiert', 'failed' => 'Option aktualisieren fehlgeschlagen'],
+            'delete_post'            => ['start' => 'Beitrag wird geloescht...', 'done' => 'Beitrag geloescht', 'failed' => 'Beitrag loeschen fehlgeschlagen'],
+            'install_plugin'         => ['start' => 'Plugin wird installiert...', 'done' => 'Plugin installiert', 'failed' => 'Plugin installieren fehlgeschlagen'],
+            'switch_theme'           => ['start' => 'Theme wird gewechselt...', 'done' => 'Theme gewechselt', 'failed' => 'Theme wechseln fehlgeschlagen'],
+            'manage_user'            => ['start' => 'Benutzer wird verwaltet...', 'done' => 'Benutzer-Aktion abgeschlossen', 'failed' => 'Benutzer-Aktion fehlgeschlagen'],
+            'create_plugin'          => ['start' => 'Plugin wird erstellt...', 'done' => 'Plugin erstellt', 'failed' => 'Plugin erstellen fehlgeschlagen'],
+            'write_plugin_file'      => ['start' => 'Plugin-Datei wird geschrieben...', 'done' => 'Plugin-Datei geschrieben', 'failed' => 'Plugin-Datei schreiben fehlgeschlagen'],
+            'delete_plugin_file'     => ['start' => 'Plugin-Datei wird geloescht...', 'done' => 'Plugin-Datei geloescht', 'failed' => 'Plugin-Datei loeschen fehlgeschlagen'],
+            'write_theme_file'       => ['start' => 'Theme-Datei wird geschrieben...', 'done' => 'Theme-Datei geschrieben', 'failed' => 'Theme-Datei schreiben fehlgeschlagen'],
+            'create_theme'           => ['start' => 'Theme wird erstellt...', 'done' => 'Theme erstellt', 'failed' => 'Theme erstellen fehlgeschlagen'],
+            'delete_theme_file'      => ['start' => 'Theme-Datei wird geloescht...', 'done' => 'Theme-Datei geloescht', 'failed' => 'Theme-Datei loeschen fehlgeschlagen'],
+            'manage_post_meta'       => ['start' => 'Metadaten werden verarbeitet...', 'done' => 'Metadaten verarbeitet', 'failed' => 'Metadaten-Zugriff fehlgeschlagen'],
+            'manage_taxonomy'        => ['start' => 'Taxonomie wird verarbeitet...', 'done' => 'Taxonomie verarbeitet', 'failed' => 'Taxonomie-Zugriff fehlgeschlagen'],
+            'manage_woocommerce'     => ['start' => 'Shop wird bearbeitet...', 'done' => 'Shop-Aktion abgeschlossen', 'failed' => 'Shop-Aktion fehlgeschlagen'],
+            'manage_menu'            => ['start' => 'Menue wird bearbeitet...', 'done' => 'Menue-Aktion abgeschlossen', 'failed' => 'Menue-Aktion fehlgeschlagen'],
+            'manage_cron'            => ['start' => 'Cron-Job wird verwaltet...', 'done' => 'Cron-Aktion abgeschlossen', 'failed' => 'Cron-Aktion fehlgeschlagen'],
+            'upload_media'           => ['start' => 'Medien-Datei wird hochgeladen...', 'done' => 'Medien-Datei hochgeladen', 'failed' => 'Medien-Upload fehlgeschlagen'],
+            'store_session_image'    => ['start' => 'Bild wird gespeichert...', 'done' => 'Bild gespeichert', 'failed' => 'Bild speichern fehlgeschlagen'],
+            // Power tools
+            'execute_wp_code'        => ['start' => 'PHP-Code wird ausgefuehrt...', 'done' => 'Code ausgefuehrt', 'failed' => 'Code-Ausfuehrung fehlgeschlagen'],
+            'http_fetch'             => ['start' => 'HTTP-Anfrage wird gesendet...', 'done' => 'HTTP-Anfrage abgeschlossen', 'failed' => 'HTTP-Anfrage fehlgeschlagen'],
         ];
         $phaseLabels = $labels[$toolName] ?? null;
         if ($phaseLabels) {
@@ -649,9 +736,10 @@ class ChatController extends WP_REST_Controller {
 
         // Get available tools
         $tools = $this->toolRegistry->getDefinitions();
+        $toolChoice = $this->getToolChoiceForIntent($message, $tools);
 
         // Call AI – try with tools first, fallback to no tools on provider error
-        $response = $this->aiClient->chat($messages, $tools);
+        $response = $this->aiClient->chat($messages, $tools, null, $toolChoice);
 
         if (is_wp_error($response)) {
             $errMsg = $response->get_error_message();
@@ -660,20 +748,19 @@ class ChatController extends WP_REST_Controller {
             $isProviderFailure = str_contains($errMsgLower, 'provider') || str_contains($errMsgLower, '503');
             $isTimeoutFailure = $this->isTimeoutError($errMsgLower);
 
-            // For endpoint availability issues, always retry once without tools
-            // (also for action intents), because some free endpoints reject tool mode.
             if (!empty($tools) && ($isNoEndpointFailure || ($isProviderFailure && !$this->isActionIntent($message)))) {
+                error_log('Levi: tool-mode unavailable (classic), falling back to no-tools. Error: ' . $errMsg);
+                $messages = $this->injectNoToolsGuardrail($messages);
                 $response = $this->aiClient->chat($messages, []);
             } elseif ($isTimeoutFailure && $hasUploadedContext) {
-                // Retry once with same history but without uploaded file context.
                 $messages = $this->buildMessages($sessionId, $message, false);
-                $response = $this->aiClient->chat($messages, $tools);
+                $response = $this->aiClient->chat($messages, $tools, null, $toolChoice);
                 if (is_wp_error($response) && !empty($tools)) {
-                    // Last retry for timeout path: disable tools to reduce payload/latency.
+                    $messages = $this->injectNoToolsGuardrail($messages);
                     $response = $this->aiClient->chat($messages, []);
                 }
             } elseif ($isTimeoutFailure && !empty($tools)) {
-                // Retry once without tools for slow/loaded endpoints.
+                $messages = $this->injectNoToolsGuardrail($messages);
                 $response = $this->aiClient->chat($messages, []);
             }
         }
@@ -684,8 +771,9 @@ class ChatController extends WP_REST_Controller {
             if (str_contains($overflowMsg, 'context length') || str_contains($overflowMsg, 'too many tokens') || str_contains($overflowMsg, 'maximum context')) {
                 error_log('Levi: context overflow detected, retrying with halved history');
                 $halvedMessages = $this->halveHistory($messages);
-                $response = $this->aiClient->chat($halvedMessages, $tools);
+                $response = $this->aiClient->chat($halvedMessages, $tools, null, $toolChoice);
                 if (is_wp_error($response) && !empty($tools)) {
+                    $halvedMessages = $this->injectNoToolsGuardrail($halvedMessages);
                     $response = $this->aiClient->chat($halvedMessages, []);
                 }
                 if (!is_wp_error($response)) {
@@ -734,7 +822,7 @@ class ChatController extends WP_REST_Controller {
             error_log('Levi: empty AI response (classic, attempt 1), original content: ' . mb_substr($originalContent, 0, 500));
 
             for ($retryAttempt = 1; $retryAttempt <= 2; $retryAttempt++) {
-                $response = $this->aiClient->chat($messages, $tools);
+                $response = $this->aiClient->chat($messages, $tools, null, $toolChoice);
                 if (is_wp_error($response)) {
                     break;
                 }
@@ -763,10 +851,26 @@ class ChatController extends WP_REST_Controller {
             return $toolResponse;
         }
 
-        // Normal response (no tools)
+        // Normal response (no tools) – check for hallucination
         $assistantMessage = $this->sanitizeAssistantMessageContent(
             (string) ($messageData['content'] ?? '')
         );
+
+        if ($this->isHallucinatedActionResponse($assistantMessage, (string) $message) && !empty($tools)) {
+            error_log('Levi: hallucinated action response detected (classic), retrying with tool_choice=required');
+            $retryMessages = $this->injectForceToolsHint($messages);
+            $retryResponse = $this->aiClient->chat($retryMessages, $tools, null, 'required');
+            if (!is_wp_error($retryResponse)) {
+                $retryData = $retryResponse['choices'][0]['message'] ?? [];
+                if (!empty($retryData['tool_calls'])) {
+                    if ($hasUploadedContext) {
+                        $this->clearSessionUploads($sessionId, $userId);
+                    }
+                    return $this->handleToolCalls($retryData, $retryMessages, $sessionId, $userId, (string) $message);
+                }
+            }
+            $assistantMessage = 'Ich konnte die Aktion leider nicht ausführen. Bitte versuche es erneut – bei Bedarf starte eine neue Chat-Session.';
+        }
 
         if ($assistantMessage === '') {
             $assistantMessage = $this->getEmptyResponseFallback();
@@ -890,7 +994,8 @@ class ChatController extends WP_REST_Controller {
                 $errMsg = $nextResponse->get_error_message();
                 $errMsgLower = mb_strtolower($errMsg);
                 if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
-                    // Retry once without tool definitions to avoid tool-mode endpoint limitations.
+                    error_log('Levi: tool-mode unavailable in tool-loop (classic), falling back. Error: ' . $errMsg);
+                    $messages = $this->injectNoToolsGuardrail($messages);
                     $nextResponse = $this->aiClient->chat($messages, []);
                 }
             }
@@ -1337,6 +1442,56 @@ class ChatController extends WP_REST_Controller {
         return implode("\n\n", $memories);
     }
 
+    /**
+     * Detect if assistant text claims to have performed an action without actually using tools.
+     * Such responses poison the history and cause the model to keep hallucinating.
+     */
+    private function isHallucinatedActionResponse(string $assistantMessage, string $userMessage): bool {
+        if (!$this->isActionIntent($userMessage)) {
+            return false;
+        }
+        $text = mb_strtolower($assistantMessage);
+        $successClaims = [
+            '/\b(erstellt|angelegt|gelöscht|aktualisiert|geändert|installiert|aktiviert|deaktiviert)\b/u',
+            '/\b(id:\s*\d+|post_id|page_id)\b/u',
+            '/\b(fertig|abgeschlossen|erledigt)\b.*\b(beitrag|seite|plugin|datei)\b/ui',
+            '/\*\*?\s*[✅✔✓]\s*\*\*?/u',
+        ];
+        foreach ($successClaims as $pattern) {
+            if (preg_match($pattern, $text) === 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Inject system message forcing tool usage when retrying after hallucination.
+     */
+    private function injectForceToolsHint(array $messages): array {
+        $hint = [
+            'role' => 'system',
+            'content' => '[WICHTIG] Der Benutzer hat eine Aktion angefordert. Du MUSST die passenden Tools aufrufen – antworte NUR mit tool_calls, nicht mit Text. Keine IDs oder Erfolgsmeldungen erfinden.',
+        ];
+        $result = [];
+        $injected = false;
+        foreach ($messages as $msg) {
+            $result[] = $msg;
+            if (!$injected && ($msg['role'] ?? '') === 'system') {
+                $result[] = $hint;
+                $injected = true;
+            }
+        }
+        if (!$injected) {
+            array_unshift($result, $hint);
+        }
+        return $result;
+    }
+
+    private function getToolChoiceForIntent(string $message, array $tools): string {
+        return (!empty($tools) && $this->isActionIntent($message)) ? 'required' : 'auto';
+    }
+
     private function isActionIntent(string $text): bool {
         $t = mb_strtolower($text);
         $patterns = [
@@ -1350,6 +1505,41 @@ class ChatController extends WP_REST_Controller {
             }
         }
         return $score >= 1;
+    }
+
+    /**
+     * Inject a system-level guardrail when tools are unavailable, preventing the
+     * model from hallucinating tool executions or fake IDs.
+     */
+    private function injectNoToolsGuardrail(array $messages): array {
+        $guardrail = [
+            'role' => 'system',
+            'content' => implode(' ', [
+                '[SYSTEM OVERRIDE] Deine Tool-Funktionen sind aktuell NICHT verfügbar.',
+                'Du darfst KEINE Aktionen vortäuschen.',
+                'Behaupte NIEMALS, du hättest einen Beitrag, eine Seite, ein Plugin oder sonstiges erstellt, geändert oder gelöscht.',
+                'Erfinde KEINE IDs, Dateinamen oder Ergebnisse.',
+                'Antworte stattdessen ehrlich:',
+                '"Ich kann diese Aktion gerade leider nicht ausführen, da meine Werkzeuge vorübergehend nicht verfügbar sind.',
+                'Bitte versuche es in ein paar Minuten erneut oder wechsle in den Einstellungen auf ein anderes KI-Modell."',
+                'Du darfst weiterhin Fragen beantworten, beraten und Informationen geben – aber KEINE WordPress-Aktionen simulieren.',
+            ]),
+        ];
+
+        $result = [];
+        $injected = false;
+        foreach ($messages as $msg) {
+            $result[] = $msg;
+            if (!$injected && ($msg['role'] ?? '') === 'system') {
+                $result[] = $guardrail;
+                $injected = true;
+            }
+        }
+        if (!$injected) {
+            array_unshift($result, $guardrail);
+        }
+
+        return $result;
     }
 
     private function isNoEndpointsError(string $errMsgLower): bool {
@@ -2045,4 +2235,63 @@ class ChatController extends WP_REST_Controller {
         return $message . "\n\n---\n*Meine Antwort wurde aufgrund des Token-Limits abgeschnitten. Schreibe \"mach weiter\", damit ich fortfahre.*";
     }
 
+    // ── Job-Status Transient helpers ──────────────────────────────────
+
+    private function getJobTransientKey(string $sessionId): string {
+        return 'levi_job_' . md5($sessionId);
+    }
+
+    private function setJobStatus(string $sessionId, int $userId, string $status, string $message): void {
+        set_transient($this->getJobTransientKey($sessionId), [
+            'active' => true,
+            'status' => $status,
+            'message' => $message,
+            'user_id' => $userId,
+            'started_at' => current_time('mysql'),
+        ], 10 * MINUTE_IN_SECONDS);
+    }
+
+    private function updateJobStatus(string $sessionId, string $status, string $message): void {
+        $key = $this->getJobTransientKey($sessionId);
+        $current = get_transient($key);
+        if (!is_array($current)) {
+            return;
+        }
+        $current['status'] = $status;
+        $current['message'] = $message;
+        set_transient($key, $current, 10 * MINUTE_IN_SECONDS);
+    }
+
+    private function clearJobStatus(string $sessionId): void {
+        delete_transient($this->getJobTransientKey($sessionId));
+    }
+
+    public function getJobStatus(WP_REST_Request $request): WP_REST_Response {
+        $sessionId = (string) $request->get_param('session_id');
+        $userId = get_current_user_id();
+
+        $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
+        if ($ownerId !== null && $ownerId !== $userId && !current_user_can('manage_options')) {
+            return new WP_REST_Response([
+                'error' => 'Session not found or access denied.',
+                'session_id' => $sessionId,
+            ], 403);
+        }
+
+        $job = get_transient($this->getJobTransientKey($sessionId));
+        if (!is_array($job) || empty($job['active'])) {
+            return new WP_REST_Response([
+                'active' => false,
+                'session_id' => $sessionId,
+            ], 200);
+        }
+
+        return new WP_REST_Response([
+            'active' => true,
+            'status' => $job['status'] ?? 'processing',
+            'message' => $job['message'] ?? 'Levi arbeitet...',
+            'started_at' => $job['started_at'] ?? null,
+            'session_id' => $sessionId,
+        ], 200);
+    }
 }

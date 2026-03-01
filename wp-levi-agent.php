@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LEVI_AGENT_VERSION', '0.1.0');
+define('LEVI_AGENT_VERSION', '0.1.1');
 define('LEVI_AGENT_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LEVI_AGENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 

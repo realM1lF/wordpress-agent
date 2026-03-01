@@ -25,7 +25,7 @@ class OpenAIClient implements AIClientInterface {
         return $this->apiKey !== null;
     }
 
-    public function chat(array $messages, array $tools = []): array|WP_Error {
+    public function chat(array $messages, array $tools = [], ?callable $heartbeat = null, string $toolChoice = 'auto'): array|WP_Error {
         if (!$this->apiKey) {
             return new WP_Error('not_configured', 'OpenAI API key not configured');
         }
@@ -40,7 +40,7 @@ class OpenAIClient implements AIClientInterface {
 
         if (!empty($tools)) {
             $payload['tools'] = $tools;
-            $payload['tool_choice'] = 'auto';
+            $payload['tool_choice'] = in_array($toolChoice, ['required', 'none'], true) ? $toolChoice : 'auto';
         }
 
         $response = wp_remote_post(self::API_BASE . '/chat/completions', [

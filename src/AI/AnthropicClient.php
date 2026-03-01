@@ -25,7 +25,7 @@ class AnthropicClient implements AIClientInterface {
         return $this->apiKey !== null;
     }
 
-    public function chat(array $messages, array $tools = []): array|WP_Error {
+    public function chat(array $messages, array $tools = [], ?callable $heartbeat = null, string $toolChoice = 'auto'): array|WP_Error {
         if (!$this->apiKey) {
             return new WP_Error('not_configured', 'Anthropic API key not configured');
         }

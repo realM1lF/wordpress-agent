@@ -241,6 +241,8 @@
                 currentAbortController = null;
                 if (error.name === 'AbortError') {
                     addMessage('⏹ Abgebrochen.', 'assistant');
+                } else if (error instanceof TypeError && /input stream|network/i.test(error.message)) {
+                    console.info('Levi: SSE connection lost (page reload/navigation). Backend continues working.');
                 } else {
                     addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
                     console.error('SSE Error:', error);
@@ -253,12 +255,10 @@
 
             switch (data.type) {
                 case 'status':
-                    if (data.message) {
-                        typing.setLabel(data.message);
-                    }
-                    return false;
-
                 case 'progress':
+                    if (phaseTimers && typeof phaseTimers === 'object') {
+                        phaseTimers.serverOverride = true;
+                    }
                     if (data.message) {
                         typing.setLabel(data.message);
                     }
@@ -267,20 +267,23 @@
                 case 'heartbeat':
                     return false;
 
-                case 'done':
+                case 'done': {
                     clearPhaseTimers(phaseTimers);
-                    typing.complete();
-                    setSendingState(false);
 
                     if (data.session_id) {
                         sessionId = data.session_id;
                         localStorage.setItem(sessionKey, sessionId);
                     }
 
-                    const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
-                    addMessage(cleanedMessage, 'assistant');
-                    clearSessionFilesQuietly();
+                    typing.scheduleComplete(function() {
+                        typing.complete();
+                        setSendingState(false);
+                        var cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
+                        addMessage(cleanedMessage, 'assistant');
+                        clearSessionFilesQuietly();
+                    });
                     return true;
+                }
 
                 case 'error':
                     clearPhaseTimers(phaseTimers);
@@ -628,6 +631,10 @@
                 if (data && data.error) {
                     throw new Error(formatApiError(data.error, data.__httpStatus));
                 }
+                if (jobPollTimer) {
+                    clearInterval(jobPollTimer);
+                    jobPollTimer = null;
+                }
                 localStorage.removeItem(sessionKey);
                 sessionId = null;
                 historyLoaded = false;
@@ -728,10 +735,85 @@
             .then(data => {
                 historyLoaded = true;
                 renderHistory(data.messages || []);
+                checkActiveJob(currentSessionId);
             })
             .catch(() => {
                 // Keep default greeting if history could not be loaded.
             });
+        }
+
+        let jobPollTimer = null;
+
+        function checkActiveJob(currentSessionId) {
+            if (!currentSessionId) return;
+
+            fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(currentSessionId) + '/job-status', {
+                method: 'GET',
+                headers: { 'X-WP-Nonce': leviAgent.nonce },
+            })
+            .then(async response => {
+                const text = await response.text();
+                return JSON.parse(text);
+            })
+            .then(data => {
+                if (!data || !data.active) return;
+                const typing = addTypingIndicator('write');
+                typing.setLabel(data.message || 'Levi arbeitet...');
+                setSendingState(true);
+                startJobPolling(currentSessionId, typing);
+            })
+            .catch(() => {});
+        }
+
+        function startJobPolling(currentSessionId, typing) {
+            if (jobPollTimer) {
+                clearInterval(jobPollTimer);
+            }
+            jobPollTimer = setInterval(() => {
+                fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(currentSessionId) + '/job-status', {
+                    method: 'GET',
+                    headers: { 'X-WP-Nonce': leviAgent.nonce },
+                })
+                .then(async response => {
+                    const text = await response.text();
+                    return JSON.parse(text);
+                })
+                .then(data => {
+                    if (!data || !data.active) {
+                        clearInterval(jobPollTimer);
+                        jobPollTimer = null;
+                        typing.complete();
+                        setSendingState(false);
+                        reloadChatHistory(currentSessionId);
+                        return;
+                    }
+                    if (data.message) {
+                        typing.setLabel(data.message);
+                    }
+                })
+                .catch(() => {
+                    clearInterval(jobPollTimer);
+                    jobPollTimer = null;
+                    typing.complete();
+                    setSendingState(false);
+                });
+            }, 2000);
+        }
+
+        function reloadChatHistory(currentSessionId) {
+            if (!currentSessionId) return;
+            fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(currentSessionId) + '/history', {
+                method: 'GET',
+                headers: { 'X-WP-Nonce': leviAgent.nonce },
+            })
+            .then(async response => {
+                const text = await response.text();
+                return JSON.parse(text);
+            })
+            .then(data => {
+                renderHistory(data.messages || []);
+            })
+            .catch(() => {});
         }
 
         function addTypingIndicator(taskMode) {
@@ -749,22 +831,78 @@
             messages.scrollTop = messages.scrollHeight;
 
             const labelEl = typingDiv.querySelector('.levi-typing-label');
+            const MIN_DISPLAY_MS = 600;
+            let labelSetAt = Date.now();
+            let queue = [];
+            let drainTimer = null;
+            let doneCallback = null;
 
-            const setLabel = (label) => {
-                if (labelEl) {
-                    labelEl.textContent = label;
+            function showLabel(label) {
+                if (labelEl) labelEl.textContent = label;
+                labelSetAt = Date.now();
+            }
+
+            function drainQueue() {
+                drainTimer = null;
+                if (queue.length > 0) {
+                    showLabel(queue.shift());
+                    drainTimer = setTimeout(drainQueue, MIN_DISPLAY_MS);
+                    return;
                 }
-            };
+                if (doneCallback) {
+                    var fn = doneCallback;
+                    doneCallback = null;
+                    var elapsed = Date.now() - labelSetAt;
+                    var wait = Math.max(0, MIN_DISPLAY_MS - elapsed);
+                    if (wait > 0) {
+                        drainTimer = setTimeout(fn, wait);
+                    } else {
+                        fn();
+                    }
+                }
+            }
 
-            setLabel(getTypingLabel(taskMode, 'start'));
+            function queueLabel(label) {
+                var elapsed = Date.now() - labelSetAt;
+                if (!drainTimer && elapsed >= MIN_DISPLAY_MS) {
+                    showLabel(label);
+                } else {
+                    queue.push(label);
+                    if (!drainTimer) {
+                        var wait = Math.max(0, MIN_DISPLAY_MS - elapsed);
+                        drainTimer = setTimeout(drainQueue, wait);
+                    }
+                }
+            }
+
+            showLabel(getTypingLabel(taskMode, 'start'));
 
             return {
-                setLabel,
-                complete: () => {
-                    typingDiv.classList.add('levi-typing-complete');
-                    setTimeout(() => typingDiv.remove(), 200);
+                setLabel: queueLabel,
+                scheduleComplete: function(callback) {
+                    if (queue.length === 0 && !drainTimer) {
+                        var elapsed = Date.now() - labelSetAt;
+                        var wait = Math.max(0, MIN_DISPLAY_MS - elapsed);
+                        if (wait > 0) {
+                            setTimeout(callback, wait);
+                        } else {
+                            callback();
+                        }
+                    } else {
+                        doneCallback = callback;
+                    }
                 },
-                remove: () => {
+                complete: function() {
+                    if (drainTimer) clearTimeout(drainTimer);
+                    queue = [];
+                    doneCallback = null;
+                    typingDiv.classList.add('levi-typing-complete');
+                    setTimeout(function() { typingDiv.remove(); }, 200);
+                },
+                remove: function() {
+                    if (drainTimer) clearTimeout(drainTimer);
+                    queue = [];
+                    doneCallback = null;
                     typingDiv.remove();
                 },
             };
@@ -792,15 +930,25 @@
         }
 
         function scheduleTypingPhases(typing, taskMode) {
-            return [
-                setTimeout(() => typing.setLabel('Levi arbeitet...'), 2200),
-                setTimeout(() => typing.setLabel(getTypingLabel(taskMode, 'final')), 5200),
+            const timers = {
+                ids: [],
+                serverOverride: false,
+            };
+            timers.ids = [
+                setTimeout(() => {
+                    if (!timers.serverOverride) typing.setLabel('Levi arbeitet...');
+                }, 3000),
+                setTimeout(() => {
+                    if (!timers.serverOverride) typing.setLabel(getTypingLabel(taskMode, 'final'));
+                }, 8000),
             ];
+            return timers;
         }
 
-        function clearPhaseTimers(timerIds) {
-            if (!Array.isArray(timerIds)) return;
-            timerIds.forEach((id) => clearTimeout(id));
+        function clearPhaseTimers(timerObj) {
+            if (!timerObj) return;
+            const ids = Array.isArray(timerObj) ? timerObj : (timerObj.ids || []);
+            ids.forEach((id) => clearTimeout(id));
         }
 
         function formatApiError(message, httpStatus) {
