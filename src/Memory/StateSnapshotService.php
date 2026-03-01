@@ -6,32 +6,74 @@ use WP_Error;
 
 class StateSnapshotService {
     public const EVENT_HOOK = 'levi_agent_daily_state_snapshot';
+    public const MEMORY_SYNC_HOOK = 'levi_agent_daily_memory_sync';
     private const META_OPTION = 'levi_agent_state_snapshot_meta';
     private const LAST_OPTION = 'levi_agent_state_snapshot_last';
+    private const MEMORY_SYNC_OPTION = 'levi_agent_memory_sync_meta';
 
     public function __construct() {
         add_action('init', [$this, 'ensureSchedule']);
         add_action(self::EVENT_HOOK, [$this, 'runDailySync']);
+        add_action(self::MEMORY_SYNC_HOOK, [self::class, 'runMemorySync']);
+        add_action(self::MEMORY_SYNC_HOOK . '_initial', [self::class, 'runMemorySync']);
+        add_action('admin_init', [$this, 'maybeRunOverdueTasks']);
     }
 
     public function ensureSchedule(): void {
         if (!wp_next_scheduled(self::EVENT_HOOK)) {
             wp_schedule_event(self::calculateNextRunTimestamp(), 'daily', self::EVENT_HOOK);
         }
+        if (!wp_next_scheduled(self::MEMORY_SYNC_HOOK)) {
+            wp_schedule_event(self::calculateNextRunTimestamp(), 'daily', self::MEMORY_SYNC_HOOK);
+        }
+    }
+
+    /**
+     * On admin page loads, nudge WP-Cron if our events are overdue.
+     * Covers: DISABLE_WP_CRON, aggressive page caching, low-traffic sites.
+     * Also triggers a one-time initial memory sync after first activation.
+     */
+    public function maybeRunOverdueTasks(): void {
+        if (wp_doing_ajax() || !current_user_can('manage_options')) {
+            return;
+        }
+
+        $now = time();
+
+        foreach ([self::EVENT_HOOK, self::MEMORY_SYNC_HOOK] as $hook) {
+            $nextScheduled = wp_next_scheduled($hook);
+            if ($nextScheduled !== false && $nextScheduled <= $now) {
+                spawn_cron();
+                return;
+            }
+        }
+
+        if (get_option('levi_initial_memory_sync_done', false) === false) {
+            update_option('levi_initial_memory_sync_done', 'pending', false);
+            wp_schedule_single_event(time(), self::MEMORY_SYNC_HOOK . '_initial');
+            spawn_cron();
+        }
     }
 
     public static function scheduleEvent(): void {
+        $nextRun = self::calculateNextRunTimestamp();
         if (!wp_next_scheduled(self::EVENT_HOOK)) {
-            wp_schedule_event(self::calculateNextRunTimestamp(), 'daily', self::EVENT_HOOK);
+            wp_schedule_event($nextRun, 'daily', self::EVENT_HOOK);
+        }
+        if (!wp_next_scheduled(self::MEMORY_SYNC_HOOK)) {
+            wp_schedule_event($nextRun, 'daily', self::MEMORY_SYNC_HOOK);
         }
     }
 
     public static function unscheduleEvent(): void {
-        $timestamp = wp_next_scheduled(self::EVENT_HOOK);
-        while ($timestamp !== false) {
-            wp_unschedule_event($timestamp, self::EVENT_HOOK);
-            $timestamp = wp_next_scheduled(self::EVENT_HOOK);
+        foreach ([self::EVENT_HOOK, self::MEMORY_SYNC_HOOK, self::MEMORY_SYNC_HOOK . '_initial'] as $hook) {
+            $timestamp = wp_next_scheduled($hook);
+            while ($timestamp !== false) {
+                wp_unschedule_event($timestamp, $hook);
+                $timestamp = wp_next_scheduled($hook);
+            }
         }
+        delete_option('levi_initial_memory_sync_done');
     }
 
     public function runDailySync(): void {
@@ -91,6 +133,61 @@ class StateSnapshotService {
     public function runManualSync(): array {
         $this->runDailySync();
         return self::getLastMeta();
+    }
+
+    /**
+     * Sync memory files (identity + reference) into the vector database.
+     * Only reloads files that are new or have changed since the last sync.
+     */
+    public static function runMemorySync(): void {
+        update_option('levi_initial_memory_sync_done', 'done', false);
+
+        $vectorStore = new VectorStore();
+        if (!$vectorStore->isAvailable()) {
+            update_option(self::MEMORY_SYNC_OPTION, [
+                'synced_at' => current_time('mysql'),
+                'status' => 'skipped',
+                'reason' => 'VectorStore not available (SQLite3 missing or data dir not writable).',
+            ], false);
+            return;
+        }
+
+        $loader = new MemoryLoader();
+        $changes = $loader->checkForChanges();
+        $hasChanges = !empty($changes['identity']) || !empty($changes['reference']);
+
+        if (!$hasChanges) {
+            update_option(self::MEMORY_SYNC_OPTION, [
+                'synced_at' => current_time('mysql'),
+                'status' => 'unchanged',
+                'message' => 'All memory files already loaded and up to date.',
+            ], false);
+            return;
+        }
+
+        $results = $loader->loadAllMemories();
+
+        $identityErrors = $results['identity']['errors'] ?? [];
+        $referenceErrors = $results['reference']['errors'] ?? [];
+        $allErrors = array_merge($identityErrors, $referenceErrors);
+
+        update_option(self::MEMORY_SYNC_OPTION, [
+            'synced_at' => current_time('mysql'),
+            'status' => empty($allErrors) ? 'synced' : 'synced_with_errors',
+            'changed_identity' => $changes['identity'],
+            'changed_reference' => $changes['reference'],
+            'identity_loaded' => count($results['identity']['loaded'] ?? []),
+            'reference_loaded' => count($results['reference']['loaded'] ?? []),
+            'errors' => $allErrors,
+        ], false);
+    }
+
+    /**
+     * Get last memory sync metadata.
+     */
+    public static function getLastMemorySyncMeta(): array {
+        $meta = get_option(self::MEMORY_SYNC_OPTION, []);
+        return is_array($meta) ? $meta : [];
     }
 
     public static function getLastMeta(): array {

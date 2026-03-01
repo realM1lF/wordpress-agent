@@ -161,7 +161,7 @@ class OpenRouterClient implements AIClientInterface {
             'Authorization' => 'Bearer ' . $this->apiKey,
             'Content-Type' => 'application/json',
             'HTTP-Referer' => get_site_url(),
-            'X-Title' => 'Mohami WordPress Agent',
+            'X-Title' => 'Levi WordPress Agent',
         ];
     }
 
@@ -236,7 +236,7 @@ class OpenRouterClient implements AIClientInterface {
                 'Authorization: Bearer ' . $this->apiKey,
                 'Content-Type: application/json',
                 'HTTP-Referer: ' . get_site_url(),
-                'X-Title: Mohami WordPress Agent',
+                'X-Title: Levi WordPress Agent',
                 'Accept: text/event-stream',
             ],
             CURLOPT_RETURNTRANSFER => false,
