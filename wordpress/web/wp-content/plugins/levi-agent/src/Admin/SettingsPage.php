@@ -163,6 +163,9 @@ class SettingsPage {
         $sanitized['memory_episodic_k'] = max(1, min(20, absint($input['memory_episodic_k'] ?? 4)));
         $sanitized['memory_min_similarity'] = max(0.0, min(1.0, (float) ($input['memory_min_similarity'] ?? 0.6)));
 
+        $sanitized['pii_redaction'] = !empty($input['pii_redaction']) ? 1 : 0;
+        $sanitized['blocked_post_types'] = sanitize_textarea_field($input['blocked_post_types'] ?? '');
+
         return $sanitized;
     }
 
@@ -634,6 +637,44 @@ class SettingsPage {
                 </p>
             </div>
 
+            <!-- Data Protection (full-width) -->
+            <div class="levi-form-card" style="margin-bottom: 1.5rem;">
+                <h3>🛡️ <?php echo esc_html($this->tr('Data Protection', 'Datenschutz')); ?></h3>
+                <p class="levi-form-description">
+                    <?php echo esc_html($this->tr(
+                        'PII redaction masks personal data (emails, phone numbers, IBANs) before sending to the AI provider. Blocked post types and meta keys prevent Levi from reading sensitive form submissions and payment data.',
+                        'PII-Redaction maskiert personenbezogene Daten (E-Mails, Telefonnummern, IBANs) bevor sie an den KI-Anbieter gesendet werden. Blockierte Post-Types und Meta-Keys verhindern, dass Levi sensible Formulareingaben und Zahlungsdaten liest.'
+                    )); ?>
+                </p>
+
+                <div class="levi-toggle-group" style="margin-bottom: 1rem;">
+                    <label class="levi-toggle">
+                        <input type="checkbox"
+                               name="<?php echo esc_attr($this->optionName); ?>[pii_redaction]"
+                               value="1"
+                               <?php checked(!isset($settings['pii_redaction']) || !empty($settings['pii_redaction'])); ?>>
+                        <span class="levi-toggle-slider"></span>
+                        <span class="levi-toggle-label">
+                            <?php echo esc_html($this->tr('Enable PII redaction & post type / meta key blocking', 'PII-Redaction & Post-Type- / Meta-Key-Blocking aktivieren')); ?>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="levi-form-group">
+                    <label class="levi-form-label"><?php echo esc_html($this->tr('Additional blocked post types', 'Zusaetzlich blockierte Post-Types')); ?></label>
+                    <textarea name="<?php echo esc_attr($this->optionName); ?>[blocked_post_types]"
+                              rows="3" class="levi-form-input" style="font-family:monospace; font-size:13px;"
+                              placeholder="custom_form_entry&#10;support_ticket"
+                    ><?php echo esc_textarea($settings['blocked_post_types'] ?? ''); ?></textarea>
+                    <p class="levi-form-help">
+                        <?php echo esc_html($this->tr(
+                            'One post type per line. These are blocked in addition to the built-in defaults (WPForms, Flamingo, Ninja Forms, EDD, etc.).',
+                            'Ein Post-Type pro Zeile. Diese werden zusaetzlich zu den eingebauten Defaults blockiert (WPForms, Flamingo, Ninja Forms, EDD usw.).'
+                        )); ?>
+                    </p>
+                </div>
+            </div>
+
             <div class="levi-cards-grid levi-cards-2col">
                 <!-- Rate Limiting -->
                 <div class="levi-form-card">
@@ -948,6 +989,8 @@ class SettingsPage {
             'memory_reference_k' => 5,
             'memory_episodic_k' => 4,
             'memory_min_similarity' => 0.6,
+            'pii_redaction' => 1,
+            'blocked_post_types' => '',
         ];
 
         $settings = get_option($this->optionName, []);

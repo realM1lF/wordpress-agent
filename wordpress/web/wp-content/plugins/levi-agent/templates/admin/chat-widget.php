@@ -25,21 +25,15 @@
             </div>
         </div>
         <div class="levi-chat-input-area">
-            <div class="levi-chat-upload-row">
-                <button id="levi-chat-upload-btn" class="levi-chat-upload-btn" type="button" title="Datei oder Bild hochladen">
+            <div id="levi-chat-attachments" class="levi-chat-attachments" style="display:none;">
+                <div id="levi-chat-file-list" class="levi-chat-file-list"></div>
+                <button id="levi-chat-clear-files-btn" class="levi-chat-clear-files-btn" type="button" title="Alle entfernen">×</button>
+            </div>
+            <div class="levi-chat-input-row">
+                <button id="levi-chat-upload-btn" class="levi-chat-upload-btn" type="button" title="Datei oder Bild anhängen">
                     <span class="dashicons dashicons-paperclip"></span>
-                    <span>Datei</span>
-                </button>
-                <button id="levi-chat-clear-files-btn" class="levi-chat-clear-files-btn" type="button" title="Uploads aus Kontext entfernen" style="display: none;">
-                    <span class="dashicons dashicons-dismiss"></span>
-                    <span>Uploads löschen</span>
                 </button>
                 <input id="levi-chat-file-input" type="file" accept=".txt,.md,.csv,.json,.xml,.log,.jpg,.jpeg,.png,.gif,.webp,text/plain,text/markdown,text/csv,application/json,image/*" multiple hidden>
-                <div id="levi-chat-upload-status" class="levi-chat-upload-status"></div>
-            </div>
-            <div id="levi-chat-context-hint" class="levi-chat-context-hint"></div>
-            <div id="levi-chat-file-list" class="levi-chat-file-list"></div>
-            <div class="levi-chat-input-row">
                 <textarea 
                     id="levi-chat-input" 
                     class="levi-chat-input" 

@@ -4,6 +4,7 @@ namespace Levi\Agent\API;
 
 use Levi\Agent\AI\AIClientFactory;
 use Levi\Agent\AI\AIClientInterface;
+use Levi\Agent\AI\PIIRedactor;
 use Levi\Agent\Database\ConversationRepository;
 use Levi\Agent\Admin\SettingsPage;
 use Levi\Agent\Agent\Identity;
@@ -37,6 +38,8 @@ class ChatController extends WP_REST_Controller {
         $this->conversationRepo = new ConversationRepository();
         $toolProfile = $this->settings->getSettings()['tool_profile'] ?? 'standard';
         $this->toolRegistry = new Registry($toolProfile);
+
+        PIIRedactor::init($this->settings->getSettings());
         
         add_action('rest_api_init', [$this, 'register_routes']);
     }
@@ -378,6 +381,9 @@ class ChatController extends WP_REST_Controller {
 
         if (isset($messageData['tool_calls']) && !empty($messageData['tool_calls'])) {
             $this->handleToolCallsStreaming($messageData, $messages, $sessionId, $userId, (string) $message, $heartbeat);
+            if ($hasUploadedContext) {
+                $this->clearSessionUploads($sessionId, $userId);
+            }
             return;
         }
 
@@ -398,6 +404,10 @@ class ChatController extends WP_REST_Controller {
             $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
         } catch (\Exception $e) {
             error_log('Levi DB Error: ' . $e->getMessage());
+        }
+
+        if ($hasUploadedContext) {
+            $this->clearSessionUploads($sessionId, $userId);
         }
 
         $this->emitSSE('done', [
@@ -746,7 +756,11 @@ class ChatController extends WP_REST_Controller {
         $messageData = $response['choices'][0]['message'] ?? [];
         
         if (isset($messageData['tool_calls']) && !empty($messageData['tool_calls'])) {
-            return $this->handleToolCalls($messageData, $messages, $sessionId, $userId, (string) $message);
+            $toolResponse = $this->handleToolCalls($messageData, $messages, $sessionId, $userId, (string) $message);
+            if ($hasUploadedContext) {
+                $this->clearSessionUploads($sessionId, $userId);
+            }
+            return $toolResponse;
         }
 
         // Normal response (no tools)
@@ -766,6 +780,10 @@ class ChatController extends WP_REST_Controller {
             $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
         } catch (\Exception $e) {
             error_log('Levi DB Error: ' . $e->getMessage());
+        }
+
+        if ($hasUploadedContext) {
+            $this->clearSessionUploads($sessionId, $userId);
         }
 
         return new WP_REST_Response([
@@ -1372,8 +1390,14 @@ class ChatController extends WP_REST_Controller {
             return '{"success":false,"error":"Could not serialize tool result."}';
         }
         if (mb_strlen($json) > 12000) {
-            return mb_substr($json, 0, 12000) . '...[truncated]';
+            $json = mb_substr($json, 0, 12000) . '...[truncated]';
         }
+
+        $redactor = PIIRedactor::getInstance();
+        if ($redactor->isEnabled()) {
+            $json = $redactor->redact($json);
+        }
+
         return $json;
     }
 

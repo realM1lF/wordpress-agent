@@ -16,8 +16,7 @@
         const uploadBtn = document.getElementById('levi-chat-upload-btn');
         const clearFilesBtn = document.getElementById('levi-chat-clear-files-btn');
         const fileInput = document.getElementById('levi-chat-file-input');
-        const uploadStatus = document.getElementById('levi-chat-upload-status');
-        const contextHint = document.getElementById('levi-chat-context-hint');
+        const attachmentsBar = document.getElementById('levi-chat-attachments');
         const fileList = document.getElementById('levi-chat-file-list');
 
         const stop = document.getElementById('levi-chat-stop');
@@ -106,7 +105,7 @@
         if (clearFilesBtn) {
             clearFilesBtn.addEventListener('click', clearSessionFiles);
         }
-        updateClearFilesButton();
+        updateAttachmentsBar();
 
         // Send message on button click
         send.addEventListener('click', sendMessage);
@@ -144,6 +143,8 @@
             const text = input.value.trim();
             if (!text) return;
 
+            const messageAttachments = uploadedFiles.length > 0 ? [...uploadedFiles] : null;
+
             // If editing, remove the old user message and its assistant reply from DOM
             const isEdit = editingMessageEl !== null;
             if (isEdit && editingMessageEl) {
@@ -156,8 +157,14 @@
             }
 
             currentAbortController = new AbortController();
-            addMessage(text, 'user');
+            addMessage(text, 'user', messageAttachments);
             input.value = '';
+
+            // Clear attachments from input area (consumed by this message)
+            if (messageAttachments) {
+                uploadedFiles = [];
+                renderUploadedFiles();
+            }
 
             const taskMode = inferTaskMode(text);
             const typing = addTypingIndicator(taskMode);
@@ -272,6 +279,7 @@
 
                     const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                     addMessage(cleanedMessage, 'assistant');
+                    clearSessionFilesQuietly();
                     return true;
 
                 case 'error':
@@ -334,6 +342,7 @@
 
                 const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                 addMessage(cleanedMessage, 'assistant');
+                clearSessionFilesQuietly();
             })
             .catch(error => {
                 clearPhaseTimers(phaseTimers);
@@ -353,6 +362,7 @@
             sendInFlight = !!isSending;
             send.disabled = !!isSending;
             input.disabled = !!isSending;
+            if (uploadBtn) uploadBtn.disabled = !!isSending;
             if (isSending) {
                 send.style.display = 'none';
                 if (stop) stop.style.display = 'inline-flex';
@@ -369,11 +379,16 @@
                 return;
             }
 
+            const previews = {};
+            for (const file of fileListObj) {
+                if (/^image\//i.test(file.type)) {
+                    previews[file.name] = URL.createObjectURL(file);
+                }
+            }
+
             uploadInFlight = true;
             uploadBtn.disabled = true;
-            if (uploadStatus) {
-                uploadStatus.textContent = 'Upload läuft...';
-            }
+            uploadBtn.classList.add('levi-uploading');
 
             const formData = new FormData();
             for (const file of fileListObj) {
@@ -403,6 +418,7 @@
             .then(data => {
                 uploadInFlight = false;
                 uploadBtn.disabled = false;
+                uploadBtn.classList.remove('levi-uploading');
                 if (fileInput) {
                     fileInput.value = '';
                 }
@@ -413,33 +429,40 @@
                 }
 
                 if (data.error) {
-                    if (uploadStatus) uploadStatus.textContent = 'Upload fehlgeschlagen';
                     addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
                     return;
                 }
 
                 const uploaded = Array.isArray(data.files) ? data.files : [];
+                uploaded.forEach(function(f) {
+                    if (f && f.name && previews[f.name]) {
+                        f.preview = previews[f.name];
+                    }
+                });
                 const fullList = Array.isArray(data.session_files) ? data.session_files : null;
+                if (fullList) {
+                    fullList.forEach(function(f) {
+                        if (f && f.name && previews[f.name]) {
+                            f.preview = previews[f.name];
+                        }
+                    });
+                }
                 if (uploaded.length > 0) {
                     uploadedFiles = fullList || uploadedFiles.concat(uploaded).slice(-5);
                     renderUploadedFiles();
-                    if (uploadStatus) uploadStatus.textContent = uploaded.length + ' Datei(en) hochgeladen';
-                    addMessage('📎 Datei(en) hochgeladen: ' + uploaded.map(f => f.name).join(', '), 'assistant');
-                } else {
-                    if (uploadStatus) uploadStatus.textContent = 'Keine Datei übernommen';
                 }
 
                 if (Array.isArray(data.errors) && data.errors.length > 0) {
-                    addMessage('⚠️ Upload-Hinweise: ' + data.errors.join(' | '), 'assistant');
+                    addMessage('⚠️ ' + data.errors.join(' | '), 'assistant');
                 }
             })
             .catch(error => {
                 uploadInFlight = false;
                 uploadBtn.disabled = false;
+                uploadBtn.classList.remove('levi-uploading');
                 if (fileInput) {
                     fileInput.value = '';
                 }
-                if (uploadStatus) uploadStatus.textContent = 'Upload fehlgeschlagen';
                 addMessage('❌ Upload-Fehler: ' + error.message, 'assistant');
             });
         }
@@ -454,9 +477,16 @@
                 const fileId = escapeHtml((f && f.id) ? String(f.id) : '');
                 const fileType = (f && f.type) ? String(f.type) : '';
                 const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
-                const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
-                chip.innerHTML = '<span class="dashicons ' + icon + '"></span><span>' + name + '</span>'
-                    + '<button type="button" class="levi-chat-file-chip-remove" data-file-id="' + fileId + '" title="Datei entfernen">×</button>';
+                const preview = (f && f.preview) ? f.preview : '';
+                let thumb;
+                if (isImage && preview) {
+                    thumb = '<img src="' + escapeHtml(preview) + '" class="levi-chat-file-chip-thumb" alt="">';
+                } else {
+                    const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
+                    thumb = '<span class="dashicons ' + icon + '"></span>';
+                }
+                chip.innerHTML = thumb + '<span class="levi-chat-file-chip-name">' + name + '</span>'
+                    + '<button type="button" class="levi-chat-file-chip-remove" data-file-id="' + fileId + '" title="Entfernen">×</button>';
                 fileList.appendChild(chip);
             });
             fileList.querySelectorAll('.levi-chat-file-chip-remove').forEach((btn) => {
@@ -467,23 +497,12 @@
                     }
                 });
             });
-            updateClearFilesButton();
-            updateContextHint();
+            updateAttachmentsBar();
         }
 
-        function updateClearFilesButton() {
-            if (!clearFilesBtn) return;
-            clearFilesBtn.style.display = uploadedFiles.length > 0 ? 'inline-flex' : 'none';
-        }
-
-        function updateContextHint() {
-            if (!contextHint) return;
-            const count = uploadedFiles.length;
-            if (count === 0) {
-                contextHint.textContent = '';
-                return;
-            }
-            contextHint.textContent = count + ' Datei(en) sind im aktuellen Chat-Kontext aktiv.';
+        function updateAttachmentsBar() {
+            if (!attachmentsBar) return;
+            attachmentsBar.style.display = uploadedFiles.length > 0 ? 'flex' : 'none';
         }
 
         function loadSessionUploads(currentSessionId) {
@@ -512,11 +531,18 @@
             });
         }
 
+        function clearSessionFilesQuietly() {
+            if (!sessionId) return;
+            fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(sessionId) + '/uploads', {
+                method: 'DELETE',
+                headers: { 'X-WP-Nonce': leviAgent.nonce },
+            }).catch(function() {});
+        }
+
         function clearSessionFiles() {
             if (!sessionId) {
                 uploadedFiles = [];
                 renderUploadedFiles();
-                if (uploadStatus) uploadStatus.textContent = '';
                 return;
             }
             fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(sessionId) + '/uploads', {
@@ -538,7 +564,6 @@
                 }
                 uploadedFiles = [];
                 renderUploadedFiles();
-                if (uploadStatus) uploadStatus.textContent = 'Uploads entfernt';
             })
             .catch((error) => {
                 addMessage('❌ Uploads konnten nicht gelöscht werden: ' + error.message, 'assistant');
@@ -566,7 +591,6 @@
                 }
                 uploadedFiles = Array.isArray(data.files) ? data.files : [];
                 renderUploadedFiles();
-                if (uploadStatus) uploadStatus.textContent = 'Datei entfernt';
             })
             .catch((error) => {
                 addMessage('❌ Datei konnte nicht entfernt werden: ' + error.message, 'assistant');
@@ -609,9 +633,6 @@
                 historyLoaded = false;
                 uploadedFiles = [];
                 renderUploadedFiles();
-                if (uploadStatus) {
-                    uploadStatus.textContent = '';
-                }
                 renderHistory([]);
             })
             .catch((error) => {
@@ -619,14 +640,35 @@
             });
         }
 
-        function addMessage(text, role) {
+        function addMessage(text, role, attachments) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'levi-message levi-message-' + role;
 
-            let html = '<div class="levi-message-content">' + renderMessageContent(text, role) + '</div>';
+            let inner = '';
+            if (role === 'user' && attachments && attachments.length > 0) {
+                inner += '<div class="levi-message-attachments">';
+                attachments.forEach(function(f) {
+                    const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
+                    const fileType = (f && f.type) ? String(f.type) : '';
+                    const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
+                    const preview = (f && f.preview) ? escapeHtml(f.preview) : '';
+                    let thumb;
+                    if (isImage && preview) {
+                        thumb = '<img src="' + preview + '" class="levi-msg-file-thumb" alt="">';
+                    } else {
+                        const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
+                        thumb = '<span class="dashicons ' + icon + '"></span>';
+                    }
+                    inner += '<span class="levi-msg-file">' + thumb + name + '</span>';
+                });
+                inner += '</div>';
+            }
+            inner += renderMessageContent(text, role);
+
+            let html = '<div class="levi-message-content">' + inner + '</div>';
 
             if (role === 'user') {
-                html += '<button type="button" class="levi-message-edit-btn" title="Nachricht bearbeiten"><span class="dashicons dashicons-edit"></span></button>';
+                html += '<button type="button" class="levi-message-edit-btn dashicons dashicons-edit" title="Nachricht bearbeiten" aria-label="Nachricht bearbeiten"></button>';
             }
 
             messageDiv.innerHTML = html;

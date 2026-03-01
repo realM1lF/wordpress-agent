@@ -2,6 +2,8 @@
 
 namespace Levi\Agent\AI\Tools;
 
+use Levi\Agent\AI\PIIRedactor;
+
 class PostMetaTool implements ToolInterface {
 
     public function getName(): string {
@@ -68,7 +70,15 @@ class PostMetaTool implements ToolInterface {
     }
 
     private function getMeta(int $postId, string $metaKey): array {
+        $redactor = PIIRedactor::getInstance();
+
         if ($metaKey !== '') {
+            if ($redactor->isBlockedMetaKey($metaKey)) {
+                return [
+                    'success' => false,
+                    'error' => sprintf('Meta key "%s" is restricted for data protection.', $metaKey),
+                ];
+            }
             $value = get_post_meta($postId, $metaKey, true);
             return [
                 'success' => true,
@@ -80,20 +90,32 @@ class PostMetaTool implements ToolInterface {
 
         $allMeta = get_post_meta($postId);
         $filtered = [];
+        $redactedKeys = [];
         foreach ($allMeta as $key => $values) {
             if (str_starts_with($key, '_edit_') || $key === '_encloseme' || $key === '_pingme') {
+                continue;
+            }
+            if ($redactor->isBlockedMetaKey($key)) {
+                $redactedKeys[] = $key;
                 continue;
             }
             $filtered[$key] = count($values) === 1 ? $values[0] : $values;
         }
 
-        return [
+        $result = [
             'success' => true,
             'post_id' => $postId,
             'post_type' => get_post_type($postId),
             'meta' => $filtered,
             'meta_count' => count($filtered),
         ];
+
+        if (!empty($redactedKeys)) {
+            $result['redacted_keys'] = $redactedKeys;
+            $result['redacted_notice'] = 'Some meta keys were hidden for data protection (billing, shipping, payment data).';
+        }
+
+        return $result;
     }
 
     private function setMeta(int $postId, string $metaKey, $metaValue): array {
@@ -103,6 +125,10 @@ class PostMetaTool implements ToolInterface {
 
         if ($metaValue === null) {
             return ['success' => false, 'error' => 'meta_value is required for set action.'];
+        }
+
+        if (PIIRedactor::getInstance()->isBlockedMetaKey($metaKey)) {
+            return ['success' => false, 'error' => sprintf('Meta key "%s" is restricted for data protection.', $metaKey)];
         }
 
         $protectedKeys = ['_wp_attached_file', '_wp_attachment_metadata'];
@@ -143,6 +169,10 @@ class PostMetaTool implements ToolInterface {
     private function deleteMeta(int $postId, string $metaKey): array {
         if ($metaKey === '') {
             return ['success' => false, 'error' => 'meta_key is required for delete action.'];
+        }
+
+        if (PIIRedactor::getInstance()->isBlockedMetaKey($metaKey)) {
+            return ['success' => false, 'error' => sprintf('Meta key "%s" is restricted for data protection.', $metaKey)];
         }
 
         $existed = metadata_exists('post', $postId, $metaKey);

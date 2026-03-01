@@ -167,6 +167,7 @@
     color: #eff6ff;
     border-bottom-right-radius: 6px;
     box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+    padding-right: 32px;
 }
 
 .levi-message-assistant .levi-message-content {
@@ -281,82 +282,49 @@
 }
 
 .levi-chat-input-area {
-    padding: 12px;
+    padding: 10px 12px;
     background: #111827;
     border-top: 1px solid #1f2937;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
 }
 
-.levi-chat-upload-row {
+/* Attachments bar: only visible when files exist */
+.levi-chat-attachments {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-
-.levi-chat-upload-btn,
-.levi-chat-clear-files-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    border: 1px solid #334155;
-    background: #0f172a;
-    color: #d1d5db;
-    border-radius: 6px;
-    height: 32px;
-    padding: 0 10px;
-    cursor: pointer;
-}
-
-.levi-chat-upload-btn:hover,
-.levi-chat-clear-files-btn:hover {
-    background: #1e293b;
-}
-
-.levi-chat-clear-files-btn .dashicons {
-    font-size: 14px;
-    width: 14px;
-    height: 14px;
-}
-
-.levi-chat-upload-btn .dashicons {
-    font-size: 15px;
-    width: 15px;
-    height: 15px;
-}
-
-.levi-chat-upload-status {
-    font-size: 12px;
-    color: #94a3b8;
-    min-height: 18px;
-    text-align: right;
-    margin-left: auto;
-}
-
-.levi-chat-context-hint {
-    font-size: 12px;
-    color: #7dd3fc;
-    min-height: 16px;
+    gap: 6px;
+    padding: 4px 0;
+    min-height: 0;
 }
 
 .levi-chat-file-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
 }
 
 .levi-chat-file-chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    max-width: 180px;
     border: 1px solid #334155;
-    border-radius: 999px;
+    border-radius: 8px;
     background: #0f172a;
-    padding: 4px 10px;
-    font-size: 12px;
+    padding: 4px 8px 4px 4px;
+    font-size: 11px;
     color: #d1d5db;
+}
+
+.levi-chat-file-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 .levi-chat-file-chip-remove {
@@ -364,9 +332,10 @@
     background: transparent;
     color: #94a3b8;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 12px;
     line-height: 1;
-    padding: 0;
+    padding: 0 0 0 2px;
+    flex-shrink: 0;
 }
 
 .levi-chat-file-chip-remove:hover {
@@ -374,15 +343,85 @@
 }
 
 .levi-chat-file-chip .dashicons {
-    font-size: 13px;
-    width: 13px;
-    height: 13px;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
     color: #60a5fa;
+    flex-shrink: 0;
+}
+
+.levi-chat-file-chip-thumb {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.levi-chat-clear-files-btn {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+    border-radius: 4px;
+}
+
+.levi-chat-clear-files-btn:hover {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+}
+
+/* Upload button: icon-only, inline with input */
+.levi-chat-upload-btn {
+    margin: auto 0;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #94a3b8;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+}
+
+.levi-chat-upload-btn:hover {
+    background: #1e293b;
+    color: #60a5fa;
+}
+
+.levi-chat-upload-btn.levi-uploading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.levi-chat-upload-btn.levi-uploading .dashicons {
+    animation: levi-spin 0.8s linear infinite;
+}
+
+@keyframes levi-spin {
+    to { transform: rotate(360deg); }
+}
+
+.levi-chat-upload-btn .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
 }
 
 .levi-chat-input-row {
     display: flex;
-    gap: 10px;
+    align-items: flex-end;
+    gap: 8px;
 }
 
 .levi-chat-input {
@@ -404,6 +443,7 @@
 }
 
 .levi-chat-send {
+    margin: auto 0;
     width: 44px;
     height: 44px;
     background: #2563eb;
@@ -524,6 +564,7 @@
 
 /* Stop button */
 .levi-chat-stop {
+    margin: auto 0;
     background: #ef4444;
     color: #fff;
     border: none;
@@ -545,35 +586,78 @@
     height: 18px;
 }
 
+/* Attachments shown inside user message bubble */
+.levi-message-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.levi-msg-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px 3px 3px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    font-size: 11px;
+    color: rgba(239, 246, 255, 0.85);
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.levi-msg-file .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+.levi-msg-file-thumb {
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
 /* Edit button on user messages */
 .levi-message-user {
     position: relative;
 }
 .levi-message-edit-btn {
     position: absolute;
-    top: 4px;
-    left: -28px;
-    background: none;
+    top: 6px;
+    right: 6px;
+    width: 24px;
+    height: 24px;
+    background: rgba(0, 0, 0, 0.2);
     border: none;
-    color: #64748b;
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
-    padding: 2px;
+    padding: 0;
     opacity: 0;
-    transition: opacity 0.15s;
-    font-size: 0;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    font-size: 14px;
     line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.levi-message-edit-btn::before {
+    margin: 0;
 }
 .levi-message-user:hover .levi-message-edit-btn {
-    opacity: 0.7;
+    opacity: 1;
 }
 .levi-message-edit-btn:hover {
-    opacity: 1 !important;
-    color: #3b82f6;
-}
-.levi-message-edit-btn .dashicons {
-    font-size: 16px;
-    width: 16px;
-    height: 16px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.3);
 }
 
 @media (max-width: 900px) {
@@ -594,3 +678,4 @@
     .levi-message-user .levi-message-content {
         max-width: min(48ch, 100%);
     }
+}
