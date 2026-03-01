@@ -1,0 +1,40 @@
+# Backup files
+*.bak
+*.bak2
+*.old
+*.orig
+*.tmp
+*~
+
+# Logs
+logs/*.log
+
+# Local fix scripts
+_fix_*.py
+
+# macOS
+.DS_Store
+._*
+
+# Editor
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Node modules (should not be committed)
+node_modules/
+
+# Build artifacts
+.build/
+dist/
+
+# WordPress test installation
+wordpress/
+
+# Data files with sensitive info
+data/vector-memory.sqlite
+data/*.sqlite
+
+# Environment files
+.env

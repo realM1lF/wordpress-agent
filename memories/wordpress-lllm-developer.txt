@@ -1,6 +1,6 @@
 # WordPress Developer Documentation – LLM Reference
 
-Aggregated from developer.wordpress.org, wordpress.org/documentation.
+Aggregated from developer.wordpress.org.
 Excludes: Plugin Handbook.
 
 Use this as reference for WordPress development: Block Editor, Themes, REST API, Common APIs (Hooks/Filters), Advanced Administration, Coding Standards, WP-CLI.
@@ -1066,7 +1066,7 @@ url: https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?
 
 Title: Core Blocks Reference
 Published: December 20, 2021
-Last modified: February 24, 2026
+Last modified: February 28, 2026
 
 ---
 
@@ -1313,11 +1313,11 @@ Prompt visitors to take action with a button-style link. ([Source](https://githu
  * **Name:** core/button
  * **Category:** design
  * **Parent:** core/buttons
- * **Supports:** anchor, color (background, gradients, text), interactivity (clientNavigation),
-   shadow, spacing (padding), splitting, typography (fontSize, lineHeight, textAlign),
-   ~alignWide~, ~align~, ~reusable~
+ * **Supports:** anchor, color (background, gradients, text), dimensions (width),
+   interactivity (clientNavigation), shadow, spacing (padding), splitting, typography(
+   fontSize, lineHeight, textAlign), ~alignWide~, ~align~, ~reusable~
  * **Attributes:** backgroundColor, gradient, linkTarget, placeholder, rel, tagName,
-   text, textColor, title, type, url, width
+   text, textColor, title, type, url
 
 ## 󠀁[Buttons](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#buttons)󠁿
 
@@ -2609,7 +2609,7 @@ December 20, 2021
 
 Last updated
 
-February 24, 2026
+February 28, 2026
 
 Edit article
 
@@ -10757,7 +10757,7 @@ url: https://developer.wordpress.org/cli/commands/core/?output_format=md
 
 Title: wp core
 Published: February 5, 2018
-Last modified: February 24, 2026
+Last modified: March 1, 2026
 
 ---
 
@@ -10868,7 +10868,7 @@ url: https://developer.wordpress.org/cli/commands/core/download/?output_format=m
 
 Title: wp core download
 Published: February 5, 2018
-Last modified: February 24, 2026
+Last modified: March 1, 2026
 
 ---
 
@@ -10949,7 +10949,7 @@ url: https://developer.wordpress.org/cli/commands/db/?output_format=md
 
 Title: wp db
 Published: February 5, 2018
-Last modified: February 24, 2026
+Last modified: March 1, 2026
 
 ---
 
