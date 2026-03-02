@@ -18,6 +18,7 @@ class SettingsPage {
         add_action('admin_enqueue_scripts', [$this, 'enqueueAssets']);
         add_action('wp_ajax_levi_repair_database', [$this, 'ajaxRepairDatabase']);
         add_action('wp_ajax_levi_run_state_snapshot', [$this, 'ajaxRunStateSnapshot']);
+        add_action('wp_ajax_levi_clear_audit_log', [$this, 'ajaxClearAuditLog']);
     }
 
     public function addMenuPage(): void {
@@ -165,6 +166,21 @@ class SettingsPage {
 
         $sanitized['pii_redaction'] = !empty($input['pii_redaction']) ? 1 : 0;
         $sanitized['blocked_post_types'] = sanitize_textarea_field($input['blocked_post_types'] ?? '');
+
+        // Action Password (stored as hash, never plain text)
+        $newPassword = (string) ($input['action_password_new'] ?? '');
+        $clearPassword = !empty($input['action_password_clear']);
+        if ($clearPassword) {
+            $sanitized['action_password_hash'] = '';
+        } elseif ($newPassword !== '') {
+            $sanitized['action_password_hash'] = wp_hash_password($newPassword);
+        } else {
+            $sanitized['action_password_hash'] = (string) ($existing['action_password_hash'] ?? '');
+        }
+        $sanitized['require_action_password'] = !empty($input['require_action_password']) ? 1 : 0;
+
+        // execute_wp_code opt-in (only relevant when tool_profile = 'full')
+        $sanitized['allow_execute_wp_code'] = !empty($input['allow_execute_wp_code']) ? 1 : 0;
 
         return $sanitized;
     }
@@ -676,6 +692,83 @@ class SettingsPage {
             </div>
 
             <div class="levi-cards-grid levi-cards-2col">
+                <!-- Action Password -->
+                <div class="levi-form-card" style="grid-column: 1 / -1;">
+                    <h3>🔐 <?php echo esc_html($this->tr('Action Password', 'Aktions-Passwort')); ?></h3>
+                    <p class="levi-form-description">
+                        <?php echo esc_html($this->tr(
+                            'When active, Levi will ask for this password before executing destructive actions (delete, install plugin, switch theme, etc.). The password is never sent to the AI – it is checked server-side only.',
+                            'Wenn aktiv, fragt Levi vor destruktiven Aktionen (Löschen, Plugin installieren, Theme wechseln etc.) nach diesem Passwort. Das Passwort wird nie an die KI gesendet – nur serverseitig geprüft.'
+                        )); ?>
+                    </p>
+                    <div class="levi-toggle-group" style="margin-bottom: 1rem;">
+                        <label class="levi-toggle">
+                            <input type="checkbox"
+                                   name="<?php echo esc_attr($this->optionName); ?>[require_action_password]"
+                                   value="1"
+                                   <?php checked(!empty($settings['require_action_password'])); ?>>
+                            <span class="levi-toggle-slider"></span>
+                            <span class="levi-toggle-label">
+                                <?php echo esc_html($this->tr('Require action password for destructive operations', 'Aktions-Passwort für destruktive Operationen verlangen')); ?>
+                            </span>
+                        </label>
+                    </div>
+                    <div class="levi-form-row">
+                        <div class="levi-form-group">
+                            <label class="levi-form-label"><?php echo esc_html($this->tr('Set new password', 'Neues Passwort setzen')); ?></label>
+                            <input type="password"
+                                   name="<?php echo esc_attr($this->optionName); ?>[action_password_new]"
+                                   value=""
+                                   autocomplete="new-password"
+                                   class="levi-form-input"
+                                   placeholder="<?php echo esc_attr(!empty($settings['action_password_hash']) ? $this->tr('Password is set – enter new one to change', 'Passwort ist gesetzt – neues eingeben zum Ändern') : $this->tr('Enter password', 'Passwort eingeben')); ?>">
+                            <p class="levi-form-help">
+                                <?php if (!empty($settings['action_password_hash'])): ?>
+                                    <span style="color: #22c55e;">✓ <?php echo esc_html($this->tr('Password is set', 'Passwort ist gesetzt')); ?></span>
+                                <?php else: ?>
+                                    <span style="color: #f59e0b;"><?php echo esc_html($this->tr('No password set yet', 'Noch kein Passwort gesetzt')); ?></span>
+                                <?php endif; ?>
+                            </p>
+                        </div>
+                        <?php if (!empty($settings['action_password_hash'])): ?>
+                        <div class="levi-form-group" style="display:flex; align-items: flex-end; padding-bottom: 1.5rem;">
+                            <label class="levi-toggle">
+                                <input type="checkbox"
+                                       name="<?php echo esc_attr($this->optionName); ?>[action_password_clear]"
+                                       value="1">
+                                <span class="levi-toggle-slider"></span>
+                                <span class="levi-toggle-label" style="color: #f87171;">
+                                    <?php echo esc_html($this->tr('Remove password', 'Passwort entfernen')); ?>
+                                </span>
+                            </label>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <!-- execute_wp_code Opt-in -->
+                <div class="levi-form-card" style="grid-column: 1 / -1; border-left: 3px solid #f59e0b;">
+                    <h3>⚠️ <?php echo esc_html($this->tr('PHP Code Execution', 'PHP-Code-Ausführung')); ?></h3>
+                    <p class="levi-form-description">
+                        <?php echo esc_html($this->tr(
+                            'The "execute_wp_code" tool runs arbitrary PHP in WordPress context. Only available in "Full" tool profile. Keep disabled unless you explicitly need it.',
+                            'Das "execute_wp_code"-Tool führt beliebigen PHP-Code im WordPress-Kontext aus. Nur im Tool-Profil "Voll" verfügbar. Nur aktivieren, wenn du es explizit benötigst.'
+                        )); ?>
+                    </p>
+                    <div class="levi-toggle-group">
+                        <label class="levi-toggle">
+                            <input type="checkbox"
+                                   name="<?php echo esc_attr($this->optionName); ?>[allow_execute_wp_code]"
+                                   value="1"
+                                   <?php checked(!empty($settings['allow_execute_wp_code'])); ?>>
+                            <span class="levi-toggle-slider"></span>
+                            <span class="levi-toggle-label">
+                                <?php echo esc_html($this->tr('Allow PHP code execution (execute_wp_code)', 'PHP-Code-Ausführung erlauben (execute_wp_code)')); ?>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
                 <!-- Rate Limiting -->
                 <div class="levi-form-card">
                     <h3><?php echo esc_html($this->tr('Rate Limiting', 'Rate-Limit')); ?></h3>
@@ -860,8 +953,81 @@ class SettingsPage {
                     </div>
                 </div>
             </div>
+
+            <!-- Audit Log (full-width) -->
+            <div class="levi-form-card" style="margin-top: 1.5rem;">
+                <div class="levi-card-header">
+                    <span class="dashicons dashicons-shield-alt"></span>
+                    <h3><?php echo esc_html($this->tr('Tool Audit Log', 'Tool-Protokoll')); ?></h3>
+                </div>
+                <p class="levi-form-description">
+                    <?php echo esc_html($this->tr(
+                        'Every tool execution by Levi is logged here (last 50 entries). Includes user, tool, result and time.',
+                        'Jede Tool-Ausführung durch Levi wird hier protokolliert (letzte 50 Einträge). Enthält Nutzer, Tool, Ergebnis und Zeitpunkt.'
+                    )); ?>
+                </p>
+                <?php
+                global $wpdb;
+                $auditTable = $wpdb->prefix . 'levi_audit_log';
+                $tableExists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $auditTable)) === $auditTable;
+                if ($tableExists) {
+                    $rows = $wpdb->get_results(
+                        "SELECT l.tool_name, l.success, l.result_summary, l.executed_at, u.display_name
+                         FROM {$auditTable} l
+                         LEFT JOIN {$wpdb->users} u ON u.ID = l.user_id
+                         ORDER BY l.executed_at DESC LIMIT 50"
+                    );
+                    if (!empty($rows)): ?>
+                        <div style="overflow-x: auto; margin-bottom: 1rem;">
+                            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid #1f2937;">
+                                        <th style="text-align:left; padding:6px 10px; color:#9ca3af;"><?php echo esc_html($this->tr('Time', 'Zeit')); ?></th>
+                                        <th style="text-align:left; padding:6px 10px; color:#9ca3af;"><?php echo esc_html($this->tr('User', 'Nutzer')); ?></th>
+                                        <th style="text-align:left; padding:6px 10px; color:#9ca3af;"><?php echo esc_html($this->tr('Tool', 'Tool')); ?></th>
+                                        <th style="text-align:left; padding:6px 10px; color:#9ca3af;"><?php echo esc_html($this->tr('Result', 'Ergebnis')); ?></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($rows as $row): ?>
+                                    <tr style="border-bottom: 1px solid #111827;">
+                                        <td style="padding:5px 10px; color:#6b7280; white-space:nowrap;"><?php echo esc_html($row->executed_at); ?></td>
+                                        <td style="padding:5px 10px;"><?php echo esc_html($row->display_name ?? '–'); ?></td>
+                                        <td style="padding:5px 10px;"><code style="background:#111827; padding:2px 6px; border-radius:4px;"><?php echo esc_html($row->tool_name); ?></code></td>
+                                        <td style="padding:5px 10px; color:<?php echo $row->success ? '#22c55e' : '#f87171'; ?>">
+                                            <?php echo $row->success ? '✓' : '✗'; ?> <?php echo esc_html($row->result_summary ?? ''); ?>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php else: ?>
+                        <p class="levi-form-help"><?php echo esc_html($this->tr('No tool executions recorded yet.', 'Noch keine Tool-Ausführungen protokolliert.')); ?></p>
+                    <?php endif;
+                } else { ?>
+                    <p class="levi-form-help"><?php echo esc_html($this->tr('Audit log table not yet created. Use "Repair Tables" above.', 'Protokoll-Tabelle noch nicht erstellt. Nutze "Tabellen reparieren" oben.')); ?></p>
+                <?php } ?>
+                <div class="levi-form-actions-inline" style="margin-top: 0.75rem;">
+                    <button type="button" id="levi-clear-audit-log" class="levi-btn levi-btn-secondary" style="color: #f87171;">
+                        <span class="dashicons dashicons-trash"></span>
+                        <?php echo esc_html($this->tr('Clear Audit Log', 'Protokoll löschen')); ?>
+                    </button>
+                    <span id="levi-clear-audit-result"></span>
+                </div>
+            </div>
         </div>
         <?php
+    }
+
+    public function ajaxClearAuditLog(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        global $wpdb;
+        $wpdb->query("TRUNCATE TABLE {$wpdb->prefix}levi_audit_log");
+        wp_send_json_success(['message' => $this->tr('Audit log cleared.', 'Protokoll gelöscht.')]);
     }
 
     // Helper Methods

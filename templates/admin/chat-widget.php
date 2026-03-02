@@ -24,6 +24,19 @@
                 </div>
             </div>
         </div>
+        <!-- Password Modal: shown when a destructive action requires password confirmation -->
+        <div id="levi-password-modal" class="levi-password-modal" style="display:none;" role="dialog" aria-modal="true" aria-label="Passwort-Bestätigung">
+            <div class="levi-password-modal-inner">
+                <p class="levi-password-modal-title">🔐 <?php esc_html_e('Bitte bestätige die Aktion mit deinem Levi-Passwort.', 'levi-agent'); ?></p>
+                <input type="password" id="levi-action-password-input" class="levi-password-input" placeholder="<?php esc_attr_e('Passwort eingeben', 'levi-agent'); ?>" autocomplete="current-password">
+                <div class="levi-password-modal-actions">
+                    <button id="levi-password-confirm-btn" class="levi-btn-password-confirm"><?php esc_html_e('Bestätigen', 'levi-agent'); ?></button>
+                    <button id="levi-password-cancel-btn" class="levi-btn-password-cancel"><?php esc_html_e('Abbrechen', 'levi-agent'); ?></button>
+                </div>
+                <p id="levi-password-error" class="levi-password-error" style="display:none;"><?php esc_html_e('Falsches Passwort. Bitte erneut versuchen.', 'levi-agent'); ?></p>
+            </div>
+        </div>
+
         <div class="levi-chat-input-area">
             <div id="levi-chat-attachments" class="levi-chat-attachments" style="display:none;">
                 <div id="levi-chat-file-list" class="levi-chat-file-list"></div>

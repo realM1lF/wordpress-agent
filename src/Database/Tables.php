@@ -55,5 +55,32 @@ class Tables {
     FULLTEXT KEY idx_content (content)
 ) {$charsetCollate};";
         dbDelta($sqlMemory);
+
+        $auditLogTable = $wpdb->prefix . 'levi_audit_log';
+        $sqlAuditLog = "CREATE TABLE {$auditLogTable} (
+    id bigint(20) unsigned NOT NULL auto_increment,
+    user_id bigint(20) unsigned DEFAULT NULL,
+    session_id varchar(64) DEFAULT NULL,
+    tool_name varchar(100) NOT NULL,
+    tool_args longtext,
+    success tinyint(1) NOT NULL DEFAULT 0,
+    result_summary varchar(255) DEFAULT NULL,
+    executed_at datetime DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY  (id),
+    KEY idx_user_tool (user_id, tool_name),
+    KEY idx_executed_at (executed_at)
+) {$charsetCollate};";
+        dbDelta($sqlAuditLog);
+
+        $rateLimitsTable = $wpdb->prefix . 'levi_rate_limits';
+        $sqlRateLimits = "CREATE TABLE {$rateLimitsTable} (
+    id bigint(20) unsigned NOT NULL auto_increment,
+    user_id bigint(20) unsigned NOT NULL,
+    window_start datetime NOT NULL,
+    request_count int(11) NOT NULL DEFAULT 1,
+    PRIMARY KEY  (id),
+    KEY idx_user_window (user_id, window_start)
+) {$charsetCollate};";
+        dbDelta($sqlRateLimits);
     }
 }

@@ -31,6 +31,156 @@
         let uploadedFiles = [];
         let currentAbortController = null;
         let editingMessageEl = null;
+        let pendingPasswordMessage = null;
+
+        const passwordModal = document.getElementById('levi-password-modal');
+        const passwordInput = document.getElementById('levi-action-password-input');
+        const passwordConfirmBtn = document.getElementById('levi-password-confirm-btn');
+        const passwordCancelBtn = document.getElementById('levi-password-cancel-btn');
+        const passwordError = document.getElementById('levi-password-error');
+
+        function showPasswordModal(originalMessage) {
+            pendingPasswordMessage = originalMessage;
+            if (passwordInput) passwordInput.value = '';
+            if (passwordError) passwordError.style.display = 'none';
+            if (passwordModal) {
+                passwordModal.style.display = 'flex';
+                setTimeout(() => passwordInput && passwordInput.focus(), 50);
+            }
+        }
+
+        function hidePasswordModal() {
+            if (passwordModal) passwordModal.style.display = 'none';
+            pendingPasswordMessage = null;
+            if (passwordInput) passwordInput.value = '';
+        }
+
+        if (passwordConfirmBtn) {
+            passwordConfirmBtn.addEventListener('click', function() {
+                const pw = passwordInput ? passwordInput.value : '';
+                if (!pw) return;
+                if (!pendingPasswordMessage) { hidePasswordModal(); return; }
+
+                const msgToRetry = pendingPasswordMessage;
+                hidePasswordModal();
+
+                const typing = addTypingIndicator('action');
+                const phaseTimers = scheduleTypingPhases(typing, 'action');
+                setSendingState(true);
+
+                if (supportsReadableStream()) {
+                    sendMessageWithPasswordSSE(msgToRetry, pw, typing, phaseTimers);
+                } else {
+                    sendMessageWithPasswordClassic(msgToRetry, pw, typing, phaseTimers);
+                }
+            });
+        }
+
+        if (passwordCancelBtn) {
+            passwordCancelBtn.addEventListener('click', hidePasswordModal);
+        }
+
+        if (passwordInput) {
+            passwordInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    passwordConfirmBtn && passwordConfirmBtn.click();
+                }
+                if (e.key === 'Escape') {
+                    hidePasswordModal();
+                }
+            });
+        }
+
+        async function sendMessageWithPasswordSSE(text, password, typing, phaseTimers) {
+            try {
+                const response = await fetch(leviAgent.streamUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': leviAgent.nonce },
+                    body: JSON.stringify({
+                        message: text,
+                        session_id: sessionId,
+                        replace_last: true,
+                        confirm_password: password,
+                    }),
+                    signal: currentAbortController ? currentAbortController.signal : undefined,
+                });
+
+                if (!response.ok && !response.body) {
+                    throw new Error('Server error: ' + response.status);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let finalHandled = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    while (buffer.includes('\n\n')) {
+                        const eventEnd = buffer.indexOf('\n\n');
+                        const eventStr = buffer.substring(0, eventEnd);
+                        buffer = buffer.substring(eventEnd + 2);
+                        for (const line of eventStr.split('\n')) {
+                            if (!line.startsWith('data: ')) continue;
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                finalHandled = handleSSEEvent(data, typing, phaseTimers) || finalHandled;
+                            } catch (e) { /* ignore */ }
+                        }
+                    }
+                }
+
+                if (!finalHandled) {
+                    clearPhaseTimers(phaseTimers);
+                    typing.complete();
+                    setSendingState(false);
+                }
+            } catch (error) {
+                clearPhaseTimers(phaseTimers);
+                typing.remove();
+                setSendingState(false);
+                if (error.name !== 'AbortError') {
+                    addMessage('❌ Fehler beim Bestätigen: ' + error.message, 'assistant');
+                }
+            }
+        }
+
+        function sendMessageWithPasswordClassic(originalText, password, typing, phaseTimers) {
+            fetch(leviAgent.restUrl + 'chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': leviAgent.nonce },
+                body: JSON.stringify({
+                    message: originalText,
+                    session_id: sessionId,
+                    replace_last: true,
+                    confirm_password: password,
+                }),
+            })
+            .then(async response => {
+                const rawText = await response.text();
+                const data = JSON.parse(rawText);
+                data.__httpStatus = response.status;
+                return data;
+            })
+            .then(data => {
+                clearPhaseTimers(phaseTimers);
+                typing.complete();
+                setSendingState(false);
+                if (data.session_id) { sessionId = data.session_id; localStorage.setItem(sessionKey, sessionId); }
+                if (data.error) { addMessage('❌ ' + data.error, 'assistant'); return; }
+                if (data.needs_password) { showPasswordModal(originalText); return; }
+                addMessage(sanitizeAssistantMessage(data.message || 'Keine Antwort'), 'assistant');
+            })
+            .catch(error => {
+                clearPhaseTimers(phaseTimers);
+                typing.remove();
+                setSendingState(false);
+                addMessage('❌ Fehler: ' + error.message, 'assistant');
+            });
+        }
 
         function setChatOpen(isOpen) {
             window_.style.display = isOpen ? 'flex' : 'none';
@@ -157,6 +307,7 @@
             }
 
             currentAbortController = new AbortController();
+            pendingPasswordMessage = text;
             addMessage(text, 'user', messageAttachments);
             input.value = '';
 
@@ -281,6 +432,13 @@
                         var cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                         addMessage(cleanedMessage, 'assistant');
                         clearSessionFilesQuietly();
+
+                        // Passwort-Modal anzeigen wenn die Aktion ein Passwort benötigt
+                        if (data.needs_password && pendingPasswordMessage) {
+                            showPasswordModal(pendingPasswordMessage);
+                        } else {
+                            pendingPasswordMessage = null;
+                        }
                     });
                     return true;
                 }
@@ -346,6 +504,12 @@
                 const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                 addMessage(cleanedMessage, 'assistant');
                 clearSessionFilesQuietly();
+
+                if (data.needs_password && pendingPasswordMessage) {
+                    showPasswordModal(pendingPasswordMessage);
+                } else {
+                    pendingPasswordMessage = null;
+                }
             })
             .catch(error => {
                 clearPhaseTimers(phaseTimers);
