@@ -1654,8 +1654,8 @@ class ChatController extends WP_REST_Controller {
         $t = mb_strtolower($text);
 
         $actionPatterns = [
-            '/\b(erstell|anleg|schreib|änder|bearbeit|update|install|aktivier|deaktivier|lösch|entfern|switch|veröffentl|publish|zeig|list|such|find|hol|lad)\b/u',
-            '/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung|media|menü|cron)\b/u',
+            '/\b(erstell|anleg|schreib|änder|bearbeit|update|install|aktivier|deaktivier|lösch|entfern|switch|veröffentl|publish)\b/u',
+            '/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung)\b/u',
         ];
         $score = 0;
         foreach ($actionPatterns as $pattern) {
@@ -1667,14 +1667,16 @@ class ChatController extends WP_REST_Controller {
             return true;
         }
 
-        $confirmationPatterns = [
-            '/\bja\b/u', '/\byes\b/u', '/\bok(ay)?\b/u', '/\bmach/u',
-            '/\bbestätig/u', '/\bgo ahead\b/u', '/\bausführen\b/u', '/\bdo it\b/u',
-            '/\bklar\b/u', '/\bgenau\b/u', '/\bbitte\b/u',
-        ];
-        foreach ($confirmationPatterns as $pattern) {
-            if (preg_match($pattern, $t) === 1) {
-                return true;
+        $shortText = mb_strlen(trim($t)) < 40;
+        if ($shortText) {
+            $confirmationPatterns = [
+                '/\bja\b/u', '/\byes\b/u', '/\bok(ay)?\b/u', '/\bmach\s?(es|das|weiter)?\b/u',
+                '/\bbestätig/u', '/\bgo ahead\b/u', '/\bausführen\b/u', '/\bdo it\b/u',
+            ];
+            foreach ($confirmationPatterns as $pattern) {
+                if (preg_match($pattern, $t) === 1) {
+                    return true;
+                }
             }
         }
 
@@ -1938,7 +1940,6 @@ class ChatController extends WP_REST_Controller {
 
         $hallucinationCheck = $this->detectListHallucination($finalMessage, $toolResults);
         if ($hallucinationCheck !== null) {
-            error_log('Levi: hallucination detected in AI response – IDs in response do not match tool results. ' . $hallucinationCheck);
             return $hallucinationCheck;
         }
 
@@ -1946,6 +1947,10 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function detectListHallucination(string $aiMessage, array $toolResults): ?string {
+        if (!$this->isListingResponse($aiMessage)) {
+            return null;
+        }
+
         $listTools = ['get_pages', 'get_posts', 'get_users', 'get_plugins', 'get_media'];
         $toolData = null;
         $toolName = null;
@@ -1982,14 +1987,17 @@ class ChatController extends WP_REST_Controller {
             return null;
         }
 
-        if (preg_match_all('/\b(\d{1,6})\b/', $aiMessage, $matches)) {
+        if (preg_match_all('/\bID\s*[:=]?\s*(\d{1,6})\b/i', $aiMessage, $matches)) {
             $mentionedIds = array_map('intval', $matches[1]);
-            $mentionedIds = array_unique(array_filter($mentionedIds, fn($id) => $id > 0 && $id < 100000));
+            $mentionedIds = array_unique(array_filter($mentionedIds, fn($id) => $id > 0));
+
+            if (count($mentionedIds) < 2) {
+                return null;
+            }
 
             $wrongIds = array_diff($mentionedIds, $realIds);
-            $wrongIds = array_filter($wrongIds, fn($id) => $id > 1);
 
-            if (count($wrongIds) >= 2 && count($wrongIds) > count($mentionedIds) * 0.4) {
+            if (count($wrongIds) >= 2 && count($wrongIds) > count($mentionedIds) * 0.5) {
                 $toolLabel = match ($toolName) {
                     'get_pages' => 'Seiten',
                     'get_posts' => 'Beiträge',
@@ -2006,11 +2014,24 @@ class ChatController extends WP_REST_Controller {
                     $status = $item['status'] ?? '';
                     $realList[] = "- **{$title}** (ID {$id}" . ($status ? ", {$status}" : '') . ')';
                 }
+                error_log("Levi: hallucination corrected – AI listed IDs [" . implode(',', $mentionedIds) . "] but real IDs are [" . implode(',', $realIds) . "]");
                 return "Hier sind die aktuellen {$toolLabel} ({$realCount} gefunden):\n\n" . implode("\n", $realList) . "\n\nWas möchtest du damit machen?";
             }
         }
 
         return null;
+    }
+
+    private function isListingResponse(string $text): bool {
+        $tablePattern = '/\|.*\|.*\|/';
+        $listPattern = '/^[\-\*]\s+.+$/m';
+        $tableCount = preg_match_all($tablePattern, $text);
+        $listCount = preg_match_all($listPattern, $text);
+        $textLength = mb_strlen($text);
+        $hasStructuredList = ($tableCount >= 3) || ($listCount >= 3);
+        $isShortResponse = $textLength < 800;
+
+        return $hasStructuredList && $isShortResponse;
     }
 
     public function getHistory(WP_REST_Request $request): WP_REST_Response {
