@@ -826,6 +826,12 @@ class SettingsPage {
                             </span>
                         </label>
                     </div>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr(
+                            'If action password is enabled above, password confirmation is used and this yes/no confirmation is skipped.',
+                            'Wenn oben das Aktions-Passwort aktiviert ist, gilt die Passwort-Eingabe als Bestätigung und diese Ja/Nein-Bestätigung wird übersprungen.'
+                        )); ?>
+                    </p>
 
                     <div class="levi-toggle-group">
                         <label class="levi-toggle">

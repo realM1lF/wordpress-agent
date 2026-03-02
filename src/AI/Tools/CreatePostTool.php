@@ -53,6 +53,11 @@ class CreatePostTool implements ToolInterface {
                 'type' => 'integer',
                 'description' => 'Attachment ID for featured image',
             ],
+            'allow_duplicate' => [
+                'type' => 'boolean',
+                'description' => 'If true, create even when an item with same title/slug exists',
+                'default' => false,
+            ],
         ];
     }
 
@@ -68,6 +73,31 @@ class CreatePostTool implements ToolInterface {
             ];
         }
 
+        $postType = sanitize_key($params['post_type'] ?? 'post');
+        if (!post_type_exists($postType)) {
+            return [
+                'success' => false,
+                'error' => sprintf('Unknown post type: %s', $postType),
+            ];
+        }
+
+        $title = sanitize_text_field($params['title']);
+        $allowDuplicate = !empty($params['allow_duplicate']);
+        if (!$allowDuplicate) {
+            $existing = $this->findExistingByTitleOrSlug($postType, $title);
+            if ($existing !== null) {
+                return [
+                    'success' => false,
+                    'duplicate_found' => true,
+                    'existing_id' => (int) $existing['ID'],
+                    'existing_title' => (string) $existing['post_title'],
+                    'existing_status' => (string) $existing['post_status'],
+                    'error' => 'An item with this title already exists.',
+                    'message' => 'Ein Eintrag mit diesem Titel existiert bereits. Ich habe nichts doppelt erstellt.',
+                ];
+            }
+        }
+
         $allowedStatuses = ['publish', 'draft', 'pending', 'private'];
         $status = sanitize_key($params['status'] ?? 'draft');
         if (!in_array($status, $allowedStatuses, true)) {
@@ -78,10 +108,10 @@ class CreatePostTool implements ToolInterface {
         }
 
         $postData = [
-            'post_title'   => sanitize_text_field($params['title']),
+            'post_title'   => $title,
             'post_content' => wp_kses_post($params['content']),
             'post_status'  => $status,
-            'post_type'    => sanitize_key($params['post_type'] ?? 'post'),
+            'post_type'    => $postType,
             'post_author'  => get_current_user_id(),
         ];
 
@@ -141,5 +171,25 @@ class CreatePostTool implements ToolInterface {
                 ? 'Post published successfully.' 
                 : 'Post created as ' . $status . '.',
         ];
+    }
+
+    private function findExistingByTitleOrSlug(string $postType, string $title): ?array {
+        global $wpdb;
+        $slug = sanitize_title($title);
+
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT ID, post_title, post_status
+             FROM {$wpdb->posts}
+             WHERE post_type = %s
+               AND post_status IN ('publish','draft','pending','private','future','trash')
+               AND (post_title = %s OR post_name = %s)
+             ORDER BY FIELD(post_status, 'publish','draft','pending','private','future','trash'), ID ASC
+             LIMIT 1",
+            $postType,
+            $title,
+            $slug
+        ), ARRAY_A);
+
+        return is_array($row) ? $row : null;
     }
 }

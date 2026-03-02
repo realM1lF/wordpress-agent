@@ -1222,12 +1222,23 @@ class ChatController extends WP_REST_Controller {
         $runtimeSettings = $this->settings->getSettings();
         $historyLimit = max(10, (int) ($runtimeSettings['history_context_limit'] ?? 50));
         $history = $this->conversationRepo->getHistory($sessionId, $historyLimit);
+        $lastAddedRole = null;
         foreach ($history as $msg) {
             if (in_array($msg['role'], ['user', 'assistant'])) {
+                // If multiple user messages exist in a row (e.g. after interrupted flows),
+                // keep only the newest one so stale requests are not executed later.
+                if ($msg['role'] === 'user' && $lastAddedRole === 'user') {
+                    $messages[count($messages) - 1] = [
+                        'role' => 'user',
+                        'content' => $msg['content'],
+                    ];
+                    continue;
+                }
                 $messages[] = [
                     'role' => $msg['role'],
                     'content' => $msg['content'],
                 ];
+                $lastAddedRole = $msg['role'];
             }
         }
 

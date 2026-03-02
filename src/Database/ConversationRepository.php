@@ -135,6 +135,28 @@ class ConversationRepository {
         }
     }
 
+    /**
+     * Delete only the very last message of a given role from a session.
+     * Used to roll back a just-saved user message when a request is
+     * short-circuited (e.g. password-gate) before an assistant reply exists.
+     */
+    public function deleteLastMessageByRole(string $sessionId, string $role): void {
+        global $wpdb;
+
+        $lastId = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$this->tableConversations}
+             WHERE session_id = %s AND role = %s
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1",
+            $sessionId,
+            $role
+        ));
+
+        if ($lastId) {
+            $wpdb->delete($this->tableConversations, ['id' => (int) $lastId], ['%d']);
+        }
+    }
+
     public function deleteSession(string $sessionId): bool {
         global $wpdb;
 

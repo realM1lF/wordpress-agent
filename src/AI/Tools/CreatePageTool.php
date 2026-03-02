@@ -32,6 +32,11 @@ class CreatePageTool implements ToolInterface {
                 'type' => 'string',
                 'description' => 'Page template (optional)',
             ],
+            'allow_duplicate' => [
+                'type' => 'boolean',
+                'description' => 'If true, create even when a page with same title/slug already exists',
+                'default' => false,
+            ],
         ];
     }
 
@@ -47,8 +52,25 @@ class CreatePageTool implements ToolInterface {
             ];
         }
 
+        $title = sanitize_text_field($params['title']);
+        $allowDuplicate = !empty($params['allow_duplicate']);
+        if (!$allowDuplicate) {
+            $existing = $this->findExistingPageByTitleOrSlug($title);
+            if ($existing !== null) {
+                return [
+                    'success' => false,
+                    'duplicate_found' => true,
+                    'existing_id' => (int) $existing['ID'],
+                    'existing_title' => (string) $existing['post_title'],
+                    'existing_status' => (string) $existing['post_status'],
+                    'error' => 'A page with this title already exists.',
+                    'message' => 'Die Seite existiert bereits. Ich habe keine doppelte Seite erstellt.',
+                ];
+            }
+        }
+
         $pageData = [
-            'post_title'   => sanitize_text_field($params['title']),
+            'post_title'   => $title,
             'post_content' => wp_kses_post($params['content']),
             'post_status'  => 'draft',
             'post_type'    => 'page',
@@ -82,5 +104,24 @@ class CreatePageTool implements ToolInterface {
             'preview_url' => get_preview_post_link($pageId),
             'message' => 'Page created as draft. Review before publishing.',
         ];
+    }
+
+    private function findExistingPageByTitleOrSlug(string $title): ?array {
+        global $wpdb;
+        $slug = sanitize_title($title);
+
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT ID, post_title, post_status
+             FROM {$wpdb->posts}
+             WHERE post_type = 'page'
+               AND post_status IN ('publish','draft','pending','private','future','trash')
+               AND (post_title = %s OR post_name = %s)
+             ORDER BY FIELD(post_status, 'publish','draft','pending','private','future','trash'), ID ASC
+             LIMIT 1",
+            $title,
+            $slug
+        ), ARRAY_A);
+
+        return is_array($row) ? $row : null;
     }
 }

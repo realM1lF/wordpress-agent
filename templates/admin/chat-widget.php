@@ -27,7 +27,7 @@
         <!-- Password Modal: shown when a destructive action requires password confirmation -->
         <div id="levi-password-modal" class="levi-password-modal" style="display:none;" role="dialog" aria-modal="true" aria-label="Passwort-Bestätigung">
             <div class="levi-password-modal-inner">
-                <p class="levi-password-modal-title">🔐 <?php esc_html_e('Bitte bestätige die Aktion mit deinem Levi-Passwort.', 'levi-agent'); ?></p>
+                <p class="levi-password-modal-title">🔐 <?php esc_html_e('Deine Anfrage erfordert dein Levi-Passwort. Zum Fortfahren bitte eingeben, zum Ablehnen einfach schließen.', 'levi-agent'); ?></p>
                 <input type="password" id="levi-action-password-input" class="levi-password-input" placeholder="<?php esc_attr_e('Passwort eingeben', 'levi-agent'); ?>" autocomplete="current-password">
                 <div class="levi-password-modal-actions">
                     <button id="levi-password-confirm-btn" class="levi-btn-password-confirm"><?php esc_html_e('Bestätigen', 'levi-agent'); ?></button>
