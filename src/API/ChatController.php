@@ -1186,11 +1186,23 @@ class ChatController extends WP_REST_Controller {
         $runtimeSettings = $this->settings->getSettings();
         $historyLimit = max(10, (int) ($runtimeSettings['history_context_limit'] ?? 50));
         $history = $this->conversationRepo->getHistory($sessionId, $historyLimit);
+        $now = time();
+        $stalenessThresholdSeconds = 120;
+
         foreach ($history as $msg) {
             if (in_array($msg['role'], ['user', 'assistant'])) {
+                $content = $msg['content'];
+
+                if ($msg['role'] === 'assistant' && !empty($msg['created_at'])) {
+                    $msgTime = strtotime($msg['created_at']);
+                    if ($msgTime && ($now - $msgTime) > $stalenessThresholdSeconds) {
+                        $content = "[SYSTEM: Diese Antwort ist älter. Enthaltene WordPress-Daten (Seiten, Beiträge, Plugins etc.) können veraltet sein. Bei Aktionen bitte per Tool neu abfragen.]\n" . $content;
+                    }
+                }
+
                 $messages[] = [
                     'role' => $msg['role'],
-                    'content' => $msg['content'],
+                    'content' => $content,
                 ];
             }
         }
@@ -1640,17 +1652,33 @@ class ChatController extends WP_REST_Controller {
 
     private function isActionIntent(string $text): bool {
         $t = mb_strtolower($text);
-        $patterns = [
-            '/\b(erstell|anleg|schreib|änder|bearbeit|update|install|aktivier|deaktivier|lösch|entfern|switch|veröffentl|publish)\b/u',
-            '/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung)\b/u',
+
+        $actionPatterns = [
+            '/\b(erstell|anleg|schreib|änder|bearbeit|update|install|aktivier|deaktivier|lösch|entfern|switch|veröffentl|publish|zeig|list|such|find|hol|lad)\b/u',
+            '/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung|media|menü|cron)\b/u',
         ];
         $score = 0;
-        foreach ($patterns as $pattern) {
+        foreach ($actionPatterns as $pattern) {
             if (preg_match($pattern, $t) === 1) {
                 $score++;
             }
         }
-        return $score >= 1;
+        if ($score >= 1) {
+            return true;
+        }
+
+        $confirmationPatterns = [
+            '/\bja\b/u', '/\byes\b/u', '/\bok(ay)?\b/u', '/\bmach/u',
+            '/\bbestätig/u', '/\bgo ahead\b/u', '/\bausführen\b/u', '/\bdo it\b/u',
+            '/\bklar\b/u', '/\bgenau\b/u', '/\bbitte\b/u',
+        ];
+        foreach ($confirmationPatterns as $pattern) {
+            if (preg_match($pattern, $t) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

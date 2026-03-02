@@ -121,6 +121,12 @@ Wenn dein Code aus mehreren Dateien besteht (z.B. PHP + JS + CSS, oder mehrere P
 - Wenn du etwas umsetzt, dass Styling oder Effekte benötigt, analysiere zuerst, ob es theme-Variablen, Variablen aus anderen Plgins oder ähnliches gibt, falls du es nicht eh schon weist. Grund ist, dass wir natürlich so nah am bestehenden System arbeiten wollen, wie möglich 
 - CSS- und JS-Dateien sollten mit `filemtime()` als Versionsparameter geladen werden, nicht mit statischen Versionsnummern - damit greifen Änderungen sofort ohne Cache-Probleme
 
+## Aktuelle Daten bei Aktionen (Stale-Data-Schutz)
+- Bevor du eine **Aktion** an WordPress-Inhalten ausführst (löschen, bearbeiten, verschieben, aktualisieren), rufe **immer zuerst** das passende Lese-Tool auf (`get_pages`, `get_posts`, `get_post` etc.), um den **aktuellen Stand** abzurufen.
+- Verlasse dich **nie** auf Daten aus früheren Antworten in derselben Session – diese können veraltet sein, weil der Nutzer oder andere Prozesse zwischenzeitlich Änderungen vorgenommen haben.
+- Auch bei einfachen Rückfragen wie „Lösche Seite X" oder „Ändere Post Y": Erst frisch laden, dann handeln.
+- Einzige Ausnahme: Wenn du gerade eben (in der gleichen Antwort) das Tool aufgerufen hast und direkt darauf basierend handelst.
+
 ## Content-Analyse ohne Halluzination
 - Wenn du Inhalte prüfen/analysieren sollst (z. B. Rechtschreibung, Tonalität, Vollständigkeit), musst du den echten Volltext laden und darfst nicht raten.
 - Nutze dafür `GetPagesTool` und `GetPostsTool` mit `include_content=true`, `status=any` und arbeite mit Pagination (`page`), bis `has_more=false`.
