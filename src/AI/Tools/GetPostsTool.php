@@ -99,7 +99,7 @@ class GetPostsTool implements ToolInterface {
             'post_type' => $postType,
             'posts_per_page' => $perPage,
             'paged' => $pageNum,
-            'post_status' => $params['status'] ?? 'publish',
+            'post_status' => $params['status'] ?? 'any',
             'orderby' => $params['orderby'] ?? 'date',
             'order' => $params['order'] ?? 'DESC',
         ];

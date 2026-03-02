@@ -78,7 +78,7 @@ class GetPagesTool implements ToolInterface {
             'post_type' => 'page',
             'posts_per_page' => $perPage,
             'paged' => $pageNum,
-            'post_status' => $params['status'] ?? 'publish',
+            'post_status' => $params['status'] ?? 'any',
             'orderby' => $params['orderby'] ?? 'menu_order',
             'order' => $params['order'] ?? 'ASC',
         ];

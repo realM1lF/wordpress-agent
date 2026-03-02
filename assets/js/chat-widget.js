@@ -32,6 +32,7 @@
         let currentAbortController = null;
         let editingMessageEl = null;
         let pendingPasswordMessage = null;
+        let passwordModalAlreadyShown = false;
 
         const passwordModal = document.getElementById('levi-password-modal');
         const passwordInput = document.getElementById('levi-action-password-input');
@@ -52,6 +53,7 @@
         function hidePasswordModal() {
             if (passwordModal) passwordModal.style.display = 'none';
             pendingPasswordMessage = null;
+            passwordModalAlreadyShown = false;
             if (passwordInput) passwordInput.value = '';
         }
 
@@ -308,6 +310,7 @@
 
             currentAbortController = new AbortController();
             pendingPasswordMessage = text;
+            passwordModalAlreadyShown = false;
             addMessage(text, 'user', messageAttachments);
             input.value = '';
 
@@ -413,6 +416,10 @@
                     if (data.message) {
                         typing.setLabel(data.message);
                     }
+                    if (data.needs_password && pendingPasswordMessage && !passwordModalAlreadyShown) {
+                        passwordModalAlreadyShown = true;
+                        showPasswordModal(pendingPasswordMessage);
+                    }
                     return false;
 
                 case 'heartbeat':
@@ -429,15 +436,23 @@
                     typing.scheduleComplete(function() {
                         typing.complete();
                         setSendingState(false);
-                        var cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
-                        addMessage(cleanedMessage, 'assistant');
-                        clearSessionFilesQuietly();
 
-                        // Passwort-Modal anzeigen wenn die Aktion ein Passwort benötigt
-                        if (data.needs_password && pendingPasswordMessage) {
+                        if (passwordModalAlreadyShown && data.needs_password) {
+                            // Modal was already shown during progress – don't show the AI's
+                            // "please enter your password" message, just keep the modal open.
+                            clearSessionFilesQuietly();
+                        } else if (data.needs_password && pendingPasswordMessage) {
+                            var cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
+                            addMessage(cleanedMessage, 'assistant');
+                            clearSessionFilesQuietly();
+                            passwordModalAlreadyShown = true;
                             showPasswordModal(pendingPasswordMessage);
                         } else {
+                            var cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
+                            addMessage(cleanedMessage, 'assistant');
+                            clearSessionFilesQuietly();
                             pendingPasswordMessage = null;
+                            passwordModalAlreadyShown = false;
                         }
                     });
                     return true;
@@ -501,13 +516,13 @@
                     localStorage.setItem(sessionKey, sessionId);
                 }
 
-                const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
-                addMessage(cleanedMessage, 'assistant');
-                clearSessionFilesQuietly();
-
                 if (data.needs_password && pendingPasswordMessage) {
+                    clearSessionFilesQuietly();
                     showPasswordModal(pendingPasswordMessage);
                 } else {
+                    const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
+                    addMessage(cleanedMessage, 'assistant');
+                    clearSessionFilesQuietly();
                     pendingPasswordMessage = null;
                 }
             })
