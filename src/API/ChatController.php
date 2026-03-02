@@ -1936,7 +1936,81 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
+        $hallucinationCheck = $this->detectListHallucination($finalMessage, $toolResults);
+        if ($hallucinationCheck !== null) {
+            error_log('Levi: hallucination detected in AI response – IDs in response do not match tool results. ' . $hallucinationCheck);
+            return $hallucinationCheck;
+        }
+
         return $finalMessage;
+    }
+
+    private function detectListHallucination(string $aiMessage, array $toolResults): ?string {
+        $listTools = ['get_pages', 'get_posts', 'get_users', 'get_plugins', 'get_media'];
+        $toolData = null;
+        $toolName = null;
+
+        foreach ($toolResults as $tr) {
+            if (in_array($tr['tool'] ?? '', $listTools, true) && ($tr['result']['success'] ?? false)) {
+                $toolData = $tr['result'];
+                $toolName = $tr['tool'];
+                break;
+            }
+        }
+
+        if ($toolData === null) {
+            return null;
+        }
+
+        $listKey = match ($toolName) {
+            'get_pages' => 'pages',
+            'get_posts' => 'posts',
+            'get_users' => 'users',
+            'get_plugins' => 'plugins',
+            'get_media' => 'media',
+            default => null,
+        };
+
+        if ($listKey === null || !isset($toolData[$listKey]) || !is_array($toolData[$listKey])) {
+            return null;
+        }
+
+        $realIds = array_map(fn($item) => (int) ($item['id'] ?? $item['ID'] ?? 0), $toolData[$listKey]);
+        $realIds = array_filter($realIds, fn($id) => $id > 0);
+
+        if (empty($realIds)) {
+            return null;
+        }
+
+        if (preg_match_all('/\b(\d{1,6})\b/', $aiMessage, $matches)) {
+            $mentionedIds = array_map('intval', $matches[1]);
+            $mentionedIds = array_unique(array_filter($mentionedIds, fn($id) => $id > 0 && $id < 100000));
+
+            $wrongIds = array_diff($mentionedIds, $realIds);
+            $wrongIds = array_filter($wrongIds, fn($id) => $id > 1);
+
+            if (count($wrongIds) >= 2 && count($wrongIds) > count($mentionedIds) * 0.4) {
+                $toolLabel = match ($toolName) {
+                    'get_pages' => 'Seiten',
+                    'get_posts' => 'Beiträge',
+                    'get_users' => 'Benutzer',
+                    'get_plugins' => 'Plugins',
+                    'get_media' => 'Medien',
+                    default => 'Einträge',
+                };
+                $realCount = (int) ($toolData['total'] ?? count($toolData[$listKey]));
+                $realList = [];
+                foreach ($toolData[$listKey] as $item) {
+                    $id = $item['id'] ?? $item['ID'] ?? '?';
+                    $title = $item['title'] ?? $item['name'] ?? $item['post_title'] ?? '';
+                    $status = $item['status'] ?? '';
+                    $realList[] = "- **{$title}** (ID {$id}" . ($status ? ", {$status}" : '') . ')';
+                }
+                return "Hier sind die aktuellen {$toolLabel} ({$realCount} gefunden):\n\n" . implode("\n", $realList) . "\n\nWas möchtest du damit machen?";
+            }
+        }
+
+        return null;
     }
 
     public function getHistory(WP_REST_Request $request): WP_REST_Response {
