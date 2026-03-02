@@ -395,10 +395,8 @@ class ChatController extends WP_REST_Controller {
             $this->emitSSE('heartbeat', []);
         };
 
-        $toolChoice = $this->getToolChoiceForIntent($message, $tools);
-
         // Call AI with heartbeat
-        $response = $this->aiClient->chat($messages, $tools, $heartbeat, $toolChoice);
+        $response = $this->aiClient->chat($messages, $tools, $heartbeat, 'auto');
 
         // Error handling with fallbacks (same logic as non-streaming)
         if (is_wp_error($response)) {
@@ -408,7 +406,7 @@ class ChatController extends WP_REST_Controller {
             $isProviderFailure = str_contains($errMsgLower, 'provider') || str_contains($errMsgLower, '503');
             $isTimeoutFailure = $this->isTimeoutError($errMsgLower);
 
-            if (!empty($tools) && ($isNoEndpointFailure || ($isProviderFailure && !$this->isActionIntent($message)))) {
+            if (!empty($tools) && ($isNoEndpointFailure || $isProviderFailure)) {
                 error_log('Levi: tool-mode unavailable, falling back to no-tools. Error: ' . $errMsg);
                 $this->emitSSE('status', ['message' => 'Neuer Versuch ohne Tools...']);
                 $messages = $this->injectNoToolsGuardrail($messages);
@@ -416,7 +414,7 @@ class ChatController extends WP_REST_Controller {
             } elseif ($isTimeoutFailure && $hasUploadedContext) {
                 $this->emitSSE('status', ['message' => 'Timeout, versuche mit weniger Kontext...']);
                 $messages = $this->buildMessages($sessionId, $message, false);
-                $response = $this->aiClient->chat($messages, $tools, $heartbeat, $toolChoice);
+                $response = $this->aiClient->chat($messages, $tools, $heartbeat, 'auto');
                 if (is_wp_error($response) && !empty($tools)) {
                     $messages = $this->injectNoToolsGuardrail($messages);
                     $response = $this->aiClient->chat($messages, [], $heartbeat);
@@ -434,7 +432,7 @@ class ChatController extends WP_REST_Controller {
             if (str_contains($overflowMsg, 'context length') || str_contains($overflowMsg, 'too many tokens') || str_contains($overflowMsg, 'maximum context')) {
                 $this->emitSSE('status', ['message' => 'Kontext wird gekuerzt...']);
                 $halvedMessages = $this->halveHistory($messages);
-                $response = $this->aiClient->chat($halvedMessages, $tools, $heartbeat, $toolChoice);
+                $response = $this->aiClient->chat($halvedMessages, $tools, $heartbeat, 'auto');
                 if (is_wp_error($response) && !empty($tools)) {
                     $halvedMessages = $this->injectNoToolsGuardrail($halvedMessages);
                     $response = $this->aiClient->chat($halvedMessages, [], $heartbeat);
@@ -457,7 +455,7 @@ class ChatController extends WP_REST_Controller {
 
             for ($retryAttempt = 1; $retryAttempt <= 2; $retryAttempt++) {
                 $this->emitSSE('status', ['message' => 'Levi versucht es erneut... (Versuch ' . ($retryAttempt + 1) . ')']);
-                $response = $this->aiClient->chat($messages, $tools, $heartbeat, $toolChoice);
+                $response = $this->aiClient->chat($messages, $tools, $heartbeat, 'auto');
 
                 if (is_wp_error($response)) {
                     $this->emitSSE('error', ['message' => $response->get_error_message(), 'session_id' => $sessionId]);
@@ -480,28 +478,10 @@ class ChatController extends WP_REST_Controller {
             return;
         }
 
-        // Normal response (no tools) – check for hallucination
+        // Normal text response (no tool calls)
         $assistantMessage = $this->sanitizeAssistantMessageContent(
             (string) ($messageData['content'] ?? '')
         );
-
-        if ($this->isHallucinatedActionResponse($assistantMessage, (string) $message) && !empty($tools)) {
-            error_log('Levi: hallucinated action response detected, retrying with tool_choice=required');
-            $this->emitSSE('status', ['message' => 'Levi nutzt die Werkzeuge...']);
-            $retryMessages = $this->injectForceToolsHint($messages);
-            $retryResponse = $this->aiClient->chat($retryMessages, $tools, $heartbeat, 'required');
-            if (!is_wp_error($retryResponse)) {
-                $retryData = $retryResponse['choices'][0]['message'] ?? [];
-                if (!empty($retryData['tool_calls'])) {
-                    $this->handleToolCallsStreaming($retryData, $retryMessages, $sessionId, $userId, (string) $message, $heartbeat, $hasPasswordConfirmation);
-                    if ($hasUploadedContext) {
-                        $this->clearSessionUploads($sessionId, $userId);
-                    }
-                    return;
-                }
-            }
-            $assistantMessage = 'Ich konnte die Aktion leider nicht ausführen. Bitte versuche es erneut – bei Bedarf starte eine neue Chat-Session.';
-        }
 
         if ($assistantMessage === '') {
             $assistantMessage = $this->getEmptyResponseFallback();
@@ -560,72 +540,104 @@ class ChatController extends WP_REST_Controller {
             $iteration++;
             $messages[] = $messageData;
 
-            foreach ($toolCalls as $toolCall) {
-                $functionName = $toolCall['function']['name'] ?? '';
-                $rawArgs = $toolCall['function']['arguments'] ?? '{}';
-                $functionArgs = json_decode($rawArgs, true);
-                if (!is_array($functionArgs)) {
-                    $functionArgs = [];
+            // Pre-flight: if ANY tool in this batch needs password, block the ENTIRE batch
+            // so the user sees the modal BEFORE anything executes (no partial results).
+            $batchBlockedByPassword = false;
+            if ($requireActionPassword && !$hasPasswordConfirmation) {
+                foreach ($toolCalls as $tc) {
+                    if ($this->isDestructiveTool($tc['function']['name'] ?? '')) {
+                        $batchBlockedByPassword = true;
+                        break;
+                    }
                 }
-                $functionArgs = $this->normalizeToolArgumentsForIntent($functionName, $functionArgs, $latestUserMessage);
-                $toolCallId = $toolCall['id'] ?? '';
+            }
+            $batchBlockedByConfirmation = false;
+            if (!$requireActionPassword && $requireConfirmation && !$hasConfirmation) {
+                foreach ($toolCalls as $tc) {
+                    if ($this->isDestructiveTool($tc['function']['name'] ?? '')) {
+                        $batchBlockedByConfirmation = true;
+                        break;
+                    }
+                }
+            }
 
+            if ($batchBlockedByPassword) {
+                $this->conversationRepo->deleteLastMessageByRole($sessionId, 'user');
                 $this->emitSSE('progress', [
-                    'message' => $this->getToolProgressLabel($functionName, 'start'),
-                    'tool' => $functionName,
-                    'iteration' => $iteration,
+                    'message' => 'Passwort-Bestätigung erforderlich.',
+                    'needs_password' => true,
                 ]);
-
-                if ($this->shouldDeferCreationTool($functionName, $functionArgs, $taskIntent)) {
-                    $result = [
-                        'success' => false,
-                        'needs_clarification' => true,
-                        'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin.',
-                        'tool' => $functionName,
-                    ];
-                } elseif ($functionName === 'execute_wp_code' && empty($runtimeSettings['allow_execute_wp_code'])) {
-                    $result = [
-                        'success' => false,
-                        'error' => 'PHP-Code-Ausführung ist deaktiviert. Aktiviere sie unter Einstellungen > Sicherheit.',
-                    ];
-                } elseif ($requireActionPassword && $this->isDestructiveTool($functionName) && !$hasPasswordConfirmation) {
-                    $result = [
-                        'success' => false,
-                        'needs_password_confirmation' => true,
-                        'error' => 'Diese Aktion erfordert dein Levi-Passwort. Bitte gib es im Chat-Passwort-Dialog ein.',
-                        'tool' => $functionName,
-                    ];
-                } elseif (!$requireActionPassword && $requireConfirmation && $this->isDestructiveTool($functionName) && !$hasConfirmation) {
+                $this->emitSSE('done', [
+                    'session_id' => $sessionId,
+                    'message' => '',
+                    'needs_password' => true,
+                ]);
+                return;
+            } elseif ($batchBlockedByConfirmation) {
+                foreach ($toolCalls as $toolCall) {
+                    $functionName = $toolCall['function']['name'] ?? '';
+                    $toolCallId = $toolCall['id'] ?? '';
                     $result = [
                         'success' => false,
                         'needs_confirmation' => true,
-                        'error' => 'Fuer diese Aktion brauche ich eine explizite Bestaetigung.',
-                        'tool' => $functionName,
+                        'error' => 'Fuer diese Aktionen brauche ich eine explizite Bestaetigung von dir.',
                     ];
-                } else {
-                    $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
-                    $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                    $toolResults[] = ['tool' => $functionName, 'result' => $result];
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCallId,
+                        'content' => $this->compactToolResultForModel($result),
+                    ];
                 }
+            } else {
+                foreach ($toolCalls as $toolCall) {
+                    $functionName = $toolCall['function']['name'] ?? '';
+                    $rawArgs = $toolCall['function']['arguments'] ?? '{}';
+                    $functionArgs = json_decode($rawArgs, true);
+                    if (!is_array($functionArgs)) {
+                        $functionArgs = [];
+                    }
+                    $functionArgs = $this->normalizeToolArgumentsForIntent($functionName, $functionArgs, $latestUserMessage);
+                    $toolCallId = $toolCall['id'] ?? '';
 
-                $toolResults[] = ['tool' => $functionName, 'result' => $result];
-                $needsPassword = ($result['needs_password_confirmation'] ?? false) === true;
-                if ($needsPassword) {
-                    $toolNeedsPassword = true;
+                    $this->emitSSE('progress', [
+                        'message' => $this->getToolProgressLabel($functionName, 'start'),
+                        'tool' => $functionName,
+                        'iteration' => $iteration,
+                    ]);
+
+                    if ($this->shouldDeferCreationTool($functionName, $functionArgs, $taskIntent)) {
+                        $result = [
+                            'success' => false,
+                            'needs_clarification' => true,
+                            'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin.',
+                            'tool' => $functionName,
+                        ];
+                    } elseif ($functionName === 'execute_wp_code' && empty($runtimeSettings['allow_execute_wp_code'])) {
+                        $result = [
+                            'success' => false,
+                            'error' => 'PHP-Code-Ausführung ist deaktiviert. Aktiviere sie unter Einstellungen > Sicherheit.',
+                        ];
+                    } else {
+                        $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                        $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                    }
+
+                    $toolResults[] = ['tool' => $functionName, 'result' => $result];
+
+                    $this->emitSSE('progress', [
+                        'message' => $this->getToolProgressLabel($functionName, ($result['success'] ?? false) ? 'done' : 'failed'),
+                        'tool' => $functionName,
+                        'iteration' => $iteration,
+                        'success' => $result['success'] ?? false,
+                    ]);
+
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCallId,
+                        'content' => $this->compactToolResultForModel($result),
+                    ];
                 }
-
-                $this->emitSSE('progress', [
-                    'message' => $this->getToolProgressLabel($functionName, ($result['success'] ?? false) ? 'done' : 'failed'),
-                    'tool' => $functionName,
-                    'iteration' => $iteration,
-                    'success' => $result['success'] ?? false,
-                    'needs_password' => $needsPassword,
-                ]);
-
-                $messages[] = [
-                    'role' => 'tool',
-                    'tool_call_id' => $toolCallId,
-                    'content' => $this->compactToolResultForModel($result),
-                ];
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
@@ -641,6 +653,11 @@ class ChatController extends WP_REST_Controller {
             }
 
             $this->emitSSE('status', ['message' => 'Levi verarbeitet Ergebnisse...']);
+
+            $messages[] = [
+                'role' => 'system',
+                'content' => 'Die obigen Tool-Ergebnisse sind die einzige Wahrheitsquelle. Basiere deine Antwort ausschließlich auf diesen echten Daten. Erfinde keine Einträge, IDs oder Titel, die nicht in den Tool-Ergebnissen stehen.',
+            ];
 
             $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat);
             if (is_wp_error($nextResponse)) {
@@ -827,10 +844,9 @@ class ChatController extends WP_REST_Controller {
 
         // Get available tools
         $tools = $this->toolRegistry->getDefinitions();
-        $toolChoice = $this->getToolChoiceForIntent($message, $tools);
 
         // Call AI – try with tools first, fallback to no tools on provider error
-        $response = $this->aiClient->chat($messages, $tools, null, $toolChoice);
+        $response = $this->aiClient->chat($messages, $tools, null, 'auto');
 
         if (is_wp_error($response)) {
             $errMsg = $response->get_error_message();
@@ -839,13 +855,13 @@ class ChatController extends WP_REST_Controller {
             $isProviderFailure = str_contains($errMsgLower, 'provider') || str_contains($errMsgLower, '503');
             $isTimeoutFailure = $this->isTimeoutError($errMsgLower);
 
-            if (!empty($tools) && ($isNoEndpointFailure || ($isProviderFailure && !$this->isActionIntent($message)))) {
+            if (!empty($tools) && ($isNoEndpointFailure || $isProviderFailure)) {
                 error_log('Levi: tool-mode unavailable (classic), falling back to no-tools. Error: ' . $errMsg);
                 $messages = $this->injectNoToolsGuardrail($messages);
                 $response = $this->aiClient->chat($messages, []);
             } elseif ($isTimeoutFailure && $hasUploadedContext) {
                 $messages = $this->buildMessages($sessionId, $message, false);
-                $response = $this->aiClient->chat($messages, $tools, null, $toolChoice);
+                $response = $this->aiClient->chat($messages, $tools, null, 'auto');
                 if (is_wp_error($response) && !empty($tools)) {
                     $messages = $this->injectNoToolsGuardrail($messages);
                     $response = $this->aiClient->chat($messages, []);
@@ -862,7 +878,7 @@ class ChatController extends WP_REST_Controller {
             if (str_contains($overflowMsg, 'context length') || str_contains($overflowMsg, 'too many tokens') || str_contains($overflowMsg, 'maximum context')) {
                 error_log('Levi: context overflow detected, retrying with halved history');
                 $halvedMessages = $this->halveHistory($messages);
-                $response = $this->aiClient->chat($halvedMessages, $tools, null, $toolChoice);
+                $response = $this->aiClient->chat($halvedMessages, $tools, null, 'auto');
                 if (is_wp_error($response) && !empty($tools)) {
                     $halvedMessages = $this->injectNoToolsGuardrail($halvedMessages);
                     $response = $this->aiClient->chat($halvedMessages, []);
@@ -913,7 +929,7 @@ class ChatController extends WP_REST_Controller {
             error_log('Levi: empty AI response (classic, attempt 1), original content: ' . mb_substr($originalContent, 0, 500));
 
             for ($retryAttempt = 1; $retryAttempt <= 2; $retryAttempt++) {
-                $response = $this->aiClient->chat($messages, $tools, null, $toolChoice);
+                $response = $this->aiClient->chat($messages, $tools, null, 'auto');
                 if (is_wp_error($response)) {
                     break;
                 }
@@ -942,26 +958,10 @@ class ChatController extends WP_REST_Controller {
             return $toolResponse;
         }
 
-        // Normal response (no tools) – check for hallucination
+        // Normal text response (no tool calls)
         $assistantMessage = $this->sanitizeAssistantMessageContent(
             (string) ($messageData['content'] ?? '')
         );
-
-        if ($this->isHallucinatedActionResponse($assistantMessage, (string) $message) && !empty($tools)) {
-            error_log('Levi: hallucinated action response detected (classic), retrying with tool_choice=required');
-            $retryMessages = $this->injectForceToolsHint($messages);
-            $retryResponse = $this->aiClient->chat($retryMessages, $tools, null, 'required');
-            if (!is_wp_error($retryResponse)) {
-                $retryData = $retryResponse['choices'][0]['message'] ?? [];
-                if (!empty($retryData['tool_calls'])) {
-                    if ($hasUploadedContext) {
-                        $this->clearSessionUploads($sessionId, $userId);
-                    }
-                    return $this->handleToolCalls($retryData, $retryMessages, $sessionId, $userId, (string) $message, $hasPasswordConfirmation);
-                }
-            }
-            $assistantMessage = 'Ich konnte die Aktion leider nicht ausführen. Bitte versuche es erneut – bei Bedarf starte eine neue Chat-Session.';
-        }
 
         if ($assistantMessage === '') {
             $assistantMessage = $this->getEmptyResponseFallback();
@@ -1013,81 +1013,112 @@ class ChatController extends WP_REST_Controller {
             }
 
             $iteration++;
-            // Add AI's tool call request to messages
             $messages[] = $messageData;
 
-            foreach ($toolCalls as $index => $toolCall) {
-                $functionName = $toolCall['function']['name'] ?? '';
-                $rawArgs = $toolCall['function']['arguments'] ?? '{}';
-                $functionArgs = json_decode($rawArgs, true);
-                if (!is_array($functionArgs)) {
-                    $functionArgs = [];
+            // Pre-flight: if ANY tool in this batch needs password, block the ENTIRE batch
+            $batchBlockedByPassword = false;
+            if ($requireActionPassword && !$hasPasswordConfirmation) {
+                foreach ($toolCalls as $tc) {
+                    if ($this->isDestructiveTool($tc['function']['name'] ?? '')) {
+                        $batchBlockedByPassword = true;
+                        break;
+                    }
                 }
-                $functionArgs = $this->normalizeToolArgumentsForIntent($functionName, $functionArgs, $latestUserMessage);
-                $toolCallId = $toolCall['id'] ?? '';
+            }
+            $batchBlockedByConfirmation = false;
+            if (!$requireActionPassword && $requireConfirmation && !$hasConfirmation) {
+                foreach ($toolCalls as $tc) {
+                    if ($this->isDestructiveTool($tc['function']['name'] ?? '')) {
+                        $batchBlockedByConfirmation = true;
+                        break;
+                    }
+                }
+            }
 
-                $executionTrace[] = [
-                    'iteration' => $iteration,
-                    'step' => count($executionTrace) + 1,
-                    'tool' => $functionName,
-                    'status' => 'started',
+            if ($batchBlockedByPassword) {
+                $this->conversationRepo->deleteLastMessageByRole($sessionId, 'user');
+                return new WP_REST_Response([
+                    'session_id' => $sessionId,
+                    'message' => '',
+                    'needs_password' => true,
+                    'execution_trace' => $executionTrace,
                     'timestamp' => current_time('mysql'),
-                    'details' => [
-                        'tool_call_index' => $index,
-                    ],
-                ];
-
-                if ($this->shouldDeferCreationTool($functionName, $functionArgs, $taskIntent)) {
-                    $result = [
-                        'success' => false,
-                        'needs_clarification' => true,
-                        'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin. Kläre kurz, ob ich bestehendes ändern oder wirklich neu erstellen soll.',
-                        'tool' => $functionName,
-                    ];
-                } elseif ($functionName === 'execute_wp_code' && empty($runtimeSettings['allow_execute_wp_code'])) {
-                    $result = [
-                        'success' => false,
-                        'error' => 'PHP-Code-Ausführung ist deaktiviert. Aktiviere sie unter Einstellungen > Sicherheit.',
-                    ];
-                } elseif ($requireActionPassword && $this->isDestructiveTool($functionName) && !$hasPasswordConfirmation) {
-                    $result = [
-                        'success' => false,
-                        'needs_password_confirmation' => true,
-                        'error' => 'Diese Aktion erfordert dein Levi-Passwort. Bitte gib es im Chat-Passwort-Dialog ein.',
-                        'tool' => $functionName,
-                    ];
-                    $toolNeedsPassword = true;
-                } elseif (!$requireActionPassword && $requireConfirmation && $this->isDestructiveTool($functionName) && !$hasConfirmation) {
+                ], 200);
+            } elseif ($batchBlockedByConfirmation) {
+                foreach ($toolCalls as $index => $toolCall) {
+                    $functionName = $toolCall['function']['name'] ?? '';
+                    $toolCallId = $toolCall['id'] ?? '';
                     $result = [
                         'success' => false,
                         'needs_confirmation' => true,
-                        'error' => 'Für diese Aktion brauche ich eine explizite Bestätigung von dir.',
-                        'tool' => $functionName,
+                        'error' => 'Fuer diese Aktionen brauche ich eine explizite Bestaetigung von dir.',
                     ];
-                } else {
-                    $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
-                    $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                    $toolResults[] = ['tool' => $functionName, 'result' => $result];
+                    $executionTrace[] = [
+                        'iteration' => $iteration,
+                        'step' => count($executionTrace) + 1,
+                        'tool' => $functionName,
+                        'status' => 'blocked_confirmation',
+                        'timestamp' => current_time('mysql'),
+                    ];
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCallId,
+                        'content' => $this->compactToolResultForModel($result),
+                    ];
                 }
-                $toolResults[] = [
-                    'tool' => $functionName,
-                    'result' => $result,
-                ];
+            } else {
+                foreach ($toolCalls as $index => $toolCall) {
+                    $functionName = $toolCall['function']['name'] ?? '';
+                    $rawArgs = $toolCall['function']['arguments'] ?? '{}';
+                    $functionArgs = json_decode($rawArgs, true);
+                    if (!is_array($functionArgs)) {
+                        $functionArgs = [];
+                    }
+                    $functionArgs = $this->normalizeToolArgumentsForIntent($functionName, $functionArgs, $latestUserMessage);
+                    $toolCallId = $toolCall['id'] ?? '';
 
-                $executionTrace[] = [
-                    'iteration' => $iteration,
-                    'step' => count($executionTrace) + 1,
-                    'tool' => $functionName,
-                    'status' => ($result['success'] ?? false) ? 'completed' : 'failed',
-                    'timestamp' => current_time('mysql'),
-                    'summary' => $this->summarizeToolResult($result),
-                ];
+                    $executionTrace[] = [
+                        'iteration' => $iteration,
+                        'step' => count($executionTrace) + 1,
+                        'tool' => $functionName,
+                        'status' => 'started',
+                        'timestamp' => current_time('mysql'),
+                        'details' => ['tool_call_index' => $index],
+                    ];
 
-                // Add tool result to conversation
-                $messages[] = [
-                    'role' => 'tool',
-                    'tool_call_id' => $toolCallId,
-                    'content' => $this->compactToolResultForModel($result),
-                ];
+                    if ($this->shouldDeferCreationTool($functionName, $functionArgs, $taskIntent)) {
+                        $result = [
+                            'success' => false,
+                            'needs_clarification' => true,
+                            'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin.',
+                            'tool' => $functionName,
+                        ];
+                    } elseif ($functionName === 'execute_wp_code' && empty($runtimeSettings['allow_execute_wp_code'])) {
+                        $result = [
+                            'success' => false,
+                            'error' => 'PHP-Code-Ausführung ist deaktiviert. Aktiviere sie unter Einstellungen > Sicherheit.',
+                        ];
+                    } else {
+                        $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                        $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                    }
+
+                    $toolResults[] = ['tool' => $functionName, 'result' => $result];
+                    $executionTrace[] = [
+                        'iteration' => $iteration,
+                        'step' => count($executionTrace) + 1,
+                        'tool' => $functionName,
+                        'status' => ($result['success'] ?? false) ? 'completed' : 'failed',
+                        'timestamp' => current_time('mysql'),
+                        'summary' => $this->summarizeToolResult($result),
+                    ];
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCallId,
+                        'content' => $this->compactToolResultForModel($result),
+                    ];
+                }
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
@@ -1096,6 +1127,11 @@ class ChatController extends WP_REST_Controller {
                     $messages[] = $pwm;
                 }
             }
+
+            $messages[] = [
+                'role' => 'system',
+                'content' => 'Die obigen Tool-Ergebnisse sind die einzige Wahrheitsquelle. Basiere deine Antwort ausschließlich auf diesen echten Daten. Erfinde keine Einträge, IDs oder Titel, die nicht in den Tool-Ergebnissen stehen.',
+            ];
 
             $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions());
             if (is_wp_error($nextResponse)) {
@@ -1186,36 +1222,21 @@ class ChatController extends WP_REST_Controller {
         $runtimeSettings = $this->settings->getSettings();
         $historyLimit = max(10, (int) ($runtimeSettings['history_context_limit'] ?? 50));
         $history = $this->conversationRepo->getHistory($sessionId, $historyLimit);
-        $now = time();
-        $stalenessThresholdSeconds = 120;
-
         foreach ($history as $msg) {
             if (in_array($msg['role'], ['user', 'assistant'])) {
-                $content = $msg['content'];
-
-                if ($msg['role'] === 'assistant' && !empty($msg['created_at'])) {
-                    $msgTime = strtotime($msg['created_at']);
-                    if ($msgTime && ($now - $msgTime) > $stalenessThresholdSeconds) {
-                        $content = "[SYSTEM: Diese Antwort ist älter. Enthaltene WordPress-Daten (Seiten, Beiträge, Plugins etc.) können veraltet sein. Bei Aktionen bitte per Tool neu abfragen.]\n" . $content;
-                    }
-                }
-
                 $messages[] = [
                     'role' => $msg['role'],
-                    'content' => $content,
+                    'content' => $msg['content'],
                 ];
             }
         }
 
         // Current message – attach session images as Vision content if present
-        // User content is wrapped in <user_request> to clearly separate it from system context (OWASP prompt injection mitigation)
         $userId = get_current_user_id();
         $sessionImages = $includeUploadedContext ? $this->getSessionImages($sessionId, $userId) : [];
 
-        $wrappedUserContent = "<user_request>\n" . $newMessage . "\n</user_request>";
-
         if (!empty($sessionImages)) {
-            $contentParts = [['type' => 'text', 'text' => $wrappedUserContent]];
+            $contentParts = [['type' => 'text', 'text' => $newMessage]];
             foreach ($sessionImages as $img) {
                 $contentParts[] = [
                     'type' => 'image_url',
@@ -1224,7 +1245,7 @@ class ChatController extends WP_REST_Controller {
             }
             $messages[] = ['role' => 'user', 'content' => $contentParts];
         } else {
-            $messages[] = ['role' => 'user', 'content' => $wrappedUserContent];
+            $messages[] = ['role' => 'user', 'content' => $newMessage];
         }
 
         return $this->trimMessagesToBudget($messages);
@@ -1601,89 +1622,6 @@ class ChatController extends WP_REST_Controller {
     }
 
     /**
-     * Detect if assistant text claims to have performed an action without actually using tools.
-     * Such responses poison the history and cause the model to keep hallucinating.
-     */
-    private function isHallucinatedActionResponse(string $assistantMessage, string $userMessage): bool {
-        if (!$this->isActionIntent($userMessage)) {
-            return false;
-        }
-        $text = mb_strtolower($assistantMessage);
-        $successClaims = [
-            '/\b(erstellt|angelegt|gelöscht|aktualisiert|geändert|installiert|aktiviert|deaktiviert)\b/u',
-            '/\b(id:\s*\d+|post_id|page_id)\b/u',
-            '/\b(fertig|abgeschlossen|erledigt)\b.*\b(beitrag|seite|plugin|datei)\b/ui',
-            '/\*\*?\s*[✅✔✓]\s*\*\*?/u',
-        ];
-        foreach ($successClaims as $pattern) {
-            if (preg_match($pattern, $text) === 1) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Inject system message forcing tool usage when retrying after hallucination.
-     */
-    private function injectForceToolsHint(array $messages): array {
-        $hint = [
-            'role' => 'system',
-            'content' => '[WICHTIG] Der Benutzer hat eine Aktion angefordert. Du MUSST die passenden Tools aufrufen – antworte NUR mit tool_calls, nicht mit Text. Keine IDs oder Erfolgsmeldungen erfinden.',
-        ];
-        $result = [];
-        $injected = false;
-        foreach ($messages as $msg) {
-            $result[] = $msg;
-            if (!$injected && ($msg['role'] ?? '') === 'system') {
-                $result[] = $hint;
-                $injected = true;
-            }
-        }
-        if (!$injected) {
-            array_unshift($result, $hint);
-        }
-        return $result;
-    }
-
-    private function getToolChoiceForIntent(string $message, array $tools): string {
-        return (!empty($tools) && $this->isActionIntent($message)) ? 'required' : 'auto';
-    }
-
-    private function isActionIntent(string $text): bool {
-        $t = mb_strtolower($text);
-
-        $actionPatterns = [
-            '/\b(erstell|anleg|schreib|änder|bearbeit|update|install|aktivier|deaktivier|lösch|entfern|switch|veröffentl|publish)\b/u',
-            '/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung)\b/u',
-        ];
-        $score = 0;
-        foreach ($actionPatterns as $pattern) {
-            if (preg_match($pattern, $t) === 1) {
-                $score++;
-            }
-        }
-        if ($score >= 1) {
-            return true;
-        }
-
-        $shortText = mb_strlen(trim($t)) < 40;
-        if ($shortText) {
-            $confirmationPatterns = [
-                '/\bja\b/u', '/\byes\b/u', '/\bok(ay)?\b/u', '/\bmach\s?(es|das|weiter)?\b/u',
-                '/\bbestätig/u', '/\bgo ahead\b/u', '/\bausführen\b/u', '/\bdo it\b/u',
-            ];
-            foreach ($confirmationPatterns as $pattern) {
-                if (preg_match($pattern, $t) === 1) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * Inject a system-level guardrail when tools are unavailable, preventing the
      * model from hallucinating tool executions or fake IDs.
      */
@@ -1731,19 +1669,47 @@ class ChatController extends WP_REST_Controller {
 
     private function requiresExhaustiveReadIntent(string $text): bool {
         $t = mb_strtolower($text);
-        return preg_match('/\b(alle|gesamt|komplett|vollständig|sämtlich|alles lesen|komplett lesen|gesamten inhalt)\b/u', $t) === 1;
+        return preg_match('/\b(alle|gesamt|komplett|vollständig|sämtlich|alles lesen|komplett lesen|gesamten inhalt|analysier|analyse|prüf|pruef|seo|tonalität|tonalitaet|rechtschreibung|vollständigkeit|vollstaendigkeit)\b/u', $t) === 1;
+    }
+
+    private function isActionRequestIntent(string $text): bool {
+        $t = mb_strtolower($text);
+        return preg_match('/\b(lösch|loesch|entfern|delete|aktualisier|änder|aender|bearbeit|erstelle|anleg|installier|aktivier|deaktivier|switch|wechsel|verschieb|veröffentl|veroeffentl|setze|konfigurier)\b/u', $t) === 1;
+    }
+
+    private function shouldForceExhaustiveReads(string $latestUserMessage): bool {
+        // Never force heavy full-content reads for action-style requests (delete/update/install).
+        if ($this->isActionRequestIntent($latestUserMessage)) {
+            return false;
+        }
+
+        // Explicit analysis intents should always get exhaustive reads.
+        if ($this->requiresExhaustiveReadIntent($latestUserMessage)) {
+            return true;
+        }
+
+        // Legacy toggle: only force reads for analysis-like wording, not for generic requests.
+        $settings = $this->settings->getSettings();
+        if (empty($settings['force_exhaustive_reads'])) {
+            return false;
+        }
+
+        $t = mb_strtolower($latestUserMessage);
+        return preg_match('/\b(analys|analyse|prüf|pruef|seo|inhalt|content|rechtschreibung|tonalität|tonalitaet|vollständigkeit|vollstaendigkeit)\b/u', $t) === 1;
     }
 
     private function compactToolResultForModel(array $result): string {
+        $maxJsonSize = 40000;
         $compact = $result;
+
         foreach (['posts', 'pages', 'media', 'users', 'plugins'] as $listKey) {
             if (!isset($compact[$listKey]) || !is_array($compact[$listKey])) {
                 continue;
             }
             $originalCount = count($compact[$listKey]);
-            if ($originalCount > 20) {
-                $compact[$listKey] = array_slice($compact[$listKey], 0, 20);
-                $compact[$listKey . '_truncated_count'] = $originalCount - 20;
+            if ($originalCount > 30) {
+                $compact[$listKey] = array_slice($compact[$listKey], 0, 30);
+                $compact[$listKey . '_truncated_count'] = $originalCount - 30;
             }
         }
 
@@ -1751,12 +1717,64 @@ class ChatController extends WP_REST_Controller {
             $compact['content'] = mb_substr($compact['content'], 0, 4000) . "\n...[truncated]";
         }
 
+        // Progressively strip heavy fields from list items to stay within budget.
+        // Priority: keep all items with metadata; sacrifice content/rendered first.
+        $listKeys = ['posts', 'pages', 'media', 'users', 'plugins'];
+        $contentFields = ['content', 'content_rendered', 'description'];
+
+        foreach ($listKeys as $listKey) {
+            if (!isset($compact[$listKey]) || !is_array($compact[$listKey])) {
+                continue;
+            }
+            $itemCount = count($compact[$listKey]);
+            if ($itemCount === 0) {
+                continue;
+            }
+            // Per-item content budget: distribute evenly, but cap at 2000
+            $perItemBudget = min(2000, (int) floor(($maxJsonSize * 0.6) / $itemCount));
+            foreach ($compact[$listKey] as &$item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                foreach ($contentFields as $field) {
+                    if (isset($item[$field]) && is_string($item[$field]) && mb_strlen($item[$field]) > $perItemBudget) {
+                        $item[$field] = mb_substr($item[$field], 0, $perItemBudget) . '...[trimmed]';
+                    }
+                }
+            }
+            unset($item);
+        }
+
         $json = wp_json_encode($compact);
         if (!is_string($json)) {
             return '{"success":false,"error":"Could not serialize tool result."}';
         }
-        if (mb_strlen($json) > 12000) {
-            $json = mb_substr($json, 0, 12000) . '...[truncated]';
+
+        // If still over budget, strip content fields entirely but keep metadata
+        if (mb_strlen($json) > $maxJsonSize) {
+            foreach ($listKeys as $listKey) {
+                if (!isset($compact[$listKey]) || !is_array($compact[$listKey])) {
+                    continue;
+                }
+                foreach ($compact[$listKey] as &$item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+                    foreach ($contentFields as $field) {
+                        unset($item[$field]);
+                    }
+                }
+                unset($item);
+            }
+            $json = wp_json_encode($compact);
+            if (!is_string($json)) {
+                return '{"success":false,"error":"Could not serialize tool result."}';
+            }
+        }
+
+        // Last resort: hard truncate (should rarely happen now)
+        if (mb_strlen($json) > $maxJsonSize) {
+            $json = mb_substr($json, 0, $maxJsonSize) . '...[truncated]';
         }
 
         $redactor = PIIRedactor::getInstance();
@@ -1793,8 +1811,7 @@ class ChatController extends WP_REST_Controller {
             return $args;
         }
 
-        $settings = $this->settings->getSettings();
-        $forceExhaustive = !empty($settings['force_exhaustive_reads']) || $this->requiresExhaustiveReadIntent($latestUserMessage);
+        $forceExhaustive = $this->shouldForceExhaustiveReads($latestUserMessage);
         if (!$forceExhaustive) {
             return $args;
         }
@@ -1817,8 +1834,7 @@ class ChatController extends WP_REST_Controller {
             return $firstResult;
         }
 
-        $settings = $this->settings->getSettings();
-        $forceExhaustive = !empty($settings['force_exhaustive_reads']) || $this->requiresExhaustiveReadIntent($latestUserMessage);
+        $forceExhaustive = $this->shouldForceExhaustiveReads($latestUserMessage);
         if (!$forceExhaustive || empty($firstResult['has_more'])) {
             return $firstResult;
         }
@@ -1938,101 +1954,9 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
-        $hallucinationCheck = $this->detectListHallucination($finalMessage, $toolResults);
-        if ($hallucinationCheck !== null) {
-            return $hallucinationCheck;
-        }
-
         return $finalMessage;
     }
 
-    private function detectListHallucination(string $aiMessage, array $toolResults): ?string {
-        if (!$this->isListingResponse($aiMessage)) {
-            return null;
-        }
-
-        $listTools = ['get_pages', 'get_posts', 'get_users', 'get_plugins', 'get_media'];
-        $toolData = null;
-        $toolName = null;
-
-        foreach ($toolResults as $tr) {
-            if (in_array($tr['tool'] ?? '', $listTools, true) && ($tr['result']['success'] ?? false)) {
-                $toolData = $tr['result'];
-                $toolName = $tr['tool'];
-                break;
-            }
-        }
-
-        if ($toolData === null) {
-            return null;
-        }
-
-        $listKey = match ($toolName) {
-            'get_pages' => 'pages',
-            'get_posts' => 'posts',
-            'get_users' => 'users',
-            'get_plugins' => 'plugins',
-            'get_media' => 'media',
-            default => null,
-        };
-
-        if ($listKey === null || !isset($toolData[$listKey]) || !is_array($toolData[$listKey])) {
-            return null;
-        }
-
-        $realIds = array_map(fn($item) => (int) ($item['id'] ?? $item['ID'] ?? 0), $toolData[$listKey]);
-        $realIds = array_filter($realIds, fn($id) => $id > 0);
-
-        if (empty($realIds)) {
-            return null;
-        }
-
-        if (preg_match_all('/\bID\s*[:=]?\s*(\d{1,6})\b/i', $aiMessage, $matches)) {
-            $mentionedIds = array_map('intval', $matches[1]);
-            $mentionedIds = array_unique(array_filter($mentionedIds, fn($id) => $id > 0));
-
-            if (count($mentionedIds) < 2) {
-                return null;
-            }
-
-            $wrongIds = array_diff($mentionedIds, $realIds);
-
-            if (count($wrongIds) >= 2 && count($wrongIds) > count($mentionedIds) * 0.5) {
-                $toolLabel = match ($toolName) {
-                    'get_pages' => 'Seiten',
-                    'get_posts' => 'Beiträge',
-                    'get_users' => 'Benutzer',
-                    'get_plugins' => 'Plugins',
-                    'get_media' => 'Medien',
-                    default => 'Einträge',
-                };
-                $realCount = (int) ($toolData['total'] ?? count($toolData[$listKey]));
-                $realList = [];
-                foreach ($toolData[$listKey] as $item) {
-                    $id = $item['id'] ?? $item['ID'] ?? '?';
-                    $title = $item['title'] ?? $item['name'] ?? $item['post_title'] ?? '';
-                    $status = $item['status'] ?? '';
-                    $realList[] = "- **{$title}** (ID {$id}" . ($status ? ", {$status}" : '') . ')';
-                }
-                error_log("Levi: hallucination corrected – AI listed IDs [" . implode(',', $mentionedIds) . "] but real IDs are [" . implode(',', $realIds) . "]");
-                return "Hier sind die aktuellen {$toolLabel} ({$realCount} gefunden):\n\n" . implode("\n", $realList) . "\n\nWas möchtest du damit machen?";
-            }
-        }
-
-        return null;
-    }
-
-    private function isListingResponse(string $text): bool {
-        $tablePattern = '/\|.*\|.*\|/';
-        $listPattern = '/^[\-\*]\s+.+$/m';
-        $tableCount = preg_match_all($tablePattern, $text);
-        $listCount = preg_match_all($listPattern, $text);
-        $textLength = mb_strlen($text);
-        $hasStructuredList = ($tableCount >= 3) || ($listCount >= 3);
-        $isShortResponse = $textLength < 800;
-
-        return $hasStructuredList && $isShortResponse;
-    }
 
     public function getHistory(WP_REST_Request $request): WP_REST_Response {
         $sessionId = $request->get_param('session_id');

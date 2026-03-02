@@ -299,9 +299,8 @@ class OpenRouterClient implements AIClientInterface {
     }
 
     public function testConnection(): array|WP_Error {
-        // Simple test with a cheap model
         $testPayload = [
-            'model' => 'moonshotai/kimi-k2.5',
+            'model' => $this->model,
             'messages' => [
                 ['role' => 'user', 'content' => 'Say "OK" and nothing else.']
             ],

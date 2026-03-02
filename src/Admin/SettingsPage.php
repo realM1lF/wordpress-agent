@@ -442,7 +442,7 @@ class SettingsPage {
         <div class="levi-settings-section">
             <div class="levi-section-header">
                 <h2><?php echo esc_html($this->tr('OpenRouter Configuration', 'OpenRouter konfigurieren')); ?></h2>
-                <p><?php echo esc_html($this->tr('Levi uses OpenRouter with Kimi K2.5. Configure your API key below.', 'Levi nutzt OpenRouter mit Kimi K2.5. Richte deinen API-Schluessel ein.')); ?></p>
+                <p><?php echo esc_html($this->tr('Levi uses OpenRouter to access AI models. Configure your API key and choose a model below.', 'Levi nutzt OpenRouter fuer den Zugriff auf KI-Modelle. Richte deinen API-Schluessel ein und waehle ein Modell.')); ?></p>
             </div>
 
             <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_provider]" value="openrouter">
@@ -493,12 +493,35 @@ class SettingsPage {
                 </div>
             </div>
 
-            <!-- Model (fixed: Kimi K2.5) -->
+            <!-- Model Selection -->
             <div class="levi-form-card">
                 <h3><?php echo esc_html($this->tr('Model', 'Modell')); ?></h3>
                 <div class="levi-form-group">
-                    <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[openrouter_model]" value="moonshotai/kimi-k2.5">
-                    <p class="levi-form-help"><?php echo esc_html($this->tr('Kimi K2.5 (Moonshot) via OpenRouter', 'Kimi K2.5 (Moonshot) ueber OpenRouter')); ?></p>
+                    <label class="levi-form-label"><?php echo esc_html($this->tr('AI Model', 'KI-Modell')); ?></label>
+                    <?php
+                    $modelField = match($provider) {
+                        'openai' => 'openai_model',
+                        'anthropic' => 'anthropic_model',
+                        default => 'openrouter_model',
+                    };
+                    $allowedModels = $this->getAllowedModelsForProvider($provider);
+                    $currentModel = $settings[$modelField] ?? array_key_first($allowedModels);
+                    ?>
+                    <select name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($modelField); ?>]"
+                            class="levi-form-input">
+                        <?php foreach ($allowedModels as $modelId => $modelLabel): ?>
+                            <option value="<?php echo esc_attr($modelId); ?>"
+                                    <?php selected($currentModel, $modelId); ?>>
+                                <?php echo esc_html($modelLabel); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="levi-form-help">
+                        <?php echo esc_html($this->tr(
+                            'Choose the AI model. GPT-4o Mini is recommended for reliability. All models are accessed via OpenRouter.',
+                            'Waehle das KI-Modell. GPT-4o Mini wird fuer zuverlaessige Ergebnisse empfohlen. Alle Modelle laufen ueber OpenRouter.'
+                        )); ?>
+                    </p>
                 </div>
             </div>
         </div>
@@ -1110,9 +1133,25 @@ class SettingsPage {
     }
 
     public function getAllowedModelsForProvider(string $provider): array {
-        return [
-            'moonshotai/kimi-k2.5' => 'Kimi K2.5 (Moonshot)',
-        ];
+        return match ($provider) {
+            'openai' => [
+                'gpt-4o-mini' => 'GPT-4o Mini (OpenAI)',
+                'gpt-4o' => 'GPT-4o (OpenAI)',
+            ],
+            'anthropic' => [
+                'claude-sonnet-4-20250514' => 'Claude Sonnet 4 (Anthropic)',
+                'claude-3-5-haiku-20241022' => 'Claude 3.5 Haiku (Anthropic)',
+            ],
+            default => [
+                'openai/gpt-4o-mini' => 'GPT-4o Mini (OpenAI)',
+                'openai/gpt-4o' => 'GPT-4o (OpenAI)',
+                'moonshotai/kimi-k2.5' => 'Kimi K2.5 (Moonshot)',
+                'anthropic/claude-sonnet-4' => 'Claude Sonnet 4 (Anthropic)',
+                'anthropic/claude-3.5-haiku' => 'Claude 3.5 Haiku (Anthropic)',
+                'deepseek/deepseek-chat-v3-0324' => 'DeepSeek V3 (DeepSeek)',
+                'google/gemini-2.5-flash-preview' => 'Gemini 2.5 Flash (Google)',
+            ],
+        };
     }
 
     public function getModel(): string {
@@ -1138,7 +1177,7 @@ class SettingsPage {
             'openrouter_api_key' => '',
             'openai_api_key' => '',
             'anthropic_api_key' => '',
-            'openrouter_model' => 'moonshotai/kimi-k2.5',
+            'openrouter_model' => 'openai/gpt-4o-mini',
             'openai_model' => 'gpt-4o-mini',
             'anthropic_model' => 'claude-3-5-sonnet-20241022',
             'rate_limit' => 50,

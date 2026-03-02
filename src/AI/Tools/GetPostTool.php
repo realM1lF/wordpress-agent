@@ -11,7 +11,7 @@ class GetPostTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get detailed information about a specific post by ID or title.';
+        return 'Get detailed information about a specific post/page by ID or title.';
     }
 
     public function getParameters(): array {
@@ -24,6 +24,12 @@ class GetPostTool implements ToolInterface {
                 'type' => 'string',
                 'description' => 'The post title (used if ID not provided)',
             ],
+            'post_type' => [
+                'type' => 'string',
+                'description' => 'Restrict lookup: post, page, or any',
+                'enum' => ['post', 'page', 'any'],
+                'default' => 'any',
+            ],
             'include_content' => [
                 'type' => 'boolean',
                 'description' => 'Whether to include full post content',
@@ -33,22 +39,32 @@ class GetPostTool implements ToolInterface {
     }
 
     public function checkPermission(): bool {
-        return current_user_can('edit_posts');
+        return current_user_can('edit_posts') || current_user_can('edit_pages');
     }
 
     public function execute(array $params): array {
         $post = null;
+        $postTypeParam = strtolower((string) ($params['post_type'] ?? 'any'));
+        $queryPostTypes = match ($postTypeParam) {
+            'post' => ['post'],
+            'page' => ['page'],
+            default => ['post', 'page'],
+        };
 
         // Get by ID
         if (!empty($params['id'])) {
             $post = get_post(intval($params['id']));
+            if ($post instanceof \WP_Post && !in_array($post->post_type, $queryPostTypes, true)) {
+                $post = null;
+            }
         }
         // Get by title
         elseif (!empty($params['title'])) {
             $query = new \WP_Query([
-                'post_type' => 'post',
+                'post_type' => $queryPostTypes,
                 'title' => $params['title'],
                 'posts_per_page' => 1,
+                'post_status' => 'any',
             ]);
             if (!empty($query->posts)) {
                 $post = $query->posts[0];
