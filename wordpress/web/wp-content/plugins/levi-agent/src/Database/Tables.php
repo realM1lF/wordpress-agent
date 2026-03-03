@@ -10,6 +10,7 @@ class Tables {
         $conversationsTable = $wpdb->prefix . 'levi_conversations';
         $actionsTable = $wpdb->prefix . 'levi_actions';
         $memoryTable = $wpdb->prefix . 'levi_memory';
+        $auditLogTable = $wpdb->prefix . 'levi_audit_log';
 
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
 
@@ -55,5 +56,35 @@ class Tables {
     FULLTEXT KEY idx_content (content)
 ) {$charsetCollate};";
         dbDelta($sqlMemory);
+
+        $sqlAuditLog = "CREATE TABLE {$auditLogTable} (
+    id bigint(20) unsigned NOT NULL auto_increment,
+    user_id bigint(20) unsigned DEFAULT NULL,
+    session_id varchar(64) NOT NULL,
+    tool_name varchar(120) NOT NULL,
+    tool_args longtext,
+    success tinyint(1) NOT NULL DEFAULT 0,
+    result_summary varchar(255) DEFAULT NULL,
+    executed_at datetime DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY  (id),
+    KEY idx_executed_at (executed_at),
+    KEY idx_user_time (user_id, executed_at),
+    KEY idx_session_time (session_id, executed_at),
+    KEY idx_tool_time (tool_name, executed_at)
+) {$charsetCollate};";
+        dbDelta($sqlAuditLog);
+    }
+
+    public static function cleanupAuditLog(int $days = 7): int {
+        global $wpdb;
+        $table = $wpdb->prefix . 'levi_audit_log';
+        $cutoff = gmdate('Y-m-d H:i:s', time() - max(1, $days) * DAY_IN_SECONDS);
+
+        $deleted = $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$table} WHERE executed_at < %s",
+            $cutoff
+        ));
+
+        return $deleted !== false ? (int) $deleted : 0;
     }
 }

@@ -192,6 +192,50 @@
             });
         });
 
+        // Clear audit log button
+        $('#levi-clear-audit-log').on('click', function() {
+            const $btn = $(this);
+            const $result = $('#levi-audit-clear-result');
+            const confirmMsg = (leviSettings.i18n && leviSettings.i18n.clearAuditConfirm)
+                ? leviSettings.i18n.clearAuditConfirm
+                : 'Delete all audit log entries now?';
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            $btn.prop('disabled', true);
+            $result.text((leviSettings.i18n && leviSettings.i18n.clearing) ? leviSettings.i18n.clearing : 'Deleting…');
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'levi_clear_audit_log',
+                    nonce: leviSettings.nonce,
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const msg = response.data && response.data.message
+                            ? response.data.message
+                            : ((leviSettings.i18n && leviSettings.i18n.cleared) ? leviSettings.i18n.cleared : 'Audit log deleted.');
+                        $result.html('<span class="levi-success">✓ ' + msg + '</span>');
+                        setTimeout(function() {
+                            location.reload();
+                        }, 600);
+                    } else {
+                        $result.html('<span class="levi-error">✗ ' + (response.data || (leviSettings.i18n && leviSettings.i18n.failed ? leviSettings.i18n.failed : 'Failed')) + '</span>');
+                    }
+                },
+                error: function() {
+                    $result.html('<span class="levi-error">✗ ' + (leviSettings.i18n && leviSettings.i18n.error ? leviSettings.i18n.error : 'Error') + '</span>');
+                },
+                complete: function() {
+                    $btn.prop('disabled', false);
+                }
+            });
+        });
+
         // Form submission with visual feedback
         $('.levi-settings-form').on('submit', function() {
             const $form = $(this);

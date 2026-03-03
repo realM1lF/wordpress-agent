@@ -18,6 +18,7 @@ class SettingsPage {
         add_action('admin_enqueue_scripts', [$this, 'enqueueAssets']);
         add_action('wp_ajax_levi_repair_database', [$this, 'ajaxRepairDatabase']);
         add_action('wp_ajax_levi_run_state_snapshot', [$this, 'ajaxRunStateSnapshot']);
+        add_action('wp_ajax_levi_clear_audit_log', [$this, 'ajaxClearAuditLog']);
     }
 
     public function addMenuPage(): void {
@@ -72,6 +73,9 @@ class SettingsPage {
                 'done' => $this->tr('Done', 'Fertig'),
                 'repairing' => $this->tr('Repairing…', 'Repariere...'),
                 'saving' => $this->tr('Saving…', 'Speichere...'),
+                'clearAuditConfirm' => $this->tr('Delete all audit log entries now?', 'Alle Audit-Log-Eintraege jetzt loeschen?'),
+                'clearing' => $this->tr('Deleting…', 'Loesche...'),
+                'cleared' => $this->tr('Audit log deleted.', 'Audit-Log geloescht.'),
                 'status_not_run' => $this->tr('Not run yet', 'Noch nicht gelaufen'),
                 'status_unchanged' => $this->tr('Unchanged', 'Unverändert'),
                 'status_changed_stored' => $this->tr('Updated and stored', 'Aktualisiert und gespeichert'),
@@ -595,6 +599,7 @@ class SettingsPage {
     }
 
     private function renderSafetyTab(array $settings): void {
+        $auditRows = $this->getAuditLogRows(20);
         ?>
         <div class="levi-settings-section">
             <div class="levi-section-header">
@@ -803,6 +808,59 @@ class SettingsPage {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div class="levi-form-card" style="margin-top: 1.5rem;">
+                <h3><?php echo esc_html($this->tr('Audit Log (Tool Executions)', 'Audit-Log (Tool-Ausfuehrungen)')); ?></h3>
+                <p class="levi-form-description">
+                    <?php echo esc_html($this->tr(
+                        'Shows recent tool executions for security traceability. Entries older than 7 days are removed automatically.',
+                        'Zeigt aktuelle Tool-Ausfuehrungen zur Nachvollziehbarkeit. Eintraege aelter als 7 Tage werden automatisch entfernt.'
+                    )); ?>
+                </p>
+                <div class="levi-form-actions-inline" style="margin-bottom: 0.75rem;">
+                    <button type="button" id="levi-clear-audit-log" class="levi-btn levi-btn-secondary">
+                        <span class="dashicons dashicons-trash"></span>
+                        <?php echo esc_html($this->tr('Delete Audit Log', 'Audit-Log loeschen')); ?>
+                    </button>
+                    <span id="levi-audit-clear-result"></span>
+                </div>
+
+                <?php if (empty($auditRows)): ?>
+                    <p class="levi-form-help"><?php echo esc_html($this->tr('No audit entries yet.', 'Noch keine Audit-Eintraege vorhanden.')); ?></p>
+                <?php else: ?>
+                    <div style="overflow-x:auto;">
+                        <table class="widefat striped" style="margin-top: 0.25rem;">
+                            <thead>
+                                <tr>
+                                    <th><?php echo esc_html($this->tr('Time', 'Zeit')); ?></th>
+                                    <th><?php echo esc_html($this->tr('Session', 'Session')); ?></th>
+                                    <th><?php echo esc_html($this->tr('User', 'User')); ?></th>
+                                    <th><?php echo esc_html($this->tr('Tool', 'Tool')); ?></th>
+                                    <th><?php echo esc_html($this->tr('Status', 'Status')); ?></th>
+                                    <th><?php echo esc_html($this->tr('Summary', 'Zusammenfassung')); ?></th>
+                                    <th><?php echo esc_html($this->tr('Arguments', 'Argumente')); ?></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($auditRows as $row): ?>
+                                <tr>
+                                    <td><?php echo esc_html((string) ($row['executed_at'] ?? '')); ?></td>
+                                    <td><code><?php echo esc_html((string) ($row['session_id'] ?? '')); ?></code></td>
+                                    <td><?php echo esc_html((string) ($row['user_id'] ?? '')); ?></td>
+                                    <td><code><?php echo esc_html((string) ($row['tool_name'] ?? '')); ?></code></td>
+                                    <td><?php echo !empty($row['success']) ? '✅' : '❌'; ?></td>
+                                    <td><?php echo esc_html((string) ($row['result_summary'] ?? '')); ?></td>
+                                    <td><code style="white-space:pre-wrap; word-break:break-word;"><?php echo esc_html((string) ($row['tool_args'] ?? '')); ?></code></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="levi-form-help" style="margin-top: 0.5rem;">
+                        <?php echo esc_html($this->tr('Showing latest 20 entries.', 'Es werden die letzten 20 Eintraege angezeigt.')); ?>
+                    </p>
+                <?php endif; ?>
             </div>
         </div>
         <?php
@@ -1030,5 +1088,42 @@ class SettingsPage {
             'message' => __('Indexierung abgeschlossen.', 'levi-agent'),
             'meta' => $meta,
         ]);
+    }
+
+    public function ajaxClearAuditLog(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'levi_audit_log';
+        $deleted = $wpdb->query("DELETE FROM {$table}");
+        if ($deleted === false) {
+            wp_send_json_error($this->tr('Could not delete audit log.', 'Audit-Log konnte nicht geloescht werden.'));
+        }
+
+        wp_send_json_success([
+            'message' => $this->tr('Audit log deleted.', 'Audit-Log geloescht.'),
+        ]);
+    }
+
+    private function getAuditLogRows(int $limit = 20): array {
+        global $wpdb;
+        $table = $wpdb->prefix . 'levi_audit_log';
+        $safeLimit = max(1, min(100, $limit));
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT user_id, session_id, tool_name, tool_args, success, result_summary, executed_at
+                 FROM {$table}
+                 ORDER BY executed_at DESC
+                 LIMIT %d",
+                $safeLimit
+            ),
+            ARRAY_A
+        );
+
+        return is_array($rows) ? $rows : [];
     }
 }

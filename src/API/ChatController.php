@@ -432,6 +432,7 @@ class ChatController extends WP_REST_Controller {
         $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
+        $mutationNudgeCount = 0;
         $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
 
         while ($iteration < $maxIterations) {
@@ -477,6 +478,7 @@ class ChatController extends WP_REST_Controller {
                     $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
                 }
 
+                $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                 $toolResults[] = ['tool' => $functionName, 'result' => $result];
 
                 $this->emitSSE('progress', [
@@ -530,6 +532,29 @@ class ChatController extends WP_REST_Controller {
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
+                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
+                    $mutationNudgeCount++;
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => 'Der Nutzer hat eine konkrete Aenderung angefordert. Du hast bisher nur gelesen oder geprueft. '
+                            . 'Fuehre jetzt den passenden mutierenden Tool-Call aus (z. B. delete/update/create/install), '
+                            . 'oder erklaere konkret, warum die Ausfuehrung nicht moeglich ist. Behaupte keinen Abschluss ohne mutierenden Erfolg.',
+                    ];
+                    $nudgedResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat);
+                    if (is_wp_error($nudgedResponse)) {
+                        $this->emitSSE('error', [
+                            'message' => $nudgedResponse->get_error_message(),
+                            'session_id' => $sessionId,
+                            'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
+                        ]);
+                        return;
+                    }
+                    $messageData = $nudgedResponse['choices'][0]['message'] ?? [];
+                    if (!empty($messageData['tool_calls'])) {
+                        continue;
+                    }
+                }
+
                 $finalMessage = $this->sanitizeAssistantMessageContent(
                     (string) ($messageData['content'] ?? '')
                 );
@@ -806,6 +831,7 @@ class ChatController extends WP_REST_Controller {
         $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
+        $mutationNudgeCount = 0;
         $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
 
         while ($iteration < $maxIterations) {
@@ -856,6 +882,7 @@ class ChatController extends WP_REST_Controller {
                 } else {
                     $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
                 }
+                $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
                     'result' => $result,
@@ -917,6 +944,29 @@ class ChatController extends WP_REST_Controller {
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
+                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
+                    $mutationNudgeCount++;
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => 'Der Nutzer hat eine konkrete Aenderung angefordert. Du hast bisher nur gelesen oder geprueft. '
+                            . 'Fuehre jetzt den passenden mutierenden Tool-Call aus (z. B. delete/update/create/install), '
+                            . 'oder erklaere konkret, warum die Ausfuehrung nicht moeglich ist. Behaupte keinen Abschluss ohne mutierenden Erfolg.',
+                    ];
+
+                    $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions());
+                    if (is_wp_error($nextResponse)) {
+                        return new WP_REST_Response([
+                            'error' => $nextResponse->get_error_message(),
+                            'session_id' => $sessionId,
+                            'execution_trace' => $executionTrace,
+                        ], 500);
+                    }
+                    $messageData = $nextResponse['choices'][0]['message'] ?? [];
+                    if (!empty($messageData['tool_calls'])) {
+                        continue;
+                    }
+                }
+
                 $finalMessage = $this->sanitizeAssistantMessageContent(
                     (string) ($messageData['content'] ?? '')
                 );
@@ -1278,6 +1328,7 @@ class ChatController extends WP_REST_Controller {
         }
         return false;
     }
+
     
     private function getRelevantMemories(string $query): string {
         try {
@@ -1539,6 +1590,65 @@ class ChatController extends WP_REST_Controller {
         return false;
     }
 
+    private function isMutatingToolName(string $toolName): bool {
+        return in_array($toolName, [
+            'create_post',
+            'update_post',
+            'create_page',
+            'delete_post',
+            'install_plugin',
+            'switch_theme',
+            'manage_user',
+            'create_plugin',
+            'write_plugin_file',
+            'delete_plugin_file',
+            'write_theme_file',
+            'create_theme',
+            'delete_theme_file',
+            'manage_post_meta',
+            'manage_taxonomy',
+            'manage_woocommerce',
+            'manage_menu',
+            'manage_cron',
+            'upload_media',
+            'store_session_image',
+            'update_option',
+            'update_any_option',
+            'execute_wp_code',
+        ], true);
+    }
+
+    private function requestedMutationIntent(array $taskIntent): bool {
+        if (!empty($taskIntent['explicit_modify']) || !empty($taskIntent['explicit_create'])) {
+            return true;
+        }
+        return in_array($taskIntent['mode'] ?? 'unknown', ['modify_existing', 'create_new', 'probable_modify'], true);
+    }
+
+    private function hasSuccessfulMutation(array $toolResults): bool {
+        foreach ($toolResults as $row) {
+            $tool = (string) ($row['tool'] ?? '');
+            $success = (bool) ($row['result']['success'] ?? false);
+            if ($success && $this->isMutatingToolName($tool)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function shouldNudgePendingMutation(array $toolResults, array $taskIntent, int $nudgeCount): bool {
+        if ($nudgeCount >= 1) {
+            return false;
+        }
+        if (!$this->requestedMutationIntent($taskIntent)) {
+            return false;
+        }
+        if ($this->hasSuccessfulMutation($toolResults)) {
+            return false;
+        }
+        return !empty($toolResults);
+    }
+
     private function shouldDeferCreationTool(string $toolName, array $args, array $taskIntent): bool {
         if (!$this->isCreationTool($toolName, $args)) {
             return false;
@@ -1555,14 +1665,22 @@ class ChatController extends WP_REST_Controller {
     private function applyResponseSafetyGates(string $finalMessage, array $toolResults, array $taskIntent): string {
         $successful = array_values(array_filter($toolResults, fn($r) => ($r['result']['success'] ?? false) === true));
         $failed = array_values(array_filter($toolResults, fn($r) => ($r['result']['success'] ?? false) !== true));
-        $claimsDone = preg_match('/\b(fertig|abgeschlossen|komplett|erledigt|installiert und aktiviert|ist jetzt)\b/ui', $finalMessage) === 1;
+        $claimsDone = preg_match('/\b(fertig|abgeschlossen|komplett|erledigt|erfolgreich|installiert und aktiviert|ist jetzt|korrigiert)\b/ui', $finalMessage) === 1;
 
         if ($claimsDone && empty($successful)) {
             return 'Ich kann den Abschluss noch nicht sicher bestätigen, weil keine erfolgreiche Ausführung vorliegt. Soll ich es erneut versuchen oder zuerst den aktuellen Stand prüfen?';
         }
 
         if ($claimsDone && !empty($failed)) {
-            return $finalMessage . "\n\nHinweis: Mindestens ein Teilschritt ist fehlgeschlagen. Bitte prüfe den Zwischenstand, bevor wir final abschließen.";
+            $failedTools = array_values(array_unique(array_map(
+                fn($r) => (string) ($r['tool'] ?? ''),
+                $failed
+            )));
+            $failedTools = array_values(array_filter($failedTools, fn($t) => $t !== ''));
+            $failedList = empty($failedTools) ? 'mindestens ein Tool' : implode(', ', $failedTools);
+
+            return 'Ich kann den Abschluss noch nicht als erfolgreich bestätigen, weil mindestens ein Teilschritt fehlgeschlagen ist (' . $failedList . '). '
+                . 'Ich nenne dir jetzt transparent den Zwischenstand und kann danach gezielt nur die fehlgeschlagenen Schritte erneut ausführen.';
         }
 
         if (in_array($taskIntent['mode'] ?? 'unknown', ['modify_existing', 'probable_modify'], true)) {
@@ -1956,6 +2074,7 @@ class ChatController extends WP_REST_Controller {
         return implode("\n\n", $parts);
     }
 
+
     /**
      * Get image data URLs from session uploads for Vision API.
      * @return array<array{name: string, base64: string}>
@@ -2043,6 +2162,87 @@ class ChatController extends WP_REST_Controller {
 
     private function appendTruncationHint(string $message): string {
         return $message . "\n\n---\n*Meine Antwort wurde aufgrund des Token-Limits abgeschnitten. Schreibe \"mach weiter\", damit ich fortfahre.*";
+    }
+
+    private function logToolExecution(string $sessionId, int $userId, string $toolName, array $toolArgs, array $result): void {
+        global $wpdb;
+        $table = $wpdb->prefix . 'levi_audit_log';
+        static $auditTableExists = null;
+
+        if ($toolName === '') {
+            return;
+        }
+
+        if ($auditTableExists === null) {
+            $auditTableExists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) === $table;
+        }
+        if (!$auditTableExists) {
+            return;
+        }
+
+        $preparedArgs = $this->sanitizeAuditLogData($toolArgs);
+        $encodedArgs = wp_json_encode($preparedArgs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($encodedArgs)) {
+            $encodedArgs = '{}';
+        }
+
+        $summary = $this->summarizeToolResult($result);
+        if ($summary !== '') {
+            $summary = mb_substr($summary, 0, 255);
+        } else {
+            $summary = null;
+        }
+
+        $inserted = $wpdb->insert($table, [
+            'user_id' => $userId > 0 ? $userId : null,
+            'session_id' => $sessionId,
+            'tool_name' => $toolName,
+            'tool_args' => $encodedArgs,
+            'success' => !empty($result['success']) ? 1 : 0,
+            'result_summary' => $summary,
+            'executed_at' => current_time('mysql'),
+        ], ['%d', '%s', '%s', '%s', '%d', '%s', '%s']);
+
+        if ($inserted === false) {
+            error_log('Levi Audit Log insert failed: ' . $wpdb->last_error);
+        }
+    }
+
+    private function sanitizeAuditLogData(mixed $value): mixed {
+        if (is_array($value)) {
+            $sanitized = [];
+            foreach ($value as $key => $item) {
+                $keyString = is_string($key) ? strtolower($key) : (string) $key;
+                if ($this->isSensitiveAuditKey($keyString)) {
+                    $sanitized[$key] = '[REDACTED]';
+                    continue;
+                }
+                $sanitized[$key] = $this->sanitizeAuditLogData($item);
+            }
+            return $sanitized;
+        }
+
+        if (is_string($value)) {
+            return mb_strlen($value) > 1000 ? mb_substr($value, 0, 1000) . '…' : $value;
+        }
+
+        return $value;
+    }
+
+    private function isSensitiveAuditKey(string $key): bool {
+        return in_array($key, [
+            'password',
+            'passwort',
+            'secret',
+            'token',
+            'api_key',
+            'authorization',
+            'cookie',
+            'nonce',
+            'levi_action_password',
+            'confirm_password',
+            'confirmation_password',
+        ], true);
     }
 
 }

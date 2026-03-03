@@ -46,14 +46,23 @@ if (file_exists(LEVI_AGENT_PLUGIN_DIR . 'vendor/autoload.php')) {
 // Main Plugin Class
 use Levi\Agent\Core\Plugin;
 use Levi\Agent\Memory\StateSnapshotService;
+use Levi\Agent\Database\Tables;
 
 // Ensure DB tables exist (runs before Plugin init - fixes missed activation hook)
 add_action('plugins_loaded', function() {
     global $wpdb;
     $table = $wpdb->prefix . 'levi_conversations';
-    if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+    $auditTable = $wpdb->prefix . 'levi_audit_log';
+    if (
+        $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table
+        || $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $auditTable)) !== $auditTable
+    ) {
         require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
-        Levi\Agent\Database\Tables::create();
+        Tables::create();
+    }
+
+    if (!wp_next_scheduled('levi_cleanup_audit_log')) {
+        wp_schedule_event(time() + DAY_IN_SECONDS, 'daily', 'levi_cleanup_audit_log');
     }
 }, 1);
 
@@ -66,8 +75,11 @@ add_action('plugins_loaded', function() {
 // Activation hook
 register_activation_hook(__FILE__, function() {
     require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
-    Levi\Agent\Database\Tables::create();
+    Tables::create();
     StateSnapshotService::scheduleEvent();
+    if (!wp_next_scheduled('levi_cleanup_audit_log')) {
+        wp_schedule_event(time() + DAY_IN_SECONDS, 'daily', 'levi_cleanup_audit_log');
+    }
 
     // Trigger one-time setup wizard redirect after activation.
     update_option('levi_setup_wizard_pending', 1);
@@ -79,4 +91,10 @@ register_activation_hook(__FILE__, function() {
 // Deactivation hook
 register_deactivation_hook(__FILE__, function() {
     StateSnapshotService::unscheduleEvent();
+    wp_clear_scheduled_hook('levi_cleanup_audit_log');
+});
+
+add_action('levi_cleanup_audit_log', function() {
+    require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
+    Tables::cleanupAuditLog(7);
 });
