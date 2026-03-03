@@ -37,18 +37,24 @@ class GetPostTool implements ToolInterface {
     }
 
     public function execute(array $params): array {
+        if (empty($params['id']) && empty($params['title'])) {
+            return [
+                'success' => false,
+                'error' => 'Post ID or title is required.',
+                'suggestion' => 'Use get_posts to list available posts and find the correct ID.',
+            ];
+        }
+
         $post = null;
 
-        // Get by ID
         if (!empty($params['id'])) {
             $post = get_post(intval($params['id']));
-        }
-        // Get by title
-        elseif (!empty($params['title'])) {
+        } elseif (!empty($params['title'])) {
             $query = new \WP_Query([
-                'post_type' => 'post',
+                'post_type' => ['post', 'page', 'any'],
                 'title' => $params['title'],
                 'posts_per_page' => 1,
+                'post_status' => 'any',
             ]);
             if (!empty($query->posts)) {
                 $post = $query->posts[0];
@@ -58,7 +64,8 @@ class GetPostTool implements ToolInterface {
         if (!$post) {
             return [
                 'success' => false,
-                'error' => 'Post not found',
+                'error' => 'Post not found.',
+                'suggestion' => 'Use get_posts to list available posts and verify the ID or title.',
             ];
         }
 

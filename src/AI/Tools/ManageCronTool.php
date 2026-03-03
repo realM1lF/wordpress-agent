@@ -122,7 +122,11 @@ class ManageCronTool implements ToolInterface {
         $result = wp_unschedule_event($timestamp, $hook, $args);
 
         if ($result === false) {
-            return ['success' => false, 'error' => 'Could not unschedule the event.'];
+            return [
+                'success' => false,
+                'error' => 'Could not unschedule the event.',
+                'suggestion' => 'Use action "list_events" to verify the exact hook name and timestamp.',
+            ];
         }
 
         return [

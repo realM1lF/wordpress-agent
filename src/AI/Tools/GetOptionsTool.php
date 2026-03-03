@@ -26,6 +26,8 @@ class GetOptionsTool implements ToolInterface {
         'page_for_posts',
         'blog_charset',
         'active_theme',
+        'stylesheet',
+        'template',
     ];
 
     public function getName(): string {

@@ -114,7 +114,6 @@ class SetupWizardPage {
         $settings['openrouter_api_key'] = sanitize_text_field($apiKey);
         $settings['openrouter_model'] = 'moonshotai/kimi-k2.5';
         $settings['tool_profile'] = 'standard';
-        $settings['force_exhaustive_reads'] = 1;
         $settings['require_confirmation_destructive'] = 1;
         $settings['max_tool_iterations'] = 12;
         $settings['history_context_limit'] = 50;
@@ -142,13 +141,10 @@ class SetupWizardPage {
         }
 
         if ($thoroughness === 'high') {
-            $settings['force_exhaustive_reads'] = 1;
             $settings['history_context_limit'] = 80;
         } elseif ($thoroughness === 'low') {
-            $settings['force_exhaustive_reads'] = 0;
             $settings['history_context_limit'] = 30;
         } else {
-            $settings['force_exhaustive_reads'] = 1;
             $settings['history_context_limit'] = 50;
         }
 

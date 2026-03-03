@@ -65,7 +65,17 @@ class ReadPluginFileTool implements ToolInterface {
 
         $pluginRoot = trailingslashit(WP_PLUGIN_DIR) . $slug;
         if (!is_dir($pluginRoot)) {
-            return ['success' => false, 'error' => 'Plugin directory does not exist.'];
+            $resolved = $this->resolvePluginDirectory($slug);
+            if ($resolved !== null) {
+                $pluginRoot = $resolved;
+                $slug = basename($resolved);
+            } else {
+                return [
+                    'success' => false,
+                    'error' => 'Plugin directory does not exist.',
+                    'suggestion' => 'Use get_plugins first to find the correct plugin_slug (directory name).',
+                ];
+            }
         }
 
         $targetPath = $pluginRoot . '/' . $relativePath;
@@ -117,5 +127,32 @@ class ReadPluginFileTool implements ToolInterface {
             'truncated' => $nextOffset < $size,
             'content' => $content,
         ];
+    }
+
+    private function resolvePluginDirectory(string $requestedSlug): ?string {
+        if (!is_dir(WP_PLUGIN_DIR)) {
+            return null;
+        }
+        $entries = scandir(WP_PLUGIN_DIR);
+        if ($entries === false) {
+            return null;
+        }
+        $normalized = $this->normalizeSlug($requestedSlug);
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..' || !is_dir(WP_PLUGIN_DIR . '/' . $entry)) {
+                continue;
+            }
+            if ($entry === $requestedSlug) {
+                continue;
+            }
+            if ($this->normalizeSlug($entry) === $normalized) {
+                return WP_PLUGIN_DIR . '/' . $entry;
+            }
+        }
+        return null;
+    }
+
+    private function normalizeSlug(string $slug): string {
+        return strtolower(str_replace(['-', '_'], '', $slug));
     }
 }

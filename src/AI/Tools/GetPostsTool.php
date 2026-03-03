@@ -104,14 +104,21 @@ class GetPostsTool implements ToolInterface {
             'order' => $params['order'] ?? 'DESC',
         ];
 
+        $filterWarnings = [];
+
         // Category filter
         if (!empty($params['category'])) {
             $category = get_category_by_slug($params['category']);
             if (!$category) {
-                $category = get_cat_ID($params['category']);
+                $catId = get_cat_ID($params['category']);
+                if ($catId > 0) {
+                    $category = $catId;
+                }
             }
             if ($category) {
                 $args['cat'] = is_object($category) ? $category->term_id : $category;
+            } else {
+                $filterWarnings[] = sprintf('Category "%s" not found — filter was ignored.', $params['category']);
             }
         }
 
@@ -121,8 +128,13 @@ class GetPostsTool implements ToolInterface {
                 $args['author'] = intval($params['author']);
             } else {
                 $user = get_user_by('login', $params['author']);
+                if (!$user) {
+                    $user = get_user_by('slug', $params['author']);
+                }
                 if ($user) {
                     $args['author'] = $user->ID;
+                } else {
+                    $filterWarnings[] = sprintf('Author "%s" not found — filter was ignored.', $params['author']);
                 }
             }
         }
@@ -139,7 +151,7 @@ class GetPostsTool implements ToolInterface {
             $posts[] = $this->formatPost($post, $includeContent);
         }
 
-        return [
+        $result = [
             'success' => true,
             'page' => $pageNum,
             'per_page' => $perPage,
@@ -149,6 +161,12 @@ class GetPostsTool implements ToolInterface {
             'total' => $query->found_posts,
             'posts' => $posts,
         ];
+
+        if (!empty($filterWarnings)) {
+            $result['filter_warnings'] = $filterWarnings;
+        }
+
+        return $result;
     }
 
     private function formatPost(\WP_Post $post, bool $includeContent): array {

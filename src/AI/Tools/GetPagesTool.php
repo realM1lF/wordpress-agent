@@ -9,7 +9,7 @@ class GetPagesTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get WordPress pages (post_type=page) with optional full content. Returns EXACT data from database. When displaying results, show EVERY page with its EXACT ID and title from the result. Never skip pages, never invent IDs, never use placeholder text like "(weitere Seite)".';
+        return 'Get WordPress pages (post_type=page) with optional full content. CRITICAL: Always use status="any" unless user explicitly asks for specific status (draft/trash/publish). Examples: "alle Seiten" -> status="any", "Entwürfe" -> status="draft", "gelöschte Seiten" -> status="trash". Returns EXACT data from database. Show EVERY page with EXACT ID - never skip, never invent.';
     }
 
     public function getParameters(): array {
@@ -78,7 +78,7 @@ class GetPagesTool implements ToolInterface {
             'post_type' => 'page',
             'posts_per_page' => $perPage,
             'paged' => $pageNum,
-            'post_status' => $params['status'] ?? 'publish',
+            'post_status' => $params['status'] ?? 'any',
             'orderby' => $params['orderby'] ?? 'menu_order',
             'order' => $params['order'] ?? 'ASC',
         ];

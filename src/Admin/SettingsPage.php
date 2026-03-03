@@ -92,6 +92,28 @@ class SettingsPage {
         return str_starts_with($locale, 'de') ? $german : $english;
     }
 
+    private function deriveThoroughness(int $historyLimit, array $tuningMode): string {
+        if (isset($tuningMode['thoroughness']) && in_array($tuningMode['thoroughness'], ['low', 'balanced', 'high'], true)) {
+            return $tuningMode['thoroughness'];
+        }
+        return match (true) {
+            $historyLimit <= 30 => 'low',
+            $historyLimit >= 80 => 'high',
+            default => 'balanced',
+        };
+    }
+
+    private function deriveSpeed(int $maxIterations, array $tuningMode): string {
+        if (isset($tuningMode['speed']) && in_array($tuningMode['speed'], ['fast', 'balanced', 'careful'], true)) {
+            return $tuningMode['speed'];
+        }
+        return match (true) {
+            $maxIterations <= 6 => 'fast',
+            $maxIterations >= 16 => 'careful',
+            default => 'balanced',
+        };
+    }
+
     /** @return string Translated label for snapshot status (internal key). */
     private function translateSnapshotStatus(string $status): string {
         $labels = [
@@ -153,14 +175,49 @@ class SettingsPage {
 
         // Numeric & Boolean Settings
         $sanitized['rate_limit'] = max(1, min(1000, absint($input['rate_limit'] ?? 50)));
-        $sanitized['max_tool_iterations'] = max(1, absint($input['max_tool_iterations'] ?? 12));
         $sanitized['max_tokens'] = max(1, min(131072, absint($input['max_tokens'] ?? 131072)));
         $sanitized['ai_timeout'] = max(1, absint($input['ai_timeout'] ?? 120));
         $sanitized['php_time_limit'] = max(0, absint($input['php_time_limit'] ?? 120));
         $sanitized['max_context_tokens'] = max(1000, min(500000, absint($input['max_context_tokens'] ?? 100000)));
-        $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'] ?? 50)));
-        $sanitized['force_exhaustive_reads'] = !empty($input['force_exhaustive_reads']) ? 1 : 0;
-        $sanitized['require_confirmation_destructive'] = !empty($input['require_confirmation_destructive']) ? 1 : 0;
+
+        // Behavior presets (dropdowns shared with wizard)
+        $thoroughness = sanitize_key($input['levi_thoroughness'] ?? '');
+        $safetyMode = sanitize_key($input['levi_safety_mode'] ?? '');
+        $speedMode = sanitize_key($input['levi_speed_mode'] ?? '');
+
+        if (in_array($thoroughness, ['low', 'balanced', 'high'], true)) {
+            $sanitized['history_context_limit'] = match ($thoroughness) {
+                'high' => 80,
+                'low' => 30,
+                default => 50,
+            };
+        } else {
+            $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'] ?? 50)));
+        }
+
+        if (in_array($safetyMode, ['strict', 'standard'], true)) {
+            $sanitized['require_confirmation_destructive'] = $safetyMode === 'strict' ? 1 : 0;
+        } else {
+            $sanitized['require_confirmation_destructive'] = !empty($input['require_confirmation_destructive']) ? 1 : 0;
+        }
+
+        if (in_array($speedMode, ['fast', 'balanced', 'careful'], true)) {
+            $sanitized['max_tool_iterations'] = match ($speedMode) {
+                'fast' => 6,
+                'careful' => 16,
+                default => 10,
+            };
+        } else {
+            $sanitized['max_tool_iterations'] = max(1, absint($input['max_tool_iterations'] ?? 12));
+        }
+
+        if ($thoroughness !== '' || $safetyMode !== '' || $speedMode !== '') {
+            update_option('levi_setup_tuning_mode', [
+                'thoroughness' => $thoroughness ?: 'balanced',
+                'safety' => $safetyMode ?: 'strict',
+                'speed' => $speedMode ?: 'balanced',
+            ]);
+        }
 
         $profileCandidate = sanitize_key($input['tool_profile'] ?? 'standard');
         $sanitized['tool_profile'] = in_array($profileCandidate, \Levi\Agent\AI\Tools\Registry::VALID_PROFILES, true)
@@ -305,7 +362,7 @@ class SettingsPage {
                         </div>
                         <div class="levi-status-row">
                             <span class="levi-status-label"><?php echo esc_html($this->tr('Model', 'Modell')); ?></span>
-                            <span class="levi-status-value"><?php echo esc_html($this->getModelForProvider($provider)); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html($this->getAltModelForProvider($provider)); ?></span>
                         </div>
                         <div class="levi-status-row">
                             <span class="levi-status-label"><?php echo esc_html($this->tr('Status', 'Status')); ?></span>
@@ -496,36 +553,132 @@ class SettingsPage {
                 </div>
             </div>
 
-            <!-- Model (fixed: Kimi K2.5) -->
+            <!-- Model Selection -->
             <div class="levi-form-card">
-                <h3><?php echo esc_html($this->tr('Model', 'Modell')); ?></h3>
-                <div class="levi-form-group">
-                    <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[openrouter_model]" value="moonshotai/kimi-k2.5">
-                    <p class="levi-form-help"><?php echo esc_html($this->tr('Kimi K2.5 (Moonshot) via OpenRouter', 'Kimi K2.5 (Moonshot) ueber OpenRouter')); ?></p>
-                </div>
-            </div>
-
-            <!-- Alternative Model (for simple queries) -->
-            <div class="levi-form-card">
-                <h3><?php echo esc_html($this->tr('Alternative Model (Turbo)', 'Alternatives Modell (Turbo)')); ?></h3>
+                <h3><?php echo esc_html($this->tr('AI Model', 'KI-Modell')); ?></h3>
                 <p class="levi-form-description">
-                    <?php echo esc_html($this->tr('Faster model for simple queries. Automatically used for questions like "What can you do?" or simple knowledge questions.', 'Schnelleres Modell fuer einfache Fragen. Automatisch genutzt fuer Fragen wie "Was kannst du?" oder einfache Wissensfragen.')); ?>
+                    <?php echo esc_html($this->tr('Select the AI model to use for all queries. This model will handle everything from simple questions to complex coding tasks.', 'Wähle das KI-Modell für alle Anfragen. Dieses Modell bearbeitet alles von einfachen Fragen bis zu komplexen Coding-Aufgaben.')); ?>
                 </p>
                 <div class="levi-form-group">
                     <?php 
-                    $altModels = $this->getAllowedAltModelsForProvider('openrouter');
-                    $currentAltModel = $settings['openrouter_alt_model'] ?? 'anthropic/claude-3.5-sonnet';
+                    $models = $this->getAllowedAltModelsForProvider('openrouter');
+                    $currentModel = $settings['openrouter_alt_model'] ?? 'moonshotai/kimi-k2.5';
                     ?>
-                    <select name="<?php echo esc_attr($this->optionName); ?>[openrouter_alt_model]" class="levi-form-select">
-                        <?php foreach ($altModels as $modelId => $modelLabel): ?>
-                            <option value="<?php echo esc_attr($modelId); ?>" <?php selected($currentAltModel, $modelId); ?>>
+                    <select name="<?php echo esc_attr($this->optionName); ?>[openrouter_alt_model]" class="levi-form-select" id="levi-model-select">
+                        <?php foreach ($models as $modelId => $modelLabel): ?>
+                            <option value="<?php echo esc_attr($modelId); ?>" <?php selected($currentModel, $modelId); ?>>
                                 <?php echo esc_html($modelLabel); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr('Recommendation: Claude 3.5 Sonnet for best speed/quality balance.', 'Empfehlung: Claude 3.5 Sonnet fuer beste Balance aus Geschwindigkeit und Qualitaet.')); ?>
-                    </p>
+                </div>
+
+                <!-- Model Comparison Tables -->
+                <div class="levi-model-info">
+                    <h4><?php echo esc_html($this->tr('📊 Model Comparison', 'Modell-Vergleich')); ?></h4>
+                    
+                    <div class="levi-table-wrap">
+                        <table class="levi-data-table">
+                            <thead>
+                                <tr>
+                                    <th><?php echo esc_html($this->tr('Model', 'Modell')); ?></th>
+                                    <th><?php echo esc_html($this->tr('💰 Price (In/Out)', 'Preis (In/Out)')); ?></th>
+                                    <th><?php echo esc_html($this->tr('🧠 Intelligence', 'Intelligenz')); ?></th>
+                                    <th><?php echo esc_html($this->tr('📖 Context', 'Kontext')); ?></th>
+                                    <th><?php echo esc_html($this->tr('⚡ Speed', 'Geschwindigkeit')); ?></th>
+                                    <th><?php echo esc_html($this->tr('🎯 Best For', 'Beste für')); ?></th>
+                                    <th><?php echo esc_html($this->tr('⭐ Value', 'Preis-Leistung')); ?></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="levi-row-featured">
+                                    <td><span class="levi-model-name">Kimi K2.5</span></td>
+                                    <td><span class="levi-price">$0.60 / $3.00</span></td>
+                                    <td><span class="levi-score">87%</span> <span class="levi-badge">Sehr hoch</span></td>
+                                    <td>262K</td>
+                                    <td><?php echo esc_html($this->tr('Fast', 'Schnell')); ?></td>
+                                    <td><?php echo esc_html($this->tr('Allrounder, Coding, Analysis', 'Allrounder, Coding, Analyse')); ?></td>
+                                    <td><span class="levi-rating">⭐⭐⭐⭐⭐ KING</span></td>
+                                </tr>
+                                <tr>
+                                    <td>GPT 5.3 Codex</td>
+                                    <td><span class="levi-price">$1.75 / $14.00</span></td>
+                                    <td><span class="levi-score">86%</span> <span class="levi-badge">Sehr hoch</span></td>
+                                    <td>400K</td>
+                                    <td><?php echo esc_html($this->tr('Medium', 'Mittel')); ?></td>
+                                    <td><?php echo esc_html($this->tr('Max coding quality, large codebases', 'Max. Coding-Qualität, große Codebases')); ?></td>
+                                    <td><span class="levi-rating">⭐⭐⭐⭐ Sehr gut</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Claude Opus 4.6</td>
+                                    <td><span class="levi-price levi-price-high">$5.00 / $25.00</span></td>
+                                    <td><span class="levi-score">88%</span> <span class="levi-badge">Höchst</span></td>
+                                    <td>1M</td>
+                                    <td><?php echo esc_html($this->tr('Slower', 'Langsamer')); ?></td>
+                                    <td><?php echo esc_html($this->tr('Complex reasoning, research', 'Komplexes Reasoning, Research')); ?></td>
+                                    <td><span class="levi-rating">⭐⭐⭐ Premium</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Claude 3.5 Sonnet</td>
+                                    <td><span class="levi-price levi-price-high">$3.00 / $15.00</span></td>
+                                    <td><span class="levi-score">89%</span> <span class="levi-badge">Höchst</span></td>
+                                    <td>200K</td>
+                                    <td><?php echo esc_html($this->tr('Fast', 'Schnell')); ?></td>
+                                    <td><?php echo esc_html($this->tr('Backup option', 'Backup-Option')); ?></td>
+                                    <td><span class="levi-rating">⭐⭐⭐ Okay</span></td>
+                                </tr>
+                                <tr>
+                                    <td>GPT-4o Mini</td>
+                                    <td><span class="levi-price levi-price-low">$0.15 / $0.60</span></td>
+                                    <td><span class="levi-score">82%</span> <span class="levi-badge">Hoch</span></td>
+                                    <td>128K</td>
+                                    <td><?php echo esc_html($this->tr('Very fast', 'Sehr schnell')); ?></td>
+                                    <td><?php echo esc_html($this->tr('Budget option, simple tasks', 'Budget-Option, einfache Aufgaben')); ?></td>
+                                    <td><span class="levi-rating">⭐⭐⭐⭐ Gut</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h4><?php echo esc_html($this->tr('🎯 Quick Selection Guide', 'Schnellauswahl')); ?></h4>
+                    <div class="levi-table-wrap">
+                        <table class="levi-data-table levi-guide-table">
+                            <thead>
+                                <tr>
+                                    <th><?php echo esc_html($this->tr('If you want...', 'Wenn du willst...')); ?></th>
+                                    <th><?php echo esc_html($this->tr('Choose...', 'Wähle...')); ?></th>
+                                    <th><?php echo esc_html($this->tr('Why?', 'Warum?')); ?></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="levi-row-featured">
+                                    <td><?php echo esc_html($this->tr('The best value for money', 'Das Beste fürs Geld')); ?></td>
+                                    <td><span class="levi-model-name">Kimi K2.5</span></td>
+                                    <td><?php echo esc_html($this->tr('9x cheaper than Opus, almost equally smart', '9x günstiger als Opus, fast gleich smart')); ?></td>
+                                </tr>
+                                <tr>
+                                    <td><?php echo esc_html($this->tr('Huge codebases (400K+ context)', 'Riesige Codebases (400K+ Kontext)')); ?></td>
+                                    <td>GPT 5.3 Codex</td>
+                                    <td><?php echo esc_html($this->tr('Largest context, best coding worldwide', 'Größter Kontext, bestes Coding weltweit')); ?></td>
+                                </tr>
+                                <tr>
+                                    <td><?php echo esc_html($this->tr('Extremely complex analysis', 'Extrem komplexe Analysen')); ?></td>
+                                    <td>Claude Opus 4.6</td>
+                                    <td><?php echo esc_html($this->tr('Highest intelligence, 1M context', 'Höchste Intelligenz, 1M Kontext')); ?></td>
+                                </tr>
+                                <tr>
+                                    <td><?php echo esc_html($this->tr('Watch your budget', 'Aufs Geld achten')); ?></td>
+                                    <td>GPT-4o Mini</td>
+                                    <td><?php echo esc_html($this->tr('4x cheaper than Kimi, still good', '4x günstiger als Kimi, trotzdem gut')); ?></td>
+                                </tr>
+                                <tr>
+                                    <td><?php echo esc_html($this->tr('Prefer Claude', 'Claude bevorzugen')); ?></td>
+                                    <td>Claude 3.5 Sonnet</td>
+                                    <td><?php echo esc_html($this->tr('Good balance, but 5x more expensive than Kimi', 'Gute Balance, aber 5x teurer als Kimi')); ?></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -742,49 +895,51 @@ class SettingsPage {
                     </div>
                 </div>
 
-                <!-- Confirmation Settings -->
+                <!-- Levi Behavior Presets (same as wizard) -->
                 <div class="levi-form-card">
-                    <h3><?php echo esc_html($this->tr('Confirmation Requirements', 'Bestaetigungsregeln')); ?></h3>
-                    
-                    <div class="levi-toggle-group">
-                        <label class="levi-toggle">
-                            <input type="checkbox" 
-                                   name="<?php echo esc_attr($this->optionName); ?>[require_confirmation_destructive]" 
-                                   value="1"
-                                   <?php checked(!empty($settings['require_confirmation_destructive'])); ?>>
-                            <span class="levi-toggle-slider"></span>
-                            <span class="levi-toggle-label">
-                                <?php echo esc_html($this->tr('Require confirmation for destructive actions', 'Bestaetigung fuer destruktive Aktionen erforderlich')); ?>
-                            </span>
-                        </label>
-                    </div>
+                    <h3><?php echo esc_html($this->tr('Levi Behavior', 'Levi-Verhalten')); ?></h3>
+                    <p class="levi-form-help" style="margin-bottom: 1rem;">
+                        <?php echo esc_html($this->tr(
+                            'Same settings as in the setup wizard. Changes take effect immediately.',
+                            'Gleiche Einstellungen wie im Einrichtungsassistenten. Aenderungen wirken sofort.'
+                        )); ?>
+                    </p>
 
-                    <div class="levi-toggle-group">
-                        <label class="levi-toggle">
-                            <input type="checkbox" 
-                                   name="<?php echo esc_attr($this->optionName); ?>[force_exhaustive_reads]" 
-                                   value="1"
-                                   <?php checked(!empty($settings['force_exhaustive_reads'])); ?>>
-                            <span class="levi-toggle-slider"></span>
-                            <span class="levi-toggle-label">
-                                <?php echo esc_html($this->tr('Force exhaustive content analysis', 'Gruendliche Inhaltsanalyse erzwingen')); ?>
-                            </span>
-                        </label>
-                    </div>
-                </div>
+                    <?php
+                    $tuningMode = get_option('levi_setup_tuning_mode', []);
+                    if (!is_array($tuningMode)) { $tuningMode = []; }
+                    $curThoroughness = $this->deriveThoroughness((int) ($settings['history_context_limit'] ?? 50), $tuningMode);
+                    $curSafety = !empty($settings['require_confirmation_destructive']) ? 'strict' : 'standard';
+                    $curSpeed = $this->deriveSpeed((int) ($settings['max_tool_iterations'] ?? 10), $tuningMode);
+                    ?>
 
-                <!-- Tool Iterations -->
-                <div class="levi-form-card">
-                    <h3><?php echo esc_html($this->tr('Tool Execution', 'Tool-Ausfuehrung')); ?></h3>
                     <div class="levi-form-group">
-                        <label class="levi-form-label"><?php echo esc_html($this->tr('Max Tool Iterations', 'Max. Tool-Iterationen')); ?></label>
-                        <input type="number" 
-                               name="<?php echo esc_attr($this->optionName); ?>[max_tool_iterations]" 
-                               value="<?php echo esc_attr($settings['max_tool_iterations']); ?>"
-                               min="1" class="levi-form-input levi-input-small">
-                        <p class="levi-form-help">
-                            <?php echo esc_html($this->tr('Maximum consecutive tool rounds per request. No upper limit.', 'Maximale aufeinanderfolgende Tool-Runden pro Anfrage. Kein Oberlimit.')); ?>
-                        </p>
+                        <label class="levi-form-label" for="levi_thoroughness"><?php echo esc_html($this->tr('How thoroughly should Levi read?', 'Wie gruendlich soll Levi lesen?')); ?></label>
+                        <select id="levi_thoroughness" name="<?php echo esc_attr($this->optionName); ?>[levi_thoroughness]" class="levi-form-select">
+                            <option value="low" <?php selected($curThoroughness, 'low'); ?>><?php echo esc_html($this->tr('Fast — reads only essentials', 'Schnell — liest nur das Noetigste')); ?></option>
+                            <option value="balanced" <?php selected($curThoroughness, 'balanced'); ?>><?php echo esc_html($this->tr('Balanced (recommended)', 'Ausgewogen (empfohlen)')); ?></option>
+                            <option value="high" <?php selected($curThoroughness, 'high'); ?>><?php echo esc_html($this->tr('Very thorough — reads more, takes longer', 'Sehr gruendlich — liest mehr Inhalte, braucht laenger')); ?></option>
+                        </select>
+                        <p class="levi-form-help"><?php echo esc_html($this->tr('Controls how many previous messages Levi considers per request.', 'Beeinflusst, wie viel Kontext Levi bei jeder Anfrage beruecksichtigt.')); ?></p>
+                    </div>
+
+                    <div class="levi-form-group">
+                        <label class="levi-form-label" for="levi_safety_mode"><?php echo esc_html($this->tr('How careful should Levi be with changes?', 'Wie vorsichtig soll Levi bei Aenderungen sein?')); ?></label>
+                        <select id="levi_safety_mode" name="<?php echo esc_attr($this->optionName); ?>[levi_safety_mode]" class="levi-form-select">
+                            <option value="strict" <?php selected($curSafety, 'strict'); ?>><?php echo esc_html($this->tr('Safe — asks before deleting/changing', 'Sicher — fragt vor dem Loeschen/Aendern nach')); ?></option>
+                            <option value="standard" <?php selected($curSafety, 'standard'); ?>><?php echo esc_html($this->tr('Standard — fewer confirmations, faster', 'Standard — weniger Nachfragen, schneller')); ?></option>
+                        </select>
+                        <p class="levi-form-help"><?php echo esc_html($this->tr('In safe mode Levi confirms every delete or change action with you.', 'Im sicheren Modus bestaetigt Levi jede Loesch- oder Aenderungs-Aktion mit dir.')); ?></p>
+                    </div>
+
+                    <div class="levi-form-group">
+                        <label class="levi-form-label" for="levi_speed_mode"><?php echo esc_html($this->tr('How fast should Levi respond?', 'Wie schnell soll Levi antworten?')); ?></label>
+                        <select id="levi_speed_mode" name="<?php echo esc_attr($this->optionName); ?>[levi_speed_mode]" class="levi-form-select">
+                            <option value="fast" <?php selected($curSpeed, 'fast'); ?>><?php echo esc_html($this->tr('Fast — fewer steps, shorter answers', 'Schnell — weniger Schritte, kuerzere Antworten')); ?></option>
+                            <option value="balanced" <?php selected($curSpeed, 'balanced'); ?>><?php echo esc_html($this->tr('Balanced (recommended)', 'Ausgewogen (empfohlen)')); ?></option>
+                            <option value="careful" <?php selected($curSpeed, 'careful'); ?>><?php echo esc_html($this->tr('Careful — more steps, thorough results', 'Sorgfaeltig — mehr Schritte, gruendlichere Ergebnisse')); ?></option>
+                        </select>
+                        <p class="levi-form-help"><?php echo esc_html($this->tr('Determines how many tool steps Levi may execute per request.', 'Bestimmt, wie viele Tool-Schritte Levi pro Anfrage ausfuehren darf.')); ?></p>
                     </div>
                 </div>
 
@@ -828,27 +983,15 @@ class SettingsPage {
                 <!-- Context Budget -->
                 <div class="levi-form-card">
                     <h3><?php echo esc_html($this->tr('Conversation Context', 'Kontext-Verlauf')); ?></h3>
-                    <div class="levi-form-row">
-                        <div class="levi-form-group">
-                            <label class="levi-form-label"><?php echo esc_html($this->tr('Max Context Tokens', 'Max. Kontext-Tokens')); ?></label>
-                            <input type="number" 
-                                   name="<?php echo esc_attr($this->optionName); ?>[max_context_tokens]" 
-                                   value="<?php echo esc_attr($settings['max_context_tokens']); ?>"
-                                   min="1000" max="500000" step="1000" class="levi-form-input levi-input-small">
-                            <p class="levi-form-help">
-                                <?php echo esc_html($this->tr('Maximum input tokens sent to the AI. Older messages are trimmed if exceeded. Prevents context overflow errors.', 'Maximale Input-Tokens an die KI. Aeltere Nachrichten werden gekuerzt wenn ueberschritten. Verhindert Context-Overflow-Fehler.')); ?>
-                            </p>
-                        </div>
-                        <div class="levi-form-group">
-                            <label class="levi-form-label"><?php echo esc_html($this->tr('History Messages', 'Verlaufsnachrichten')); ?></label>
-                            <input type="number" 
-                                   name="<?php echo esc_attr($this->optionName); ?>[history_context_limit]" 
-                                   value="<?php echo esc_attr($settings['history_context_limit']); ?>"
-                                   min="10" max="200" class="levi-form-input levi-input-small">
-                            <p class="levi-form-help">
-                                <?php echo esc_html($this->tr('Number of previous messages sent as context.', 'Anzahl vorheriger Nachrichten, die als Kontext mitgesendet werden.')); ?>
-                            </p>
-                        </div>
+                    <div class="levi-form-group">
+                        <label class="levi-form-label"><?php echo esc_html($this->tr('Max Context Tokens', 'Max. Kontext-Tokens')); ?></label>
+                        <input type="number" 
+                               name="<?php echo esc_attr($this->optionName); ?>[max_context_tokens]" 
+                               value="<?php echo esc_attr($settings['max_context_tokens']); ?>"
+                               min="1000" max="500000" step="1000" class="levi-form-input levi-input-small">
+                        <p class="levi-form-help">
+                            <?php echo esc_html($this->tr('Maximum input tokens sent to the AI. Older messages are trimmed if exceeded. Prevents context overflow errors.', 'Maximale Input-Tokens an die KI. Aeltere Nachrichten werden gekuerzt wenn ueberschritten. Verhindert Context-Overflow-Fehler.')); ?>
+                        </p>
                     </div>
                 </div>
             </div>
@@ -1055,10 +1198,11 @@ class SettingsPage {
             return [];
         }
         return [
-            'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet (Schnell & Schlau)',
-            'google/gemini-2.0-flash' => 'Gemini 2.0 Flash (Sehr schnell)',
-            'openai/gpt-4o-mini' => 'GPT-4o Mini (Schnell & Günstig)',
-            'disabled' => 'Deaktiviert (Nur Hauptmodell nutzen)',
+            'moonshotai/kimi-k2.5' => 'Kimi K2.5',
+            'openai/gpt-5.3-codex' => 'GPT 5.3 Codex',
+            'anthropic/claude-opus-4.6' => 'Claude Opus 4.6',
+            'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet',
+            'openai/gpt-4o-mini' => 'GPT-4o Mini',
         ];
     }
 
@@ -1068,6 +1212,14 @@ class SettingsPage {
 
     public function getModelForProvider(string $provider): string {
         $settings = $this->getSettings();
+        
+        // For OpenRouter, use the selected model (openrouter_alt_model stores the choice)
+        if ($provider === 'openrouter') {
+            $allowed = $this->getAllowedAltModelsForProvider($provider);
+            $model = (string) ($settings['openrouter_alt_model'] ?? array_key_first($allowed));
+            return isset($allowed[$model]) ? $model : array_key_first($allowed);
+        }
+        
         $settingKey = match ($provider) {
             'openai' => 'openai_model',
             'anthropic' => 'anthropic_model',
@@ -1079,19 +1231,13 @@ class SettingsPage {
     }
 
     public function getAltModel(): string {
-        return $this->getAltModelForProvider($this->getProvider());
+        // Deprecated: Use getModel() instead - kept for backwards compatibility
+        return $this->getModel();
     }
 
     public function getAltModelForProvider(string $provider): string {
-        // Alternative model only supported for OpenRouter currently
-        if ($provider !== 'openrouter') {
-            return $this->getModelForProvider($provider);
-        }
-        
-        $settings = $this->getSettings();
-        $allowed = $this->getAllowedAltModelsForProvider($provider);
-        $model = (string) ($settings['openrouter_alt_model'] ?? array_key_first($allowed));
-        return isset($allowed[$model]) ? $model : array_key_first($allowed);
+        // Deprecated: Use getModelForProvider() instead - kept for backwards compatibility
+        return $this->getModelForProvider($provider);
     }
 
     public function getSettings(): array {
@@ -1102,7 +1248,7 @@ class SettingsPage {
             'openai_api_key' => '',
             'anthropic_api_key' => '',
             'openrouter_model' => 'moonshotai/kimi-k2.5',
-            'openrouter_alt_model' => 'anthropic/claude-3.5-sonnet',
+            'openrouter_alt_model' => 'moonshotai/kimi-k2.5',
             'openai_model' => 'gpt-4o-mini',
             'anthropic_model' => 'claude-3-5-sonnet-20241022',
             'rate_limit' => 50,
@@ -1113,7 +1259,6 @@ class SettingsPage {
             'max_context_tokens' => 100000,
             'history_context_limit' => 50,
             'tool_profile' => 'standard',
-            'force_exhaustive_reads' => 1,
             'require_confirmation_destructive' => 1,
             'memory_identity_k' => 5,
             'memory_reference_k' => 5,

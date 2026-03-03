@@ -47,21 +47,12 @@ class ChatController extends WP_REST_Controller {
     }
 
     /**
-     * Get AI client for a specific query.
-     * Uses alternative (faster) model for simple queries.
+     * Get AI client for queries.
+     * Uses the configured model for all queries.
      * 
-     * @param string $query The user query
      * @return AIClientInterface
      */
-    private function getAIClientForQuery(string $query): AIClientInterface {
-        $altModel = AIClientFactory::getModelForQuery($query);
-        
-        if ($altModel !== null) {
-            // Use alternative model for this query
-            return AIClientFactory::createWithModel($this->settings->getProvider(), $altModel);
-        }
-        
-        // Use default model
+    private function getAIClient(): AIClientInterface {
         return $this->aiClient;
     }
 
@@ -322,6 +313,23 @@ class ChatController extends WP_REST_Controller {
         $messages = $this->buildMessages($sessionId, $message, true);
         $tools = $this->toolRegistry->getDefinitions();
 
+        if ($this->hasUserConfirmationSignal($message)) {
+            $confirmed = $this->executePendingConfirmation($sessionId, $userId);
+            if ($confirmed !== null) {
+                $toolName = $confirmed['tool'];
+                $ok = !empty($confirmed['result']['success']);
+                $summary = $this->summarizeToolResult($confirmed['result']);
+                $messages[] = [
+                    'role' => 'system',
+                    'content' => sprintf(
+                        'Der Nutzer hat die ausstehende Aktion bestaetigt. %s wurde ausgefuehrt: %s',
+                        $toolName,
+                        $ok ? $summary : ('Fehler: ' . $summary)
+                    ),
+                ];
+            }
+        }
+
         // Heartbeat callback for SSE keepalive during AI calls
         $heartbeat = function () {
             if (connection_aborted()) {
@@ -331,7 +339,7 @@ class ChatController extends WP_REST_Controller {
         };
 
         // Get AI client (uses alternative model for simple queries)
-        $aiClient = $this->getAIClientForQuery($message);
+        $aiClient = $this->getAIClient();
         
         // Call AI with heartbeat
         $response = $aiClient->chat($messages, $tools, $heartbeat);
@@ -469,7 +477,7 @@ class ChatController extends WP_REST_Controller {
             $messages[] = $messageData;
 
             foreach ($toolCalls as $toolCall) {
-                $functionName = $toolCall['function']['name'] ?? '';
+                $functionName = trim($toolCall['function']['name'] ?? '');
                 $rawArgs = $toolCall['function']['arguments'] ?? '{}';
                 $functionArgs = json_decode($rawArgs, true);
                 if (!is_array($functionArgs)) {
@@ -503,7 +511,13 @@ class ChatController extends WP_REST_Controller {
                 }
 
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
-                $toolResults[] = ['tool' => $functionName, 'result' => $result];
+                $toolResults[] = [
+                    'tool' => $functionName,
+                    'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                    'result' => $result,
+                    'seq' => count($toolResults),
+                    'iteration' => $iteration,
+                ];
 
                 $this->emitSSE('progress', [
                     'message' => $this->getToolProgressLabel($functionName, ($result['success'] ?? false) ? 'done' : 'failed'),
@@ -699,8 +713,25 @@ class ChatController extends WP_REST_Controller {
         // Get available tools
         $tools = $this->toolRegistry->getDefinitions();
 
+        if ($this->hasUserConfirmationSignal($message)) {
+            $confirmed = $this->executePendingConfirmation($sessionId, $userId);
+            if ($confirmed !== null) {
+                $toolName = $confirmed['tool'];
+                $ok = !empty($confirmed['result']['success']);
+                $summary = $this->summarizeToolResult($confirmed['result']);
+                $messages[] = [
+                    'role' => 'system',
+                    'content' => sprintf(
+                        'Der Nutzer hat die ausstehende Aktion bestaetigt. %s wurde ausgefuehrt: %s',
+                        $toolName,
+                        $ok ? $summary : ('Fehler: ' . $summary)
+                    ),
+                ];
+            }
+        }
+
         // Get AI client (uses alternative model for simple queries)
-        $aiClient = $this->getAIClientForQuery($message);
+        $aiClient = $this->getAIClient();
 
         // Call AI – try with tools first, fallback to no tools on provider error
         $response = $aiClient->chat($messages, $tools);
@@ -872,8 +903,9 @@ class ChatController extends WP_REST_Controller {
             $messages[] = $messageData;
 
             foreach ($toolCalls as $index => $toolCall) {
-                $functionName = $toolCall['function']['name'] ?? '';
+                $functionName = trim($toolCall['function']['name'] ?? '');
                 $rawArgs = $toolCall['function']['arguments'] ?? '{}';
+
                 $functionArgs = json_decode($rawArgs, true);
                 if (!is_array($functionArgs)) {
                     $functionArgs = [];
@@ -912,7 +944,10 @@ class ChatController extends WP_REST_Controller {
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
+                    'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
                     'result' => $result,
+                    'seq' => count($toolResults),
+                    'iteration' => $iteration,
                 ];
 
                 $executionTrace[] = [
@@ -1303,6 +1338,42 @@ PROMPT;
         return 'Fehler bei Ausführung';
     }
 
+    private function executePendingConfirmation(string $sessionId, int $userId): ?array {
+        global $wpdb;
+        $table = $wpdb->prefix . 'levi_audit_log';
+
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+            return null;
+        }
+
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT tool_name, tool_args FROM {$table}
+             WHERE session_id = %s AND success = 0 AND result_summary LIKE %s
+             ORDER BY executed_at DESC LIMIT 1",
+            $sessionId,
+            '%Bestätigung%'
+        ), ARRAY_A);
+
+        if (!$row || empty($row['tool_name'])) {
+            return null;
+        }
+
+        $toolName = (string) $row['tool_name'];
+        $toolArgs = json_decode((string) ($row['tool_args'] ?? '{}'), true);
+        if (!is_array($toolArgs)) {
+            $toolArgs = [];
+        }
+
+        $result = $this->toolRegistry->execute($toolName, $toolArgs);
+        $this->logToolExecution($sessionId, $userId, $toolName, $toolArgs, $result);
+
+        return [
+            'tool' => $toolName,
+            'args' => $toolArgs,
+            'result' => $result,
+        ];
+    }
+
     private function isDestructiveTool(string $toolName): bool {
         return in_array($toolName, [
             'delete_post',
@@ -1593,9 +1664,7 @@ PROMPT;
             return $args;
         }
 
-        $settings = $this->settings->getSettings();
-        $forceExhaustive = !empty($settings['force_exhaustive_reads']) || $this->requiresExhaustiveReadIntent($latestUserMessage);
-        if (!$forceExhaustive) {
+        if (!$this->requiresExhaustiveReadIntent($latestUserMessage)) {
             return $args;
         }
 
@@ -1617,9 +1686,7 @@ PROMPT;
             return $firstResult;
         }
 
-        $settings = $this->settings->getSettings();
-        $forceExhaustive = !empty($settings['force_exhaustive_reads']) || $this->requiresExhaustiveReadIntent($latestUserMessage);
-        if (!$forceExhaustive || empty($firstResult['has_more'])) {
+        if (!$this->requiresExhaustiveReadIntent($latestUserMessage) || empty($firstResult['has_more'])) {
             return $firstResult;
         }
 
@@ -1777,35 +1844,98 @@ PROMPT;
         return ($taskIntent['mode'] ?? 'unknown') === 'modify_existing';
     }
 
+    private static array $readOnlyTools = [
+        'get_pages', 'get_posts', 'get_post', 'get_plugins', 'get_themes',
+        'get_options', 'get_users', 'get_media',
+        'read_plugin_file', 'list_plugin_files',
+        'read_theme_file', 'list_theme_files',
+        'search_posts', 'discover_rest_api', 'discover_content_types',
+        'read_error_log', 'http_fetch',
+    ];
+
     private function applyResponseSafetyGates(string $finalMessage, array $toolResults, array $taskIntent): string {
-        $successful = array_values(array_filter($toolResults, fn($r) => ($r['result']['success'] ?? false) === true));
-        $failed = array_values(array_filter($toolResults, fn($r) => ($r['result']['success'] ?? false) !== true));
-        $claimsDone = preg_match('/\b(fertig|abgeschlossen|komplett|erledigt|erfolgreich|installiert und aktiviert|ist jetzt|korrigiert)\b/ui', $finalMessage) === 1;
-
-        if ($claimsDone && empty($successful)) {
-            return 'Ich kann den Abschluss noch nicht sicher bestätigen, weil keine erfolgreiche Ausführung vorliegt. Soll ich es erneut versuchen oder zuerst den aktuellen Stand prüfen?';
+        if (empty($toolResults)) {
+            return $finalMessage;
         }
 
-        if ($claimsDone && !empty($failed)) {
-            $failedTools = array_values(array_unique(array_map(
-                fn($r) => (string) ($r['tool'] ?? ''),
-                $failed
-            )));
-            $failedTools = array_values(array_filter($failedTools, fn($t) => $t !== ''));
-            $failedList = empty($failedTools) ? 'mindestens ein Tool' : implode(', ', $failedTools);
-
-            return 'Ich kann den Abschluss noch nicht als erfolgreich bestätigen, weil mindestens ein Teilschritt fehlgeschlagen ist (' . $failedList . '). '
-                . 'Ich nenne dir jetzt transparent den Zwischenstand und kann danach gezielt nur die fehlgeschlagenen Schritte erneut ausführen.';
-        }
-
-        if (in_array($taskIntent['mode'] ?? 'unknown', ['modify_existing', 'probable_modify'], true)) {
-            $createdNew = array_filter($successful, fn($r) => $this->isCreationTool((string) ($r['tool'] ?? ''), is_array($r['result'] ?? null) ? $r['result'] : []));
-            if (!empty($createdNew) && empty($taskIntent['explicit_create'])) {
-                return $finalMessage . "\n\nHinweis: Ich habe dabei etwas neu erstellt. Wenn du stattdessen nur das Bestehende ändern willst, sage kurz Bescheid, dann passe ich nur das vorhandene Artefakt an.";
+        // Deduplicate: keep LAST result per args_key (tool + primary argument).
+        $lastByKey = [];
+        foreach ($toolResults as $r) {
+            $key = $r['args_key'] ?? ($r['tool'] ?? '');
+            if ($key !== '') {
+                $lastByKey[$key] = $r;
             }
         }
+        $deduplicated = array_values($lastByKey);
 
+        $successful = array_filter($deduplicated, fn($r) => ($r['result']['success'] ?? false) === true);
+        $failed = array_filter($deduplicated, fn($r) => ($r['result']['success'] ?? false) !== true);
+
+        // Self-healing: if a tool failed once but later succeeded (same tool name,
+        // different args_key), the failure is considered resolved.
+        $successfulToolNames = array_unique(array_map(fn($r) => (string) ($r['tool'] ?? ''), $successful));
+        $unresolvedFailed = array_filter($failed, function ($r) use ($successfulToolNames) {
+            return !in_array((string) ($r['tool'] ?? ''), $successfulToolNames, true);
+        });
+
+        // Read-only tool failures are harmless when the AI recovered and ran
+        // more tools successfully afterwards -- drop them from unresolved.
+        if (!empty($successful) && !empty($unresolvedFailed)) {
+            $lastSuccessSeq = max(array_map(fn($r) => (int) ($r['seq'] ?? 0), $successful));
+            $unresolvedFailed = array_filter($unresolvedFailed, function ($r) use ($lastSuccessSeq) {
+                $toolName = (string) ($r['tool'] ?? '');
+                $seq = (int) ($r['seq'] ?? 0);
+                if (in_array($toolName, self::$readOnlyTools, true) && $seq < $lastSuccessSeq) {
+                    return false;
+                }
+                return true;
+            });
+        }
+
+        // All failures resolved -- AI response is fine as-is.
+        if (empty($unresolvedFailed)) {
+            return $this->appendCreationHintIfNeeded($finalMessage, $successful, $taskIntent);
+        }
+
+        $failedList = implode(', ', array_unique(array_map(fn($r) => (string) ($r['tool'] ?? ''), $unresolvedFailed)));
+        if ($failedList === '') {
+            $failedList = 'mindestens ein Tool';
+        }
+
+        // No successful tools at all -- append warning to AI response.
+        if (empty($successful)) {
+            return $finalMessage . "\n\nHinweis: Mindestens ein Teilschritt ist fehlgeschlagen (" . $failedList . '). '
+                . 'Soll ich es erneut versuchen oder zuerst den aktuellen Stand prüfen?';
+        }
+
+        // Mixed: some succeeded, some unresolved failures -- append short notice.
+        return $finalMessage . "\n\nHinweis: Mindestens ein Teilschritt ist fehlgeschlagen (" . $failedList . '). '
+            . 'Bitte prüfe den Zwischenstand, bevor wir final abschließen.';
+    }
+
+    private function appendCreationHintIfNeeded(string $finalMessage, array $successful, array $taskIntent): string {
+        if (!in_array($taskIntent['mode'] ?? 'unknown', ['modify_existing', 'probable_modify'], true)) {
+            return $finalMessage;
+        }
+        $createdNew = array_filter($successful, fn($r) => $this->isCreationTool(
+            (string) ($r['tool'] ?? ''),
+            is_array($r['result'] ?? null) ? $r['result'] : []
+        ));
+        if (!empty($createdNew) && empty($taskIntent['explicit_create'])) {
+            return $finalMessage . "\n\nHinweis: Ich habe dabei etwas neu erstellt. Wenn du stattdessen nur das Bestehende ändern willst, sage kurz Bescheid, dann passe ich nur das vorhandene Artefakt an.";
+        }
         return $finalMessage;
+    }
+
+    private function buildToolArgsKey(string $toolName, array $args): string {
+        $discriminator = $args['plugin_slug']
+            ?? $args['relative_path']
+            ?? $args['post_id']
+            ?? $args['page_id']
+            ?? $args['option']
+            ?? $args['theme_slug']
+            ?? '';
+        return $toolName . ':' . $discriminator;
     }
 
     public function getHistory(WP_REST_Request $request): WP_REST_Response {

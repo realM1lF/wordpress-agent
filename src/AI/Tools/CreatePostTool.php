@@ -128,18 +128,21 @@ class CreatePostTool implements ToolInterface {
             set_post_thumbnail($postId, intval($params['featured_image']));
         }
 
-        $status = $postData['post_status'];
-        
+        $created = get_post($postId);
+        $actualStatus = $created ? $created->post_status : $postData['post_status'];
+        $actualTitle = $created ? $created->post_title : $params['title'];
+
         return [
             'success' => true,
             'post_id' => $postId,
-            'title' => $params['title'],
-            'status' => $status,
+            'post_type' => $postData['post_type'],
+            'title' => $actualTitle,
+            'status' => $actualStatus,
             'url' => get_permalink($postId),
             'edit_url' => get_edit_post_link($postId, 'raw'),
-            'message' => $status === 'publish' 
-                ? 'Post published successfully.' 
-                : 'Post created as ' . $status . '.',
+            'message' => $actualStatus === 'publish'
+                ? 'Post published successfully.'
+                : 'Post created as ' . $actualStatus . '.',
         ];
     }
 }

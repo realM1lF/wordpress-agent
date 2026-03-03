@@ -40,7 +40,8 @@ class DeletePostTool implements ToolInterface {
         if (!$post) {
             return [
                 'success' => false,
-                'error' => 'Post not found',
+                'error' => 'Post not found.',
+                'suggestion' => 'Use get_posts to list available posts and verify the ID.',
             ];
         }
 
@@ -61,12 +62,19 @@ class DeletePostTool implements ToolInterface {
             ];
         }
 
-        return [
+        $result = [
             'success' => true,
             'post_id' => $postId,
             'title' => $title,
+            'post_type' => $post->post_type,
             'permanently_deleted' => $forceDelete,
             'message' => $forceDelete ? 'Post permanently deleted.' : 'Post moved to trash.',
         ];
+
+        if ($post->post_type !== 'post') {
+            $result['note'] = sprintf('This is a %s, not a post.', $post->post_type);
+        }
+
+        return $result;
     }
 }

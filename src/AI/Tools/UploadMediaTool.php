@@ -107,7 +107,9 @@ class UploadMediaTool implements ToolInterface {
         }
 
         if ($setFeatured && $attachToPost > 0) {
-            set_post_thumbnail($attachToPost, $attachmentId);
+            if (get_post($attachToPost)) {
+                set_post_thumbnail($attachToPost, $attachmentId);
+            }
         }
 
         return [

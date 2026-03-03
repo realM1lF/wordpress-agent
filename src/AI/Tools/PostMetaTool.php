@@ -157,12 +157,26 @@ class PostMetaTool implements ToolInterface {
             }
         }
 
+        $actualValue = get_post_meta($postId, $metaKey, true);
+        $verified = ($actualValue == $valueToStore);
+
+        if ($result === false && $verified) {
+            return [
+                'success' => true,
+                'post_id' => $postId,
+                'meta_key' => $metaKey,
+                'meta_value' => $actualValue,
+                'message' => 'Meta unchanged (already set to this value).',
+            ];
+        }
+
         return [
-            'success' => $result !== false,
+            'success' => $verified,
             'post_id' => $postId,
             'meta_key' => $metaKey,
-            'meta_value' => $valueToStore,
-            'message' => $result !== false ? 'Meta updated.' : 'Meta unchanged (same value or error).',
+            'meta_value' => $actualValue,
+            'verified' => $verified,
+            'message' => $verified ? 'Meta updated and verified.' : 'Meta write attempted but verification failed.',
         ];
     }
 

@@ -48,9 +48,10 @@ class AIClientFactory {
         }
 
         $altModel = $settings->getAltModel();
+        $defaultModel = $settings->getModelForProvider('openrouter');
         
-        // If alternative model is disabled, use default
-        if ($altModel === 'disabled') {
+        // If alternative model is same as default, always use default
+        if ($altModel === $defaultModel) {
             return null;
         }
 
