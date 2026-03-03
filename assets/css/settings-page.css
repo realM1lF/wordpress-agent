@@ -1,11 +1,11 @@
 /**
  * Levi Agent Settings Page Styles
- * Blue tones aligned with Chat Widget (#1f6feb, #2563eb, #0b1220)
+ * Purple tones aligned with Website Design System
  */
 
-/* CSS Variables - Color System (Chat Blue) */
+/* CSS Variables - Color System (Purple) */
 :root {
-    /* Backgrounds – match chat window */
+    /* Backgrounds – dark theme */
     --levi-bg-primary: #0b1220;
     --levi-bg-secondary: #111827;
     --levi-bg-surface: #0f172a;
@@ -19,19 +19,19 @@
     --levi-border-subtle: #1f2937;
     --levi-border-hover: #334155;
     
-    /* Accent – Chat blue */
-    --levi-accent: #3b82f6;
-    --levi-accent-hover: #2563eb;
-    --levi-accent-glow: rgba(59, 130, 246, 0.25);
-    --levi-accent-glow-strong: rgba(59, 130, 246, 0.4);
+    /* Accent – Purple */
+    --levi-accent: #7c3aed;
+    --levi-accent-hover: #6d28d9;
+    --levi-accent-glow: rgba(124, 58, 237, 0.25);
+    --levi-accent-glow-strong: rgba(124, 58, 237, 0.4);
 
     /* CTA – Lila/Pink für Primary/Speichern-Buttons (Kontrast) */
     --levi-cta: #a855f7;
     --levi-cta-hover: #9333ea;
     --levi-cta-glow: rgba(168, 85, 247, 0.35);
 
-    /* Secondary-Button Hover-Border (einheitlich) */
-    --levi-btn-secondary-border-hover: rgba(59, 130, 246, 0.5);
+    /* Secondary-Button Hover-Border */
+    --levi-btn-secondary-border-hover: rgba(124, 58, 237, 0.5);
     
     /* Status Colors */
     --levi-success: #22c55e;
@@ -85,12 +85,12 @@
     margin: 0;
 }
 
-/* Main Container – font matches chat widget */
+/* Main Container */
 .levi-settings-wrap {
     min-height: 100vh;
     background: var(--levi-bg-primary);
     color: var(--levi-text-primary);
-    font-family: "Courier New", Courier, monospace;
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
     line-height: 1.6;
 }
 
@@ -111,8 +111,8 @@
     right: 0;
     bottom: 0;
     background: 
-        radial-gradient(ellipse at 20% 0%, rgba(59, 130, 246, 0.12) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 100%, rgba(37, 99, 235, 0.06) 0%, transparent 40%);
+        radial-gradient(ellipse at 20% 0%, rgba(124, 58, 237, 0.12) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 100%, rgba(109, 40, 217, 0.06) 0%, transparent 40%);
     pointer-events: none;
 }
 
@@ -138,11 +138,38 @@
     filter: drop-shadow(0 0 20px var(--levi-accent-glow));
 }
 
+.levi-logo-icon-avatar {
+    font-size: 0;
+    line-height: 0;
+    filter: none;
+}
+
+.levi-logo-avatar-frame {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    padding: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(145deg, #8b5cf6, #4c1d95);
+    box-shadow: 0 8px 20px rgba(2, 6, 23, 0.35);
+}
+
+.levi-logo-avatar {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 10px;
+    display: block;
+    background: #020617;
+}
+
 .levi-logo-text h1 {
     font-size: 28px;
     font-weight: 800;
     margin: 0;
-    background: linear-gradient(135deg, #f8fafc 0%, #60a5fa 100%);
+    background: linear-gradient(135deg, #f8fafc 0%, #a78bfa 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -231,14 +258,14 @@
 
 .levi-nav-tab:hover {
     color: var(--levi-text-primary);
-    background: rgba(59, 130, 246, 0.08);
+    background: rgba(124, 58, 237, 0.08);
     transform: translateY(-1px);
 }
 
 .levi-nav-tab-active {
-    color: #60a5fa;
+    color: #a78bfa;
     border-bottom-color: var(--levi-accent);
-    background: linear-gradient(180deg, transparent 0%, rgba(59, 130, 246, 0.08) 100%);
+    background: linear-gradient(180deg, transparent 0%, rgba(124, 58, 237, 0.08) 100%);
 }
 
 .levi-nav-tab .dashicons {
@@ -309,9 +336,11 @@
     }
 }
 
-/* Cards */
+/* Cards – Glassmorphismus */
 .levi-card {
-    background: var(--levi-bg-card);
+    background: rgba(30, 41, 59, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--levi-border-subtle);
     border-radius: var(--levi-radius-lg);
     padding: var(--levi-space-lg);
@@ -335,14 +364,16 @@
 }
 
 .levi-card:hover {
-    border-color: rgba(59, 130, 246, 0.35);
+    border-color: rgba(124, 58, 237, 0.35);
     transform: translateY(-4px) scale(1.01);
-    box-shadow: var(--levi-shadow-md), 0 8px 24px rgba(59, 130, 246, 0.12);
+    box-shadow: var(--levi-shadow-md), 0 8px 24px rgba(124, 58, 237, 0.12);
 }
 
 .levi-card-featured {
-    background: linear-gradient(135deg, var(--levi-bg-card) 0%, var(--levi-bg-surface) 100%);
-    border-color: rgba(59, 130, 246, 0.3);
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.7) 100%);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-color: rgba(124, 58, 237, 0.3);
 }
 
 .levi-card-featured::after {
@@ -395,7 +426,9 @@
 
 /* Form Cards */
 .levi-form-card {
-    background: var(--levi-bg-card);
+    background: rgba(30, 41, 59, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--levi-border-subtle);
     border-radius: var(--levi-radius-lg);
     padding: var(--levi-space-xl);
@@ -484,7 +517,7 @@
     padding: var(--levi-space-sm) var(--levi-space-md);
     padding-left: var(--levi-space-md);
     border-left: 3px solid var(--levi-accent);
-    background: rgba(59, 130, 246, 0.06);
+    background: rgba(124, 58, 237, 0.06);
     border-radius: 0 var(--levi-radius-sm) var(--levi-radius-sm) 0;
     color: var(--levi-text-secondary);
 }
@@ -517,7 +550,7 @@
 }
 
 .levi-provider-option:hover {
-    border-color: rgba(59, 130, 246, 0.4);
+    border-color: rgba(124, 58, 237, 0.4);
     background: var(--levi-bg-hover);
     transform: translateY(-2px);
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
@@ -525,8 +558,8 @@
 
 .levi-provider-option.levi-provider-active {
     border-color: var(--levi-accent);
-    background: rgba(59, 130, 246, 0.08);
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2);
+    background: rgba(124, 58, 237, 0.08);
+    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.2);
 }
 
 .levi-provider-input {
@@ -582,7 +615,7 @@
 }
 
 .levi-toggle input:checked + .levi-toggle-slider {
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    background: linear-gradient(135deg, #7c3aed, #6d28d9);
     border-color: var(--levi-accent);
 }
 
@@ -615,7 +648,7 @@
     text-decoration: none;
 }
 
-/* Links als Buttons: WP-Admin-Farben überschreiben (verhindert dunkle Schrift bei Hover) */
+/* Links als Buttons: WP-Admin-Farben überschreiben */
 .levi-settings-wrap a.levi-btn,
 .levi-setup-wrap a.levi-btn {
     color: inherit;
@@ -630,7 +663,7 @@
     text-decoration: none;
 }
 
-/* Speichern/Primary-Buttons: Lila-Kontrast, einheitlich für button + input */
+/* Speichern/Primary-Buttons: Lila-Kontrast */
 .levi-btn-primary,
 .levi-settings-wrap .button-primary,
 .levi-settings-wrap .button-levi-btn-primary,
@@ -673,7 +706,7 @@
     transform: translateY(-1px);
 }
 
-/* Alle Nicht-Primary-Buttons: einheitliche Border + Hover-Border (blau) */
+/* Alle Nicht-Primary-Buttons */
 .levi-btn:not(.levi-btn-primary),
 .levi-settings-wrap .levi-btn:not(.levi-btn-primary),
 .levi-setup-wrap .levi-btn:not(.levi-btn-primary),
@@ -807,7 +840,7 @@
     color: var(--levi-text-primary);
     font-size: 13px;
     font-weight: 500;
-    font-family: "Courier New", Courier, monospace;
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
     text-align: right;
 }
 
@@ -839,8 +872,8 @@
 .levi-stat-value {
     font-size: 24px;
     font-weight: 700;
-    color: #60a5fa;
-    font-family: "Courier New", Courier, monospace;
+    color: #a78bfa;
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
 .levi-stat-label {
@@ -872,7 +905,7 @@
 
 .levi-progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, #60a5fa, #3b82f6);
+    background: linear-gradient(90deg, #a78bfa, #7c3aed);
     border-radius: 3px;
     transition: width 0.3s ease;
     width: 0%;

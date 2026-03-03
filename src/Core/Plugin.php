@@ -115,11 +115,18 @@ class Plugin {
             true
         );
 
+        $currentUser = wp_get_current_user();
+        $displayName = (string) ($currentUser->display_name ?? '');
+        $userInitial = $displayName !== '' ? strtoupper(substr($displayName, 0, 1)) : 'U';
+
         wp_localize_script('levi-agent-chat', 'leviAgent', [
             'restUrl' => rest_url('levi-agent/v1/'),
             'streamUrl' => rest_url('levi-agent/v1/chat/stream'),
             'nonce' => wp_create_nonce('wp_rest'),
-            'userName' => wp_get_current_user()->display_name,
+            'userName' => $displayName,
+            'userInitial' => $userInitial,
+            'userAvatarUrl' => get_avatar_url(get_current_user_id(), ['size' => 56]),
+            'leviAvatarUrl' => LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp',
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'adminNonce' => wp_create_nonce('levi_admin_nonce'),
         ]);

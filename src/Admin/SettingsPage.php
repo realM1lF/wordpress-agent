@@ -192,7 +192,17 @@ class SettingsPage {
             <header class="levi-settings-header">
                 <div class="levi-header-content">
                     <div class="levi-logo">
-                        <span class="levi-logo-icon">🤖</span>
+                        <span class="levi-logo-icon levi-logo-icon-avatar" aria-hidden="true">
+                            <span class="levi-logo-avatar-frame">
+                                <img
+                                    src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>"
+                                    alt=""
+                                    class="levi-logo-avatar"
+                                    loading="lazy"
+                                    decoding="async"
+                                >
+                            </span>
+                        </span>
                         <div class="levi-logo-text">
                             <h1><?php echo esc_html(__('Levi AI Agent', 'levi-agent')); ?></h1>
                             <span class="levi-version">v<?php echo esc_html(LEVI_AGENT_VERSION); ?></span>
@@ -621,7 +631,7 @@ class SettingsPage {
                     $profiles = \Levi\Agent\AI\Tools\Registry::getProfileLabels();
                     $currentProfile = $settings['tool_profile'] ?? 'standard';
                     foreach ($profiles as $profileKey => $profileData): ?>
-                        <label class="levi-radio-card <?php echo $currentProfile === $profileKey ? 'levi-radio-card-active' : ''; ?>" style="display:flex; align-items:flex-start; gap:0.75rem; padding:0.75rem 1rem; border:1px solid <?php echo $currentProfile === $profileKey ? '#6366f1' : '#374151'; ?>; border-radius:8px; margin-bottom:0.5rem; cursor:pointer; background:<?php echo $currentProfile === $profileKey ? 'rgba(99,102,241,0.08)' : 'transparent'; ?>;">
+                        <label class="levi-radio-card <?php echo $currentProfile === $profileKey ? 'levi-radio-card-active' : ''; ?>" style="display:flex; align-items:flex-start; gap:0.75rem; padding:0.75rem 1rem; border:1px solid <?php echo $currentProfile === $profileKey ? '#7c3aed' : '#374151'; ?>; border-radius:8px; margin-bottom:0.5rem; cursor:pointer; background:<?php echo $currentProfile === $profileKey ? 'rgba(124,58,237,0.08)' : 'transparent'; ?>;">
                             <input type="radio"
                                    name="<?php echo esc_attr($this->optionName); ?>[tool_profile]"
                                    value="<?php echo esc_attr($profileKey); ?>"

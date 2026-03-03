@@ -261,7 +261,17 @@ class SetupWizardPage {
             <header class="levi-settings-header">
                 <div class="levi-header-content">
                     <div class="levi-logo">
-                        <span class="levi-logo-icon">🤖</span>
+                        <span class="levi-logo-icon levi-logo-icon-avatar" aria-hidden="true">
+                            <span class="levi-logo-avatar-frame">
+                                <img
+                                    src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>"
+                                    alt=""
+                                    class="levi-logo-avatar"
+                                    loading="lazy"
+                                    decoding="async"
+                                >
+                            </span>
+                        </span>
                         <div class="levi-logo-text">
                             <h1><?php echo esc_html('Levi Einrichtungsassistent'); ?></h1>
                             <span class="levi-version"><?php echo esc_html(sprintf('Schritt %d von 4', $step)); ?></span>

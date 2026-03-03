@@ -5,7 +5,13 @@
     </button>
     <div class="levi-chat-window" id="levi-chat-window" style="display: none;">
         <div class="levi-chat-header">
-            <span class="levi-chat-title">🤖 Levi Assistant <span class="levi-chat-alpha-badge">ALPHA</span></span>
+            <span class="levi-chat-title">
+                <span class="levi-chat-title-avatar-frame" aria-hidden="true">
+                    <img src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>" alt="" class="levi-chat-title-avatar">
+                </span>
+                Levi Assistant
+                <span class="levi-chat-alpha-badge">ALPHA</span>
+            </span>
             <div class="levi-chat-header-actions">
                 <button class="levi-chat-expand" id="levi-chat-expand" title="Full Width">
                     <span class="dashicons dashicons-editor-expand"></span>
@@ -18,9 +24,15 @@
         </div>
         <div class="levi-chat-messages" id="levi-chat-messages">
             <div class="levi-message levi-message-assistant">
-                <div class="levi-message-content">
-                    Hallo <?php echo esc_html(wp_get_current_user()->display_name); ?>! 👋<br>
-                    Ich bin dein WordPress KI-Assistent. Wie kann ich dir helfen?
+                <div class="levi-message-avatar levi-message-avatar-assistant">
+                    <img src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>" alt="Levi" class="levi-message-avatar-image" loading="lazy" decoding="async" onerror="this.style.display='none'; this.parentElement.classList.add('levi-avatar-fallback-visible');">
+                    <span class="levi-message-avatar-fallback">L</span>
+                </div>
+                <div class="levi-message-main">
+                    <div class="levi-message-content">
+                        Hallo <?php echo esc_html(wp_get_current_user()->display_name); ?>! 👋<br>
+                        Ich bin dein WordPress KI-Assistent. Wie kann ich dir helfen?
+                    </div>
                 </div>
             </div>
         </div>

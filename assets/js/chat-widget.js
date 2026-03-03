@@ -18,6 +18,12 @@
         const fileInput = document.getElementById('levi-chat-file-input');
         const attachmentsBar = document.getElementById('levi-chat-attachments');
         const fileList = document.getElementById('levi-chat-file-list');
+        const userName = typeof leviAgent.userName === 'string' ? leviAgent.userName : '';
+        const userInitial = typeof leviAgent.userInitial === 'string' && leviAgent.userInitial
+            ? leviAgent.userInitial
+            : getInitial(userName, 'U');
+        const userAvatarUrl = typeof leviAgent.userAvatarUrl === 'string' ? leviAgent.userAvatarUrl : '';
+        const leviAvatarUrl = typeof leviAgent.leviAvatarUrl === 'string' ? leviAgent.leviAvatarUrl : '';
 
         const stop = document.getElementById('levi-chat-stop');
 
@@ -665,11 +671,12 @@
             }
             inner += renderMessageContent(text, role);
 
-            let html = '<div class="levi-message-content">' + inner + '</div>';
+            let html = buildAvatarHtml(role) + '<div class="levi-message-main"><div class="levi-message-content">' + inner + '</div>';
 
             if (role === 'user') {
                 html += '<button type="button" class="levi-message-edit-btn dashicons dashicons-edit" title="Nachricht bearbeiten" aria-label="Nachricht bearbeiten"></button>';
             }
+            html += '</div>';
 
             messageDiv.innerHTML = html;
 
@@ -738,13 +745,14 @@
             const typingDiv = document.createElement('div');
             typingDiv.className = 'levi-message levi-message-assistant';
             typingDiv.innerHTML =
-                '<div class="levi-message-content levi-typing">' +
+                buildAvatarHtml('assistant') +
+                '<div class="levi-message-main"><div class="levi-message-content levi-typing">' +
                 '<div class="levi-typing-row">' +
                 '<span></span><span></span><span></span>' +
                 '<small class="levi-typing-label"></small>' +
                 '</div>' +
                 '<div class="levi-chat-progress-track levi-chat-progress-indeterminate"><div class="levi-chat-progress-shimmer"></div></div>' +
-                '</div>';
+                '</div></div>';
             messages.appendChild(typingDiv);
             messages.scrollTop = messages.scrollHeight;
 
@@ -874,6 +882,29 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function getInitial(name, fallback) {
+            const source = String(name || '').trim();
+            if (!source) return fallback;
+            return source.charAt(0).toUpperCase();
+        }
+
+        function buildAvatarHtml(role) {
+            const isAssistant = role === 'assistant';
+            const letter = isAssistant ? 'L' : userInitial;
+            const imgUrl = isAssistant ? leviAvatarUrl : userAvatarUrl;
+            const title = isAssistant ? 'Levi' : (userName || 'User');
+
+            let imageHtml = '';
+            if (imgUrl) {
+                imageHtml = '<img src="' + escapeHtml(imgUrl) + '" alt="' + escapeHtml(title) + '" class="levi-message-avatar-image" loading="lazy" decoding="async" onerror="this.style.display=\'none\'; this.parentElement.classList.add(\'levi-avatar-fallback-visible\');">';
+            }
+
+            return '<div class="levi-message-avatar levi-message-avatar-' + (isAssistant ? 'assistant' : 'user') + '">' +
+                imageHtml +
+                '<span class="levi-message-avatar-fallback">' + escapeHtml(letter) + '</span>' +
+                '</div>';
         }
 
         // Test connection button (on settings page)
