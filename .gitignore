@@ -29,12 +29,16 @@ node_modules/
 .build/
 dist/
 
-# WordPress test installation
+# WordPress test installation (DDEV etc.)
 wordpress/
+
+# Styling working files (external AI output)
+plugin-files/
 
 # Data files with sensitive info
 data/vector-memory.sqlite
 data/*.sqlite
+**/vector-memory.sqlite
 
 # Environment files
 .env
