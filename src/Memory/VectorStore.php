@@ -186,8 +186,16 @@ class VectorStore {
 
     /**
      * Generate embedding via configured provider (OpenRouter/OpenAI).
+     * Uses EmbeddingCache to avoid repeated API calls.
      */
     public function generateEmbedding(string $text): array|WP_Error {
+        // Check cache first
+        $cache = new EmbeddingCache();
+        $cached = $cache->get($text);
+        if ($cached !== null) {
+            return $cached;
+        }
+
         $config = $this->getEmbeddingRequestConfig();
         if (is_wp_error($config)) {
             return $config;
@@ -216,7 +224,14 @@ class VectorStore {
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
-        return $body['data'][0]['embedding'] ?? [];
+        $embedding = $body['data'][0]['embedding'] ?? [];
+
+        // Store in cache for future use
+        if (!empty($embedding)) {
+            $cache->set($text, $embedding);
+        }
+
+        return $embedding;
     }
 
     public function storeVector(
@@ -578,6 +593,36 @@ class VectorStore {
 
     public function getFileHash(string $filePath): string {
         return hash_file('sha256', $filePath);
+    }
+
+    /**
+     * Get the highest chunk index already stored for a file.
+     * Used for resume functionality in partial imports.
+     * 
+     * @param string $sourceFile The source filename
+     * @param string $memoryType The memory type ('reference' or 'identity')
+     * @return int The highest chunk index (-1 if no chunks exist)
+     */
+    public function getHighestChunkIndex(string $sourceFile, string $memoryType): int {
+        if (!$this->db) {
+            return -1;
+        }
+
+        try {
+            $stmt = $this->db->prepare('
+                SELECT MAX(chunk_index) as max_index 
+                FROM memory_vectors 
+                WHERE source_file = :source_file AND memory_type = :memory_type
+            ');
+            $stmt->bindValue(':source_file', $sourceFile, SQLITE3_TEXT);
+            $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
+            $result = $stmt->execute();
+            $row = $result->fetchArray(SQLITE3_ASSOC);
+            return $row['max_index'] ?? -1;
+        } catch (\Exception $e) {
+            error_log('VectorStore getHighestChunkIndex error: ' . $e->getMessage());
+            return -1;
+        }
     }
 
     public function getStats(): array {

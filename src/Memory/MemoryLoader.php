@@ -106,7 +106,7 @@ class MemoryLoader {
     }
 
     /**
-     * Process a single file with batch processing for better performance
+     * Process a single file with batch processing and resume support
      */
     private function processFile(string $filePath, string $memoryType): array|WP_Error {
         $content = file_get_contents($filePath);
@@ -116,12 +116,30 @@ class MemoryLoader {
         }
 
         $chunks = $this->splitIntoChunks($content);
+        $totalChunks = count($chunks);
+        
+        // Check for resume: get highest already-stored chunk index
+        $sourceFile = basename($filePath);
+        $highestStoredIndex = $this->vectorStore->getHighestChunkIndex($sourceFile, $memoryType);
+        $resumeFromIndex = $highestStoredIndex + 1;
+        
+        if ($highestStoredIndex >= 0) {
+            error_log("MemoryLoader: Resuming $sourceFile from chunk $resumeFromIndex (already have 0-$highestStoredIndex)");
+        }
+        
         $vectorsCreated = 0;
+        $skippedChunks = 0;
         $batch = [];
-        $batchSize = 10; // Process 10 chunks at a time for bulk insert
+        $batchSize = 10;
 
         foreach ($chunks as $index => $chunk) {
-            // Generate embedding
+            // Skip already-stored chunks (resume support)
+            if ($index <= $highestStoredIndex) {
+                $skippedChunks++;
+                continue;
+            }
+            
+            // Generate embedding (uses cache if available)
             $embedding = $this->vectorStore->generateEmbedding($chunk);
             
             if (is_wp_error($embedding)) {
@@ -137,7 +155,7 @@ class MemoryLoader {
                 'content' => $chunk,
                 'embedding' => $embedding,
                 'memory_type' => $memoryType,
-                'source_file' => basename($filePath),
+                'source_file' => $sourceFile,
                 'chunk_index' => $index,
             ];
 
@@ -145,7 +163,7 @@ class MemoryLoader {
             if (count($batch) >= $batchSize) {
                 $inserted = $this->vectorStore->bulkInsertVectors($batch);
                 $vectorsCreated += $inserted;
-                $batch = []; // Clear batch
+                $batch = [];
             }
         }
 
@@ -155,15 +173,24 @@ class MemoryLoader {
             $vectorsCreated += $inserted;
         }
 
-        // Mark file as loaded only if all chunks were processed
-        if ($vectorsCreated === count($chunks)) {
-            $fileHash = $this->vectorStore->getFileHash($filePath);
-            $this->vectorStore->markFileLoaded($filePath, $fileHash);
+        // Calculate total vectors now in DB
+        $totalVectorsNow = $highestStoredIndex + 1 + $vectorsCreated;
+        $isComplete = ($totalVectorsNow >= $totalChunks);
+        
+        // Mark file as loaded
+        $fileHash = $this->vectorStore->getFileHash($filePath);
+        if (!$isComplete) {
+            $fileHash .= '_partial_' . $totalVectorsNow . '_' . $totalChunks;
         }
+        
+        $this->vectorStore->markFileLoaded($filePath, $fileHash);
 
         return [
-            'chunks' => count($chunks),
-            'vectors' => $vectorsCreated,
+            'chunks' => $totalChunks,
+            'vectors' => $totalVectorsNow,
+            'new_vectors' => $vectorsCreated,
+            'skipped' => $skippedChunks,
+            'complete' => $isComplete,
         ];
     }
 
