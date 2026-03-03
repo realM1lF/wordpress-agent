@@ -45,6 +45,7 @@ class VectorStore {
     }
 
     private function createTables(): void {
+        // Create base table (without bucket_hash for backward compatibility)
         $this->db->exec('
             CREATE TABLE IF NOT EXISTS memory_vectors (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,6 +62,17 @@ class VectorStore {
             CREATE INDEX IF NOT EXISTS idx_memory_type ON memory_vectors(memory_type)
         ');
 
+        // Migration: Add bucket_hash column if not exists
+        $this->migrateAddBucketHashColumn();
+
+        $this->db->exec('
+            CREATE INDEX IF NOT EXISTS idx_bucket_hash ON memory_vectors(bucket_hash)
+        ');
+
+        $this->db->exec('
+            CREATE INDEX IF NOT EXISTS idx_memory_type_bucket ON memory_vectors(memory_type, bucket_hash)
+        ');
+
         $this->db->exec('
             CREATE TABLE IF NOT EXISTS episodic_memory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +85,10 @@ class VectorStore {
         ');
 
         $this->db->exec('
+            CREATE INDEX IF NOT EXISTS idx_episodic_user ON episodic_memory(user_id)
+        ');
+
+        $this->db->exec('
             CREATE TABLE IF NOT EXISTS loaded_files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path VARCHAR(500) UNIQUE NOT NULL,
@@ -80,6 +96,92 @@ class VectorStore {
                 loaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ');
+        
+        // Migration: Calculate bucket_hash for existing vectors
+        $this->migrateAddBucketHash();
+    }
+    
+    /**
+     * Migration: Add bucket_hash column if it doesn't exist
+     */
+    private function migrateAddBucketHashColumn(): void {
+        try {
+            // Check if column exists
+            $result = $this->db->query("PRAGMA table_info(memory_vectors)");
+            $hasBucketHash = false;
+            while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+                if ($row['name'] === 'bucket_hash') {
+                    $hasBucketHash = true;
+                    break;
+                }
+            }
+            
+            if (!$hasBucketHash) {
+                $this->db->exec('ALTER TABLE memory_vectors ADD COLUMN bucket_hash VARCHAR(32) DEFAULT NULL');
+                error_log('Levi VectorStore: Added bucket_hash column');
+            }
+        } catch (\Throwable $e) {
+            error_log('Levi VectorStore migration error: ' . $e->getMessage());
+        }
+    }
+    
+    /**
+     * Migration: Calculate bucket_hash for existing vectors without it
+     */
+    private function migrateAddBucketHash(): void {
+        try {
+            $result = $this->db->query("
+                SELECT id, embedding FROM memory_vectors 
+                WHERE bucket_hash IS NULL 
+                LIMIT 100
+            ");
+            
+            $updated = 0;
+            while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+                $vector = json_decode($row['embedding'], true);
+                if ($vector) {
+                    $bucketHash = $this->calculateBucketHash($vector);
+                    $stmt = $this->db->prepare('
+                        UPDATE memory_vectors 
+                        SET bucket_hash = :bucket 
+                        WHERE id = :id
+                    ');
+                    $stmt->bindValue(':bucket', $bucketHash, SQLITE3_TEXT);
+                    $stmt->bindValue(':id', $row['id'], SQLITE3_INTEGER);
+                    $stmt->execute();
+                    $updated++;
+                }
+            }
+            
+            if ($updated > 0) {
+                error_log("Levi VectorStore: Migrated {$updated} vectors with bucket_hash");
+            }
+        } catch (\Throwable $e) {
+            // Silent fail - will retry next time
+        }
+    }
+    
+    /**
+     * Calculate bucket hash from first 32 dimensions of vector
+     * This enables fast pre-filtering (HNSW-like behavior)
+     * 
+     * @param array $vector Full embedding vector
+     * @return string Bucket hash for indexing
+     */
+    private function calculateBucketHash(array $vector): string {
+        // Take first 32 dimensions
+        $bucketDimensions = array_slice($vector, 0, 32);
+        
+        // Quantize: convert floats to 4-bit values (0-15)
+        $quantized = [];
+        foreach ($bucketDimensions as $value) {
+            // Normalize to 0-15 range
+            $normalized = (int) ((($value + 1) / 2) * 15);
+            $normalized = max(0, min(15, $normalized));
+            $quantized[] = dechex($normalized);
+        }
+        
+        return implode('', $quantized);
     }
 
     /**
@@ -129,9 +231,11 @@ class VectorStore {
         }
 
         try {
+            $bucketHash = $this->calculateBucketHash($embedding);
+            
             $stmt = $this->db->prepare('
-                INSERT INTO memory_vectors (source_file, content, embedding, memory_type, chunk_index)
-                VALUES (:source_file, :content, :embedding, :memory_type, :chunk_index)
+                INSERT INTO memory_vectors (source_file, content, embedding, memory_type, chunk_index, bucket_hash)
+                VALUES (:source_file, :content, :embedding, :memory_type, :chunk_index, :bucket_hash)
             ');
 
             $stmt->bindValue(':source_file', $sourceFile, SQLITE3_TEXT);
@@ -139,12 +243,56 @@ class VectorStore {
             $stmt->bindValue(':embedding', json_encode($embedding), SQLITE3_BLOB);
             $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
             $stmt->bindValue(':chunk_index', $chunkIndex, SQLITE3_INTEGER);
+            $stmt->bindValue(':bucket_hash', $bucketHash, SQLITE3_TEXT);
 
             $stmt->execute();
             return true;
         } catch (\Exception $e) {
             error_log('VectorStore error: ' . $e->getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Bulk insert multiple vectors in a single transaction (much faster)
+     * 
+     * @param array $vectors Array of ['content', 'embedding', 'memory_type', 'source_file', 'chunk_index']
+     * @return int Number of inserted vectors
+     */
+    public function bulkInsertVectors(array $vectors): int {
+        if (!$this->db || empty($vectors)) {
+            return 0;
+        }
+
+        try {
+            $this->db->exec('BEGIN TRANSACTION');
+            
+            $stmt = $this->db->prepare('
+                INSERT INTO memory_vectors (source_file, content, embedding, memory_type, chunk_index, bucket_hash)
+                VALUES (:source_file, :content, :embedding, :memory_type, :chunk_index, :bucket_hash)
+            ');
+
+            $inserted = 0;
+            foreach ($vectors as $vector) {
+                $bucketHash = $this->calculateBucketHash($vector['embedding']);
+                
+                $stmt->bindValue(':source_file', $vector['source_file'], SQLITE3_TEXT);
+                $stmt->bindValue(':content', $vector['content'], SQLITE3_TEXT);
+                $stmt->bindValue(':embedding', json_encode($vector['embedding']), SQLITE3_BLOB);
+                $stmt->bindValue(':memory_type', $vector['memory_type'], SQLITE3_TEXT);
+                $stmt->bindValue(':chunk_index', $vector['chunk_index'], SQLITE3_INTEGER);
+                $stmt->bindValue(':bucket_hash', $bucketHash, SQLITE3_TEXT);
+                
+                $stmt->execute();
+                $inserted++;
+            }
+            
+            $this->db->exec('COMMIT');
+            return $inserted;
+        } catch (\Exception $e) {
+            $this->db->exec('ROLLBACK');
+            error_log('VectorStore bulk insert error: ' . $e->getMessage());
+            return 0;
         }
     }
 
@@ -187,13 +335,36 @@ class VectorStore {
             return [];
         }
 
-        $sql = 'SELECT id, content, embedding, memory_type, source_file FROM memory_vectors';
-
-        if ($memoryType) {
-            $sql .= ' WHERE memory_type = :memory_type';
+        // Calculate bucket hash for pre-filtering (HNSW-like optimization)
+        $queryBucket = $this->calculateBucketHash($queryEmbedding);
+        $similarBuckets = $this->getSimilarBucketPatterns($queryBucket);
+        
+        // Build query with bucket pre-filtering
+        // Include both: matching buckets AND entries without bucket_hash (migration fallback)
+        $sql = 'SELECT id, content, embedding, memory_type, source_file FROM memory_vectors WHERE (';
+        
+        $bucketConditions = [];
+        foreach ($similarBuckets as $i => $pattern) {
+            $bucketConditions[] = "bucket_hash LIKE :bucket{$i}";
         }
+        // Also include entries without bucket_hash (during migration)
+        $bucketConditions[] = "bucket_hash IS NULL";
+        
+        $sql .= implode(' OR ', $bucketConditions);
+        $sql .= ')';
+        
+        if ($memoryType) {
+            $sql .= ' AND memory_type = :memory_type';
+        }
+        
+        $sql .= ' LIMIT 200'; // Hard limit to avoid too many comparisons
 
         $stmt = $this->db->prepare($sql);
+        
+        // Bind bucket patterns
+        foreach ($similarBuckets as $i => $pattern) {
+            $stmt->bindValue(":bucket{$i}", $pattern, SQLITE3_TEXT);
+        }
         
         if ($memoryType) {
             $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
@@ -201,12 +372,14 @@ class VectorStore {
 
         $result = $stmt->execute();
         $similarities = [];
+        $candidatesChecked = 0;
 
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
             $vector = json_decode($row['embedding'], true);
             if (!$vector) continue;
 
             $similarity = $this->cosineSimilarity($queryEmbedding, $vector);
+            $candidatesChecked++;
             
             if ($similarity >= $minSimilarity) {
                 $similarities[] = [
@@ -223,6 +396,34 @@ class VectorStore {
 
         return array_slice($similarities, 0, $limit);
     }
+    
+    /**
+     * Generate similar bucket patterns for approximate matching
+     * This creates wildcard patterns that match similar quantized vectors
+     * 
+     * @param string $bucketHash Original bucket hash
+     * @return array Array of LIKE patterns
+     */
+    private function getSimilarBucketPatterns(string $bucketHash): array {
+        $patterns = [$bucketHash]; // Exact match
+        
+        // Add patterns with single wildcard (16 possibilities)
+        // This covers 1/16th variation in each position
+        for ($i = 0; $i < 8; $i++) {
+            $pos = $i * 4;
+            $prefix = substr($bucketHash, 0, $pos);
+            $suffix = substr($bucketHash, $pos + 1);
+            $patterns[] = $prefix . '_' . $suffix;
+        }
+        
+        // Add patterns with double wildcard at key positions
+        $patterns[] = substr($bucketHash, 0, 4) . '__' . substr($bucketHash, 6);
+        $patterns[] = substr($bucketHash, 0, 12) . '__' . substr($bucketHash, 14);
+        $patterns[] = substr($bucketHash, 0, 20) . '__' . substr($bucketHash, 22);
+        $patterns[] = substr($bucketHash, 0, 28) . '__' . substr($bucketHash, 30);
+        
+        return array_unique($patterns);
+    }
 
     public function searchEpisodicMemories(
         array $queryEmbedding,
@@ -234,11 +435,14 @@ class VectorStore {
             return [];
         }
 
-        $sql = 'SELECT id, fact, context FROM episodic_memory';
+        // OPTIMIZED: Single query with embedding included (no N+1 problem)
+        $sql = 'SELECT id, fact, context, embedding FROM episodic_memory';
 
         if ($userId) {
             $sql .= ' WHERE user_id = :user_id';
         }
+        
+        $sql .= ' ORDER BY id DESC LIMIT 500'; // Only check recent memories for performance
 
         $stmt = $this->db->prepare($sql);
         
@@ -250,14 +454,7 @@ class VectorStore {
         $similarities = [];
 
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-            $embedStmt = $this->db->prepare('SELECT embedding FROM episodic_memory WHERE id = :id');
-            $embedStmt->bindValue(':id', $row['id'], SQLITE3_INTEGER);
-            $embedResult = $embedStmt->execute();
-            $embedRow = $embedResult->fetchArray(SQLITE3_ASSOC);
-            
-            if (!$embedRow) continue;
-            
-            $vector = json_decode($embedRow['embedding'], true);
+            $vector = json_decode($row['embedding'], true);
             if (!$vector) continue;
 
             $similarity = $this->cosineSimilarity($queryEmbedding, $vector);

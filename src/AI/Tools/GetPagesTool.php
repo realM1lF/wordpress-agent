@@ -9,7 +9,7 @@ class GetPagesTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get WordPress pages with optional full content. Supports pagination to fetch all pages.';
+        return 'Get WordPress pages (post_type=page) with optional full content. Returns EXACT data from database. When displaying results, show EVERY page with its EXACT ID and title from the result. Never skip pages, never invent IDs, never use placeholder text like "(weitere Seite)".';
     }
 
     public function getParameters(): array {
@@ -103,6 +103,10 @@ class GetPagesTool implements ToolInterface {
             'count' => count($pages),
             'total' => $query->found_posts,
             'pages' => $pages,
+            '_debug' => [
+                'wp_query_args' => $args,
+                'timestamp' => current_time('mysql'),
+            ],
         ];
     }
 

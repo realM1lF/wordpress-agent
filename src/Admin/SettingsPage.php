@@ -568,39 +568,43 @@ class SettingsPage {
 
                 <!-- Memory Actions -->
                 <div class="levi-form-card">
-                    <h3><?php echo esc_html($this->tr('Memory Management', 'Memory-Verwaltung')); ?></h3>
+                    <h3><?php echo esc_html($this->tr('Identity Files', 'Identity-Dateien')); ?></h3>
                     
                     <?php 
                     $loader = new \Levi\Agent\Memory\MemoryLoader();
                     $changes = $loader->checkForChanges();
-                    $hasChanges = !empty($changes['identity']) || !empty($changes['reference']);
+                    $hasIdentityChanges = !empty($changes['identity']);
+                    $hasReferenceChanges = !empty($changes['reference']);
                     ?>
 
-                    <?php if ($hasChanges): ?>
+                    <?php if ($hasIdentityChanges): ?>
                         <div class="levi-notice levi-notice-warning">
-                            <p><strong><?php echo esc_html($this->tr('Memory files have changed!', 'Memory-Dateien haben sich geaendert!')); ?></strong></p>
-                            <?php if (!empty($changes['identity'])): ?>
-                                <p><?php echo esc_html($this->tr('Identity:', 'Identity:')); ?> <?php echo esc_html(implode(', ', $changes['identity'])); ?></p>
-                            <?php endif; ?>
-                            <?php if (!empty($changes['reference'])): ?>
-                                <p><?php echo esc_html($this->tr('Reference:', 'Reference:')); ?> <?php echo esc_html(implode(', ', $changes['reference'])); ?></p>
-                            <?php endif; ?>
+                            <p><strong><?php echo esc_html($this->tr('Identity files have changed!', 'Identity-Dateien haben sich geaendert!')); ?></strong></p>
+                            <p><?php echo esc_html(implode(', ', $changes['identity'])); ?></p>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($hasReferenceChanges): ?>
+                        <div class="levi-notice levi-notice-info">
+                            <p><strong><?php echo esc_html($this->tr('Reference files syncing in background', 'Reference-Dateien werden im Hintergrund synchronisiert')); ?></strong></p>
+                            <p><?php echo esc_html($this->tr('Files:', 'Dateien:')); ?> <?php echo esc_html(implode(', ', $changes['reference'])); ?></p>
+                            <p class="levi-hint"><?php echo esc_html($this->tr('Large documentation files are synced automatically via WordPress cron.', 'Grosse Dokumentationsdateien werden automatisch via WordPress-Cron synchronisiert.')); ?></p>
                         </div>
                     <?php endif; ?>
 
                     <div class="levi-form-actions-inline">
                         <button type="button" id="levi-reload-memories" class="levi-btn levi-btn-secondary">
                             <span class="dashicons dashicons-update"></span>
-                            <?php echo esc_html($this->tr('Reload All Memories', 'Alle Memories neu laden')); ?>
+                            <?php echo esc_html($this->tr('Reload Identity Files', 'Identity-Dateien neu laden')); ?>
                         </button>
                         <span id="levi-reload-result"></span>
                     </div>
 
                     <p class="levi-form-help">
-                        <?php echo esc_html($this->tr('Reloads all .md files from identity/ and memories/ folders into the vector database.', 'Laedt alle .md-Dateien aus identity/ und memories/ in die Vector-Datenbank.')); ?>
+                        <?php echo esc_html($this->tr('Reloads identity files (soul.md, rules.md, knowledge.md) into the vector database. These define Levi\'s personality and behavior.', 'Laedt Identity-Dateien (soul.md, rules.md, knowledge.md) in die Vector-Datenbank. Diese definieren Levis Persoenlichkeit und Verhalten.')); ?>
                     </p>
                     <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr('Hint: After changing or adding .md files in the plugin’s identity/ or memories/ folders, click "Reload All Memories" so Levi can use the new content.', 'Hinweis: Nach Aenderungen in identity/ oder memories/ bitte "Alle Memories neu laden", damit Levi die Inhalte nutzt.')); ?>
+                        <?php echo esc_html($this->tr('Hint: Large reference files from the memories/ folder are synced automatically in the background.', 'Hinweis: Grosse Reference-Dateien aus dem memories/-Ordner werden automatisch im Hintergrund synchronisiert.')); ?>
                     </p>
                 </div>
             </div>

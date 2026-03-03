@@ -68,12 +68,16 @@ class Plugin {
             wp_send_json_error('Unauthorized');
         }
         
+        // Only reload identity files (fast) - reference files are synced automatically via cron
         $loader = new \Levi\Agent\Memory\MemoryLoader();
-        $results = $loader->loadAllMemories();
+        $results = $loader->loadIdentityFiles();
         
         wp_send_json_success([
-            'message' => 'Memories reloaded successfully',
-            'results' => $results,
+            'message' => 'Identity files reloaded successfully',
+            'results' => [
+                'identity' => $results,
+                'reference' => ['loaded' => [], 'errors' => []], // Reference files handled by background sync
+            ],
         ]);
     }
 

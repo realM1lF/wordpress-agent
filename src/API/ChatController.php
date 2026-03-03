@@ -5,6 +5,8 @@ namespace Levi\Agent\API;
 use Levi\Agent\AI\AIClientFactory;
 use Levi\Agent\AI\AIClientInterface;
 use Levi\Agent\AI\PIIRedactor;
+use Levi\Agent\AI\QueryClassifier;
+use Levi\Agent\Memory\EmbeddingCache;
 use Levi\Agent\Database\ConversationRepository;
 use Levi\Agent\Admin\SettingsPage;
 use Levi\Agent\Agent\Identity;
@@ -1143,6 +1145,8 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function getSystemPrompt(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): string {
+        // ALWAYS load identity (rules.md, knowledge.md are CRITICAL)
+        // Fast Mode only skips the expensive Vector Memory search, never the rules!
         try {
             $identity = new Identity();
             $basePrompt = $identity->getSystemPrompt();
@@ -1151,8 +1155,19 @@ class ChatController extends WP_REST_Controller {
             $basePrompt = "You are Levi, a helpful AI assistant for WordPress.";
         }
         
-        // Add relevant memories if query provided (optional - don't fail chat if memory fails)
+        // Check if query needs deep memory retrieval (Vector DB search)
+        $isSimpleQuery = false;
         if (!empty($query)) {
+            try {
+                $classifier = new QueryClassifier();
+                $isSimpleQuery = !$classifier->needsDeepRetrieval($query);
+            } catch (\Throwable $e) {
+                // Ignore, assume complex
+            }
+        }
+        
+        // Add relevant memories if query provided (optional - don't fail chat if memory fails)
+        if (!empty($query) && !$isSimpleQuery) {
             try {
                 $relevantMemories = $this->getRelevantMemories($query);
                 if (!empty($relevantMemories)) {
@@ -1163,19 +1178,71 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
-        if ($includeUploadedContext && !empty($sessionId)) {
-            $uploadedContext = $this->buildUploadedFilesContext($sessionId, get_current_user_id());
-            if ($uploadedContext !== '') {
-                $basePrompt .= "\n\n# Session File Context\n\n" . $uploadedContext;
-            }
-        }
-
+        // Add state baseline for ALL queries (fast - from wp_options)
+        // This is needed for system-specific questions like "Wie ist meine Elementor-Einstellung?"
         $stateBaseline = StateSnapshotService::getPromptContext();
         if ($stateBaseline !== '') {
             $basePrompt .= "\n\n# Daily WordPress State Baseline\n\n" . $stateBaseline;
         }
         
+        // Only add uploaded context for complex queries
+        if (!$isSimpleQuery && $includeUploadedContext && !empty($sessionId)) {
+            $uploadedContext = $this->buildUploadedFilesContext($sessionId, get_current_user_id());
+            if ($uploadedContext !== '') {
+                $basePrompt .= "\n\n# Session File Context\n\n" . $uploadedContext;
+            }
+        }
+        
         return $basePrompt;
+    }
+    
+    /**
+     * Get minimal system prompt for simple queries
+     * Reduces 21KB -> ~500 bytes for 10x speedup
+     */
+    private function getMinimalSystemPrompt(): string {
+        return <<<'PROMPT'
+You are Levi, a helpful AI assistant for WordPress.
+
+## Your Personality
+- Friendly, professional, and concise
+- You address users with "Du" (informal German)
+- Use appropriate emojis in responses
+
+## What You Can Do
+- Answer WordPress questions
+- Help with WooCommerce, Elementor, and other plugins
+- Write code when needed
+
+## CRITICAL RULES (Always follow!)
+
+### Tool Results Are The Only Truth
+When you use a tool (get_pages, get_posts, etc.):
+1. Show EXACTLY what the tool returns - never add or remove entries
+2. Use EXACT IDs and titles from the tool result
+3. NEVER use placeholders like "(weitere Seite)" or "..."
+4. NEVER say "list truncated" or similar - show complete data
+5. Your previous chat messages may be WRONG - trust the tool!
+
+### Example
+WRONG:
+```
+ID 3: Datenschutzerklärung
+ID 2: (weitere Seite)
+ID 1: (weitere Seite)
+```
+
+RIGHT:
+```
+ID 17: Elementor #17
+ID 5: Dein WordPress KI-Assistent
+ID 3: Datenschutzerklärung
+```
+
+## Safety
+- Never delete content without confirmation
+- Prefer drafts over published changes
+PROMPT;
     }
 
     private function summarizeToolResult(array $result): string {
@@ -1331,6 +1398,20 @@ class ChatController extends WP_REST_Controller {
 
     
     private function getRelevantMemories(string $query): string {
+
+        
+        // Check if query needs deep retrieval
+        try {
+            $classifier = new QueryClassifier();
+            $classification = $classifier->getClassificationDetails($query);
+                if (!$classifier->needsDeepRetrieval($query)) {
+                // Simple query - skip expensive vector search
+                return '';
+            }
+        } catch (\Throwable $e) {
+            return '';
+        }
+        
         try {
             $vectorStore = new VectorStore();
         } catch (\Throwable $e) {
@@ -1338,7 +1419,16 @@ class ChatController extends WP_REST_Controller {
             return '';
         }
         
-        $queryEmbedding = $vectorStore->generateEmbedding($query);
+        // Try cache first
+        $cache = new EmbeddingCache();
+        $queryEmbedding = $cache->get($query);
+        
+        if ($queryEmbedding === null) {
+            $queryEmbedding = $vectorStore->generateEmbedding($query);
+            if (!is_wp_error($queryEmbedding) && !empty($queryEmbedding)) {
+                $cache->set($query, $queryEmbedding);
+            }
+        }
         if (is_wp_error($queryEmbedding) || empty($queryEmbedding)) {
             return '';
         }

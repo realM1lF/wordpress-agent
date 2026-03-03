@@ -106,7 +106,7 @@ class MemoryLoader {
     }
 
     /**
-     * Process a single file
+     * Process a single file with batch processing for better performance
      */
     private function processFile(string $filePath, string $memoryType): array|WP_Error {
         $content = file_get_contents($filePath);
@@ -117,6 +117,8 @@ class MemoryLoader {
 
         $chunks = $this->splitIntoChunks($content);
         $vectorsCreated = 0;
+        $batch = [];
+        $batchSize = 10; // Process 10 chunks at a time for bulk insert
 
         foreach ($chunks as $index => $chunk) {
             // Generate embedding
@@ -130,23 +132,34 @@ class MemoryLoader {
                 continue;
             }
 
-            // Store vector
-            $stored = $this->vectorStore->storeVector(
-                $chunk,
-                $embedding,
-                $memoryType,
-                basename($filePath),
-                $index
-            );
+            // Collect for batch insert
+            $batch[] = [
+                'content' => $chunk,
+                'embedding' => $embedding,
+                'memory_type' => $memoryType,
+                'source_file' => basename($filePath),
+                'chunk_index' => $index,
+            ];
 
-            if ($stored) {
-                $vectorsCreated++;
+            // Bulk insert when batch is full
+            if (count($batch) >= $batchSize) {
+                $inserted = $this->vectorStore->bulkInsertVectors($batch);
+                $vectorsCreated += $inserted;
+                $batch = []; // Clear batch
             }
         }
 
-        // Mark file as loaded
-        $fileHash = $this->vectorStore->getFileHash($filePath);
-        $this->vectorStore->markFileLoaded($filePath, $fileHash);
+        // Insert remaining batch
+        if (!empty($batch)) {
+            $inserted = $this->vectorStore->bulkInsertVectors($batch);
+            $vectorsCreated += $inserted;
+        }
+
+        // Mark file as loaded only if all chunks were processed
+        if ($vectorsCreated === count($chunks)) {
+            $fileHash = $this->vectorStore->getFileHash($filePath);
+            $this->vectorStore->markFileLoaded($filePath, $fileHash);
+        }
 
         return [
             'chunks' => count($chunks),
@@ -156,39 +169,44 @@ class MemoryLoader {
 
     /**
      * Split text into chunks with overlap
+     * 
+     * Uses a robust approach that works with various line ending formats.
+     * Splits by sentences first, then groups into word-count-based chunks.
      */
     private function splitIntoChunks(string $text): array {
-        // Clean up text
-        $text = preg_replace('/\s+/', ' ', $text);
+        // Normalize line endings and clean up whitespace
+        $text = str_replace(["\r\n", "\r"], "\n", $text);
+        $text = preg_replace('/[ \t]+/', ' ', $text);
         
-        // Split by paragraphs first
-        $paragraphs = preg_split('/\n\n+/', $text, -1, PREG_SPLIT_NO_EMPTY);
+        // Split text into sentences (handles various sentence endings)
+        // This regex splits on . ! ? followed by space or newline, but keeps the punctuation
+        $sentences = preg_split('/(?<=[.!?])\s+/', $text, -1, PREG_SPLIT_NO_EMPTY);
         
         $chunks = [];
         $currentChunk = '';
         $currentWordCount = 0;
 
-        foreach ($paragraphs as $paragraph) {
-            $paragraph = trim($paragraph);
-            if (empty($paragraph)) {
+        foreach ($sentences as $sentence) {
+            $sentence = trim($sentence);
+            if (empty($sentence)) {
                 continue;
             }
 
-            $wordCount = str_word_count($paragraph);
+            $wordCount = str_word_count($sentence);
 
-            // If adding this paragraph would exceed chunk size, save current chunk
+            // If adding this sentence would exceed chunk size, save current chunk
             if ($currentWordCount + $wordCount > $this->chunkSize && $currentWordCount > 0) {
                 $chunks[] = trim($currentChunk);
                 
-                // Keep last sentences for overlap
-                $sentences = preg_split('/(?<=[.!?])\s+/', $currentChunk, -1, PREG_SPLIT_NO_EMPTY);
+                // Keep last sentences for overlap (up to chunkOverlap words)
+                $currentChunkSentences = preg_split('/(?<=[.!?])\s+/', $currentChunk, -1, PREG_SPLIT_NO_EMPTY);
                 $overlapText = '';
                 $overlapWords = 0;
                 
-                for ($i = count($sentences) - 1; $i >= 0; $i--) {
-                    $sentenceWords = str_word_count($sentences[$i]);
+                for ($i = count($currentChunkSentences) - 1; $i >= 0; $i--) {
+                    $sentenceWords = str_word_count($currentChunkSentences[$i]);
                     if ($overlapWords + $sentenceWords <= $this->chunkOverlap) {
-                        $overlapText = $sentences[$i] . ' ' . $overlapText;
+                        $overlapText = $currentChunkSentences[$i] . ' ' . $overlapText;
                         $overlapWords += $sentenceWords;
                     } else {
                         break;
@@ -199,7 +217,7 @@ class MemoryLoader {
                 $currentWordCount = $overlapWords;
             }
 
-            $currentChunk .= "\n\n" . $paragraph;
+            $currentChunk .= ($currentChunk ? ' ' : '') . $sentence;
             $currentWordCount += $wordCount;
         }
 

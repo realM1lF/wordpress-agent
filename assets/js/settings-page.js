@@ -53,12 +53,12 @@
             });
         });
 
-        // Reload memories button
+        // Reload identity files button
         $('#levi-reload-memories').on('click', function() {
             const $btn = $(this);
             const $result = $('#levi-reload-result');
             
-            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.reloadConfirm) ? leviSettings.i18n.reloadConfirm : 'Reload all memories? This may take a moment.';
+            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.reloadConfirm) ? leviSettings.i18n.reloadConfirm : 'Reload identity files?';
             if (!confirm(confirmMsg)) {
                 return;
             }
@@ -76,12 +76,10 @@
                 success: function(response) {
                     if (response.success) {
                         const identityCount = Object.keys(response.data.results.identity.loaded || {}).length;
-                        const referenceCount = Object.keys(response.data.results.reference.loaded || {}).length;
                         var reloaded = (leviSettings.i18n && leviSettings.i18n.reloaded) ? leviSettings.i18n.reloaded : 'Reloaded:';
                         var idLabel = (leviSettings.i18n && leviSettings.i18n.identity) ? leviSettings.i18n.identity : 'identity';
-                        var refLabel = (leviSettings.i18n && leviSettings.i18n.reference) ? leviSettings.i18n.reference : 'reference';
                         var filesLabel = (leviSettings.i18n && leviSettings.i18n.files) ? leviSettings.i18n.files : 'files';
-                        $result.html('<span class="levi-success">✓ ' + reloaded + ' ' + identityCount + ' ' + idLabel + ', ' + referenceCount + ' ' + refLabel + ' ' + filesLabel + '</span>');
+                        $result.html('<span class="levi-success">✓ ' + reloaded + ' ' + identityCount + ' ' + idLabel + ' ' + filesLabel + '</span>');
                         setTimeout(function() {
                             location.reload();
                         }, 1500);

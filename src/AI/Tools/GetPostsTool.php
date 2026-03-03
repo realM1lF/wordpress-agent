@@ -11,7 +11,7 @@ class GetPostsTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get WordPress posts/content of any post type (post, page, product, etc.) with optional full content. Use post_type parameter for custom types like WooCommerce products.';
+        return 'Get WordPress posts/content of any post type (post, page, product, etc.) with optional full content. Use post_type parameter for custom types like WooCommerce products. CRITICAL: Returns ONLY actual posts from the database - never invent, assume, or hallucinate posts that are not in the result.';
     }
 
     public function getParameters(): array {
