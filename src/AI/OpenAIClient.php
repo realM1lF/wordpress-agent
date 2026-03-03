@@ -12,10 +12,10 @@ class OpenAIClient implements AIClientInterface {
     private int $timeout;
     private int $maxTokens;
 
-    public function __construct() {
+    public function __construct(?string $modelOverride = null) {
         $settings = new SettingsPage();
         $this->apiKey = $settings->getApiKeyForProvider('openai');
-        $this->model = $settings->getModelForProvider('openai');
+        $this->model = $modelOverride ?? $settings->getModelForProvider('openai');
         $allSettings = $settings->getSettings();
         $this->timeout = max(1, (int) ($allSettings['ai_timeout'] ?? 120));
         $this->maxTokens = max(1, (int) ($allSettings['max_tokens'] ?? 131072));

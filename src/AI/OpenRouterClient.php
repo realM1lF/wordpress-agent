@@ -12,10 +12,11 @@ class OpenRouterClient implements AIClientInterface {
     private int $timeout;
     private int $maxTokens;
 
-    public function __construct() {
+    public function __construct(?string $modelOverride = null) {
         $settings = new SettingsPage();
         $this->apiKey = $settings->getApiKeyForProvider('openrouter');
-        $this->model = $settings->getModelForProvider('openrouter');
+        // Use override model if provided, otherwise use default
+        $this->model = $modelOverride ?? $settings->getModelForProvider('openrouter');
         $allSettings = $settings->getSettings();
         $this->timeout = max(1, (int) ($allSettings['ai_timeout'] ?? 120));
         $this->maxTokens = max(1, (int) ($allSettings['max_tokens'] ?? 131072));

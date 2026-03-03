@@ -46,6 +46,25 @@ class ChatController extends WP_REST_Controller {
         add_action('rest_api_init', [$this, 'register_routes']);
     }
 
+    /**
+     * Get AI client for a specific query.
+     * Uses alternative (faster) model for simple queries.
+     * 
+     * @param string $query The user query
+     * @return AIClientInterface
+     */
+    private function getAIClientForQuery(string $query): AIClientInterface {
+        $altModel = AIClientFactory::getModelForQuery($query);
+        
+        if ($altModel !== null) {
+            // Use alternative model for this query
+            return AIClientFactory::createWithModel($this->settings->getProvider(), $altModel);
+        }
+        
+        // Use default model
+        return $this->aiClient;
+    }
+
     public function register_routes(): void {
         $sharedArgs = [
             'message' => [
@@ -311,8 +330,11 @@ class ChatController extends WP_REST_Controller {
             $this->emitSSE('heartbeat', []);
         };
 
+        // Get AI client (uses alternative model for simple queries)
+        $aiClient = $this->getAIClientForQuery($message);
+        
         // Call AI with heartbeat
-        $response = $this->aiClient->chat($messages, $tools, $heartbeat);
+        $response = $aiClient->chat($messages, $tools, $heartbeat);
 
         // Error handling with fallbacks (same logic as non-streaming)
         if (is_wp_error($response)) {
@@ -677,8 +699,11 @@ class ChatController extends WP_REST_Controller {
         // Get available tools
         $tools = $this->toolRegistry->getDefinitions();
 
+        // Get AI client (uses alternative model for simple queries)
+        $aiClient = $this->getAIClientForQuery($message);
+
         // Call AI – try with tools first, fallback to no tools on provider error
-        $response = $this->aiClient->chat($messages, $tools);
+        $response = $aiClient->chat($messages, $tools);
 
         if (is_wp_error($response)) {
             $errMsg = $response->get_error_message();

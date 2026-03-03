@@ -146,6 +146,11 @@ class SettingsPage {
             $sanitized[$settingKey] = isset($allowedModels[$candidate]) ? $candidate : array_key_first($allowedModels);
         }
 
+        // Alternative model (for OpenRouter only)
+        $allowedAltModels = $this->getAllowedAltModelsForProvider('openrouter');
+        $altCandidate = sanitize_text_field($input['openrouter_alt_model'] ?? ($existing['openrouter_alt_model'] ?? ''));
+        $sanitized['openrouter_alt_model'] = isset($allowedAltModels[$altCandidate]) ? $altCandidate : array_key_first($allowedAltModels);
+
         // Numeric & Boolean Settings
         $sanitized['rate_limit'] = max(1, min(1000, absint($input['rate_limit'] ?? 50)));
         $sanitized['max_tool_iterations'] = max(1, absint($input['max_tool_iterations'] ?? 12));
@@ -497,6 +502,30 @@ class SettingsPage {
                 <div class="levi-form-group">
                     <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[openrouter_model]" value="moonshotai/kimi-k2.5">
                     <p class="levi-form-help"><?php echo esc_html($this->tr('Kimi K2.5 (Moonshot) via OpenRouter', 'Kimi K2.5 (Moonshot) ueber OpenRouter')); ?></p>
+                </div>
+            </div>
+
+            <!-- Alternative Model (for simple queries) -->
+            <div class="levi-form-card">
+                <h3><?php echo esc_html($this->tr('Alternative Model (Turbo)', 'Alternatives Modell (Turbo)')); ?></h3>
+                <p class="levi-form-description">
+                    <?php echo esc_html($this->tr('Faster model for simple queries. Automatically used for questions like "What can you do?" or simple knowledge questions.', 'Schnelleres Modell fuer einfache Fragen. Automatisch genutzt fuer Fragen wie "Was kannst du?" oder einfache Wissensfragen.')); ?>
+                </p>
+                <div class="levi-form-group">
+                    <?php 
+                    $altModels = $this->getAllowedAltModelsForProvider('openrouter');
+                    $currentAltModel = $settings['openrouter_alt_model'] ?? 'anthropic/claude-3.5-sonnet';
+                    ?>
+                    <select name="<?php echo esc_attr($this->optionName); ?>[openrouter_alt_model]" class="levi-form-select">
+                        <?php foreach ($altModels as $modelId => $modelLabel): ?>
+                            <option value="<?php echo esc_attr($modelId); ?>" <?php selected($currentAltModel, $modelId); ?>>
+                                <?php echo esc_html($modelLabel); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr('Recommendation: Claude 3.5 Sonnet for best speed/quality balance.', 'Empfehlung: Claude 3.5 Sonnet fuer beste Balance aus Geschwindigkeit und Qualitaet.')); ?>
+                    </p>
                 </div>
             </div>
         </div>
@@ -1021,6 +1050,18 @@ class SettingsPage {
         ];
     }
 
+    public function getAllowedAltModelsForProvider(string $provider): array {
+        if ($provider !== 'openrouter') {
+            return [];
+        }
+        return [
+            'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet (Schnell & Schlau)',
+            'google/gemini-2.0-flash' => 'Gemini 2.0 Flash (Sehr schnell)',
+            'openai/gpt-4o-mini' => 'GPT-4o Mini (Schnell & Günstig)',
+            'disabled' => 'Deaktiviert (Nur Hauptmodell nutzen)',
+        ];
+    }
+
     public function getModel(): string {
         return $this->getModelForProvider($this->getProvider());
     }
@@ -1037,6 +1078,22 @@ class SettingsPage {
         return isset($allowed[$model]) ? $model : array_key_first($allowed);
     }
 
+    public function getAltModel(): string {
+        return $this->getAltModelForProvider($this->getProvider());
+    }
+
+    public function getAltModelForProvider(string $provider): string {
+        // Alternative model only supported for OpenRouter currently
+        if ($provider !== 'openrouter') {
+            return $this->getModelForProvider($provider);
+        }
+        
+        $settings = $this->getSettings();
+        $allowed = $this->getAllowedAltModelsForProvider($provider);
+        $model = (string) ($settings['openrouter_alt_model'] ?? array_key_first($allowed));
+        return isset($allowed[$model]) ? $model : array_key_first($allowed);
+    }
+
     public function getSettings(): array {
         $defaults = [
             'ai_provider' => 'openrouter',
@@ -1045,6 +1102,7 @@ class SettingsPage {
             'openai_api_key' => '',
             'anthropic_api_key' => '',
             'openrouter_model' => 'moonshotai/kimi-k2.5',
+            'openrouter_alt_model' => 'anthropic/claude-3.5-sonnet',
             'openai_model' => 'gpt-4o-mini',
             'anthropic_model' => 'claude-3-5-sonnet-20241022',
             'rate_limit' => 50,
