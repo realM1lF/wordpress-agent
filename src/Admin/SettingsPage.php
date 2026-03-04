@@ -189,7 +189,7 @@ class SettingsPage {
         $sanitized['rate_limit'] = max(1, min(1000, absint($input['rate_limit'] ?? 50)));
         $sanitized['max_tokens'] = max(1, min(131072, absint($input['max_tokens'] ?? 131072)));
         $sanitized['ai_timeout'] = max(1, absint($input['ai_timeout'] ?? 120));
-        $sanitized['php_time_limit'] = max(0, absint($input['php_time_limit'] ?? 120));
+        $sanitized['php_time_limit'] = max(0, absint($input['php_time_limit'] ?? 180));
         $sanitized['max_context_tokens'] = max(1000, min(500000, absint($input['max_context_tokens'] ?? 100000)));
 
         // Behavior presets (dropdowns shared with wizard)
@@ -1320,7 +1320,7 @@ class SettingsPage {
             'max_tool_iterations' => 18,
             'max_tokens' => 131072,
             'ai_timeout' => 120,
-            'php_time_limit' => 120,
+            'php_time_limit' => 180,
             'max_context_tokens' => 100000,
             'history_context_limit' => 50,
             'tool_profile' => 'standard',

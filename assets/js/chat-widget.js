@@ -237,7 +237,7 @@
                     clearPhaseTimers(phaseTimers);
                     typing.complete();
                     setSendingState(false);
-                    addMessage('Ich konnte gerade keine Antwort generieren. Schreibe "mach weiter", damit ich es erneut versuche.', 'assistant');
+                    addMessage('Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.', 'assistant');
                     console.warn('Levi SSE: stream ended without done/error event');
                 }
             } catch (error) {
@@ -955,7 +955,7 @@
             cleaned = cleaned.replace(/<\|[^|>]+?\|>/g, '');
             cleaned = cleaned.replace(/(?:^|\n)\s*functions\.[a-z0-9_]+\s*:\s*\d+[\s\S]*$/i, '');
             cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
-            return cleaned || 'Ich konnte gerade keine Antwort generieren. Schreibe "mach weiter", damit ich es erneut versuche.';
+            return cleaned || 'Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.';
         }
 
         function fallbackPlainText(text) {

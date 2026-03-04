@@ -270,7 +270,7 @@ class ChatController extends WP_REST_Controller {
     }
 
     public function sendMessage(WP_REST_Request $request): WP_REST_Response {
-        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 120);
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 180);
         if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
             @set_time_limit($phpTimeLimit);
         }
@@ -292,7 +292,7 @@ class ChatController extends WP_REST_Controller {
     }
     
     public function sendMessageStream(WP_REST_Request $request): void {
-        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 120);
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 180);
         if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
             @set_time_limit($phpTimeLimit);
         }
@@ -700,7 +700,7 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
-        $finalMessage = 'Ich habe das Schritt-Limit fuer diese Anfrage erreicht. Schreib "mach weiter", damit ich fortfahren kann.';
+        $finalMessage = 'Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.';
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
         $fallbackPayload = [
@@ -1155,7 +1155,7 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
-        $finalMessage = 'Ich habe das Schritt-Limit fuer diese Anfrage erreicht. Schreib "mach weiter", damit ich fortfahren kann.';
+        $finalMessage = 'Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.';
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
         $fallbackPayload = [
@@ -1779,7 +1779,7 @@ PROMPT;
     }
 
     private function getEmptyResponseFallback(): string {
-        return 'Ich konnte gerade keine Antwort generieren. Schreibe "mach weiter", damit ich es erneut versuche.';
+        return 'Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.';
     }
 
     private function normalizeToolArgumentsForIntent(string $toolName, array $args, string $latestUserMessage): array {
