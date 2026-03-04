@@ -686,7 +686,7 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
-        $finalMessage = 'Ich habe mehrere Teilaufgaben ausgefuehrt, aber brauche eine kurze Bestaetigung zum naechsten Schritt.';
+        $finalMessage = 'Ich habe das Schritt-Limit fuer diese Anfrage erreicht. Schreib "mach weiter", damit ich fortfahren kann.';
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
         $fallbackPayload = [
@@ -1129,7 +1129,7 @@ class ChatController extends WP_REST_Controller {
             }
         }
 
-        $finalMessage = 'Ich habe mehrere Teilaufgaben ausgeführt, aber brauche eine kurze Bestätigung zum nächsten Schritt.';
+        $finalMessage = 'Ich habe das Schritt-Limit fuer diese Anfrage erreicht. Schreib "mach weiter", damit ich fortfahren kann.';
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
         $fallbackPayload = [

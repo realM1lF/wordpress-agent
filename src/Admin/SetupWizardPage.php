@@ -155,11 +155,11 @@ class SetupWizardPage {
         }
 
         if ($speed === 'fast') {
-            $settings['max_tool_iterations'] = 6;
+            $settings['max_tool_iterations'] = 8;
         } elseif ($speed === 'careful') {
-            $settings['max_tool_iterations'] = 16;
+            $settings['max_tool_iterations'] = 18;
         } else {
-            $settings['max_tool_iterations'] = 10;
+            $settings['max_tool_iterations'] = 12;
         }
 
         $this->saveSettings($settings);
@@ -378,32 +378,32 @@ class SetupWizardPage {
                             </div>
 
                             <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_thoroughness"><?php _e('Wie gründlich soll Levi lesen?', 'levi-agent'); ?></label>
+                                <label class="levi-form-label" for="levi_thoroughness"><?php _e('Wie viel Chat-Verlauf soll Levi berücksichtigen?', 'levi-agent'); ?></label>
                                 <select id="levi_thoroughness" name="levi_thoroughness" class="levi-form-select">
-                                    <option value="low" <?php selected($tuning['thoroughness'], 'low'); ?>><?php _e('Schnell — liest nur das Nötigste', 'levi-agent'); ?></option>
-                                    <option value="balanced" <?php selected($tuning['thoroughness'], 'balanced'); ?>><?php _e('Ausgewogen (empfohlen) — guter Kompromiss', 'levi-agent'); ?></option>
-                                    <option value="high" <?php selected($tuning['thoroughness'], 'high'); ?>><?php _e('Sehr gründlich — liest mehr Inhalte, braucht länger', 'levi-agent'); ?></option>
+                                    <option value="low" <?php selected($tuning['thoroughness'], 'low'); ?>><?php _e('Wenig (30 Nachrichten)', 'levi-agent'); ?></option>
+                                    <option value="balanced" <?php selected($tuning['thoroughness'], 'balanced'); ?>><?php _e('Mittel (50 Nachrichten, empfohlen)', 'levi-agent'); ?></option>
+                                    <option value="high" <?php selected($tuning['thoroughness'], 'high'); ?>><?php _e('Viel (80 Nachrichten)', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Beeinflusst, wie viel Kontext Levi bei jeder Anfrage berücksichtigt.', 'levi-agent'); ?></p>
+                                <p class="levi-form-help"><?php _e('Levi lädt die letzten X Nachrichten aus eurem Chat als Kontext. Mehr = besseres Gedächtnis, aber langsamere Antworten.', 'levi-agent'); ?></p>
                             </div>
 
                             <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_safety_mode"><?php _e('Wie vorsichtig soll Levi bei Änderungen sein?', 'levi-agent'); ?></label>
+                                <label class="levi-form-label" for="levi_safety_mode"><?php _e('Bestätigung vor kritischen Aktionen?', 'levi-agent'); ?></label>
                                 <select id="levi_safety_mode" name="levi_safety_mode" class="levi-form-select">
-                                    <option value="strict" <?php selected($tuning['safety'], 'strict'); ?>><?php _e('Sicher — fragt vor dem Löschen/Ändern nach', 'levi-agent'); ?></option>
-                                    <option value="standard" <?php selected($tuning['safety'], 'standard'); ?>><?php _e('Standard — weniger Nachfragen, schneller', 'levi-agent'); ?></option>
+                                    <option value="strict" <?php selected($tuning['safety'], 'strict'); ?>><?php _e('Ja — Levi fragt vor dem Löschen oder Ändern', 'levi-agent'); ?></option>
+                                    <option value="standard" <?php selected($tuning['safety'], 'standard'); ?>><?php _e('Nein — Levi führt direkt aus', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Im sicheren Modus bestätigt Levi jede Lösch- oder Änderungs-Aktion mit dir.', 'levi-agent'); ?></p>
+                                <p class="levi-form-help"><?php _e('Wenn aktiv, fragt Levi bei destruktiven Aktionen (Löschen, Theme-Wechsel, Plugin-Installation) erst nach deiner Bestätigung.', 'levi-agent'); ?></p>
                             </div>
 
                             <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_speed_mode"><?php _e('Wie schnell soll Levi antworten?', 'levi-agent'); ?></label>
+                                <label class="levi-form-label" for="levi_speed_mode"><?php _e('Wie viele Arbeitsschritte pro Anfrage?', 'levi-agent'); ?></label>
                                 <select id="levi_speed_mode" name="levi_speed_mode" class="levi-form-select">
-                                    <option value="fast" <?php selected($tuning['speed'], 'fast'); ?>><?php _e('Schnell — weniger Schritte, kürzere Antworten', 'levi-agent'); ?></option>
-                                    <option value="balanced" <?php selected($tuning['speed'], 'balanced'); ?>><?php _e('Ausgewogen (empfohlen)', 'levi-agent'); ?></option>
-                                    <option value="careful" <?php selected($tuning['speed'], 'careful'); ?>><?php _e('Sorgfältig — mehr Schritte, gründlichere Ergebnisse', 'levi-agent'); ?></option>
+                                    <option value="fast" <?php selected($tuning['speed'], 'fast'); ?>><?php _e('Wenig (8 Schritte)', 'levi-agent'); ?></option>
+                                    <option value="balanced" <?php selected($tuning['speed'], 'balanced'); ?>><?php _e('Standard (12 Schritte, empfohlen)', 'levi-agent'); ?></option>
+                                    <option value="careful" <?php selected($tuning['speed'], 'careful'); ?>><?php _e('Viel (18 Schritte)', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Bestimmt, wie viele Tool-Schritte Levi pro Anfrage ausführen darf.', 'levi-agent'); ?></p>
+                                <p class="levi-form-help"><?php _e('Jede Tool-Aktion (Seite lesen, Plugin schreiben, etc.) zählt als ein Schritt. Komplexe Aufgaben brauchen mehr Schritte.', 'levi-agent'); ?></p>
                             </div>
 
                             <div class="levi-form-actions">

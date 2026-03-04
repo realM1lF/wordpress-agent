@@ -94,23 +94,35 @@ class SettingsPage {
 
     private function deriveThoroughness(int $historyLimit, array $tuningMode): string {
         if (isset($tuningMode['thoroughness']) && in_array($tuningMode['thoroughness'], ['low', 'balanced', 'high'], true)) {
-            return $tuningMode['thoroughness'];
+            $expected = match ($tuningMode['thoroughness']) {
+                'low' => 30, 'high' => 80, default => 50,
+            };
+            if ($historyLimit === $expected) {
+                return $tuningMode['thoroughness'];
+            }
         }
         return match (true) {
-            $historyLimit <= 30 => 'low',
-            $historyLimit >= 80 => 'high',
-            default => 'balanced',
+            $historyLimit === 30 => 'low',
+            $historyLimit === 50 => 'balanced',
+            $historyLimit === 80 => 'high',
+            default => 'custom',
         };
     }
 
     private function deriveSpeed(int $maxIterations, array $tuningMode): string {
         if (isset($tuningMode['speed']) && in_array($tuningMode['speed'], ['fast', 'balanced', 'careful'], true)) {
-            return $tuningMode['speed'];
+            $expected = match ($tuningMode['speed']) {
+                'fast' => 8, 'careful' => 18, default => 12,
+            };
+            if ($maxIterations === $expected) {
+                return $tuningMode['speed'];
+            }
         }
         return match (true) {
-            $maxIterations <= 6 => 'fast',
-            $maxIterations >= 16 => 'careful',
-            default => 'balanced',
+            $maxIterations === 8 => 'fast',
+            $maxIterations === 12 => 'balanced',
+            $maxIterations === 18 => 'careful',
+            default => 'custom',
         };
     }
 
@@ -203,19 +215,19 @@ class SettingsPage {
 
         if (in_array($speedMode, ['fast', 'balanced', 'careful'], true)) {
             $sanitized['max_tool_iterations'] = match ($speedMode) {
-                'fast' => 6,
-                'careful' => 16,
-                default => 10,
+                'fast' => 8,
+                'careful' => 18,
+                default => 12,
             };
         } else {
-            $sanitized['max_tool_iterations'] = max(1, absint($input['max_tool_iterations'] ?? 12));
+            $sanitized['max_tool_iterations'] = max(4, min(30, absint($input['max_tool_iterations'] ?? 12)));
         }
 
         if ($thoroughness !== '' || $safetyMode !== '' || $speedMode !== '') {
             update_option('levi_setup_tuning_mode', [
-                'thoroughness' => $thoroughness ?: 'balanced',
+                'thoroughness' => in_array($thoroughness, ['low', 'balanced', 'high'], true) ? $thoroughness : 'custom',
                 'safety' => $safetyMode ?: 'strict',
-                'speed' => $speedMode ?: 'balanced',
+                'speed' => in_array($speedMode, ['fast', 'balanced', 'careful'], true) ? $speedMode : 'custom',
             ]);
         }
 
@@ -880,52 +892,120 @@ class SettingsPage {
                     </div>
                 </div>
 
-                <!-- Levi Behavior Presets (same as wizard) -->
+                <!-- Levi Behavior Settings -->
                 <div class="levi-form-card">
                     <h3><?php echo esc_html($this->tr('Levi Behavior', 'Levi-Verhalten')); ?></h3>
                     <p class="levi-form-help" style="margin-bottom: 1rem;">
                         <?php echo esc_html($this->tr(
-                            'Same settings as in the setup wizard. Changes take effect immediately.',
-                            'Gleiche Einstellungen wie im Einrichtungsassistenten. Aenderungen wirken sofort.'
+                            'These settings control how Levi works. Choose a preset or enter a custom value.',
+                            'Diese Einstellungen steuern wie Levi arbeitet. Waehle eine Voreinstellung oder gib einen eigenen Wert ein.'
                         )); ?>
                     </p>
 
                     <?php
                     $tuningMode = get_option('levi_setup_tuning_mode', []);
                     if (!is_array($tuningMode)) { $tuningMode = []; }
-                    $curThoroughness = $this->deriveThoroughness((int) ($settings['history_context_limit'] ?? 50), $tuningMode);
+                    $curHistoryLimit = (int) ($settings['history_context_limit'] ?? 50);
+                    $curThoroughness = $this->deriveThoroughness($curHistoryLimit, $tuningMode);
                     $curSafety = !empty($settings['require_confirmation_destructive']) ? 'strict' : 'standard';
-                    $curSpeed = $this->deriveSpeed((int) ($settings['max_tool_iterations'] ?? 10), $tuningMode);
+                    $curMaxIterations = (int) ($settings['max_tool_iterations'] ?? 12);
+                    $curSpeed = $this->deriveSpeed($curMaxIterations, $tuningMode);
                     ?>
 
                     <div class="levi-form-group">
-                        <label class="levi-form-label" for="levi_thoroughness"><?php echo esc_html($this->tr('How thoroughly should Levi read?', 'Wie gruendlich soll Levi lesen?')); ?></label>
-                        <select id="levi_thoroughness" name="<?php echo esc_attr($this->optionName); ?>[levi_thoroughness]" class="levi-form-select">
-                            <option value="low" <?php selected($curThoroughness, 'low'); ?>><?php echo esc_html($this->tr('Fast — reads only essentials', 'Schnell — liest nur das Noetigste')); ?></option>
-                            <option value="balanced" <?php selected($curThoroughness, 'balanced'); ?>><?php echo esc_html($this->tr('Balanced (recommended)', 'Ausgewogen (empfohlen)')); ?></option>
-                            <option value="high" <?php selected($curThoroughness, 'high'); ?>><?php echo esc_html($this->tr('Very thorough — reads more, takes longer', 'Sehr gruendlich — liest mehr Inhalte, braucht laenger')); ?></option>
-                        </select>
-                        <p class="levi-form-help"><?php echo esc_html($this->tr('Controls how many previous messages Levi considers per request.', 'Beeinflusst, wie viel Kontext Levi bei jeder Anfrage beruecksichtigt.')); ?></p>
+                        <label class="levi-form-label" for="levi_thoroughness"><?php echo esc_html($this->tr('How much chat history should Levi consider?', 'Wie viel Chat-Verlauf soll Levi beruecksichtigen?')); ?></label>
+                        <div style="display: flex; gap: 0.75rem; align-items: center;">
+                            <select id="levi_thoroughness" name="<?php echo esc_attr($this->optionName); ?>[levi_thoroughness]" class="levi-form-select" style="flex: 1;">
+                                <option value="low" <?php selected($curThoroughness, 'low'); ?>><?php echo esc_html($this->tr('Few (30 messages)', 'Wenig (30 Nachrichten)')); ?></option>
+                                <option value="balanced" <?php selected($curThoroughness, 'balanced'); ?>><?php echo esc_html($this->tr('Medium (50 messages, recommended)', 'Mittel (50 Nachrichten, empfohlen)')); ?></option>
+                                <option value="high" <?php selected($curThoroughness, 'high'); ?>><?php echo esc_html($this->tr('Many (80 messages)', 'Viel (80 Nachrichten)')); ?></option>
+                                <option value="custom" <?php selected($curThoroughness, 'custom'); ?>><?php echo esc_html($this->tr('Custom', 'Benutzerdefiniert')); ?></option>
+                            </select>
+                            <input type="number" id="levi_history_value"
+                                   name="<?php echo esc_attr($this->optionName); ?>[history_context_limit]"
+                                   value="<?php echo esc_attr($curHistoryLimit); ?>"
+                                   min="10" max="200" class="levi-form-input levi-input-small" style="width: 80px;">
+                        </div>
+                        <p class="levi-form-help"><?php echo esc_html($this->tr(
+                            'Levi loads the last X messages from your chat as context. More = better memory in long conversations, but slower responses.',
+                            'Levi laedt die letzten X Nachrichten aus eurem Chat als Kontext. Mehr = besseres Gedaechtnis in langen Gespraechen, aber langsamere Antworten.'
+                        )); ?></p>
                     </div>
 
                     <div class="levi-form-group">
-                        <label class="levi-form-label" for="levi_safety_mode"><?php echo esc_html($this->tr('How careful should Levi be with changes?', 'Wie vorsichtig soll Levi bei Aenderungen sein?')); ?></label>
+                        <label class="levi-form-label" for="levi_safety_mode"><?php echo esc_html($this->tr('Confirmation before critical actions?', 'Bestaetigung vor kritischen Aktionen?')); ?></label>
                         <select id="levi_safety_mode" name="<?php echo esc_attr($this->optionName); ?>[levi_safety_mode]" class="levi-form-select">
-                            <option value="strict" <?php selected($curSafety, 'strict'); ?>><?php echo esc_html($this->tr('Safe — asks before deleting/changing', 'Sicher — fragt vor dem Loeschen/Aendern nach')); ?></option>
-                            <option value="standard" <?php selected($curSafety, 'standard'); ?>><?php echo esc_html($this->tr('Standard — fewer confirmations, faster', 'Standard — weniger Nachfragen, schneller')); ?></option>
+                            <option value="strict" <?php selected($curSafety, 'strict'); ?>><?php echo esc_html($this->tr('Yes — Levi asks before deleting or changing', 'Ja — Levi fragt vor dem Loeschen oder Aendern')); ?></option>
+                            <option value="standard" <?php selected($curSafety, 'standard'); ?>><?php echo esc_html($this->tr('No — Levi executes directly', 'Nein — Levi fuehrt direkt aus')); ?></option>
                         </select>
-                        <p class="levi-form-help"><?php echo esc_html($this->tr('In safe mode Levi confirms every delete or change action with you.', 'Im sicheren Modus bestaetigt Levi jede Loesch- oder Aenderungs-Aktion mit dir.')); ?></p>
+                        <p class="levi-form-help"><?php echo esc_html($this->tr(
+                            'When active, Levi asks for your confirmation before destructive actions (deleting, theme switch, plugin install).',
+                            'Wenn aktiv, fragt Levi bei destruktiven Aktionen (Loeschen, Theme-Wechsel, Plugin-Installation) erst nach deiner Bestaetigung.'
+                        )); ?></p>
                     </div>
 
                     <div class="levi-form-group">
-                        <label class="levi-form-label" for="levi_speed_mode"><?php echo esc_html($this->tr('How fast should Levi respond?', 'Wie schnell soll Levi antworten?')); ?></label>
-                        <select id="levi_speed_mode" name="<?php echo esc_attr($this->optionName); ?>[levi_speed_mode]" class="levi-form-select">
-                            <option value="fast" <?php selected($curSpeed, 'fast'); ?>><?php echo esc_html($this->tr('Fast — fewer steps, shorter answers', 'Schnell — weniger Schritte, kuerzere Antworten')); ?></option>
-                            <option value="balanced" <?php selected($curSpeed, 'balanced'); ?>><?php echo esc_html($this->tr('Balanced (recommended)', 'Ausgewogen (empfohlen)')); ?></option>
-                            <option value="careful" <?php selected($curSpeed, 'careful'); ?>><?php echo esc_html($this->tr('Careful — more steps, thorough results', 'Sorgfaeltig — mehr Schritte, gruendlichere Ergebnisse')); ?></option>
-                        </select>
-                        <p class="levi-form-help"><?php echo esc_html($this->tr('Determines how many tool steps Levi may execute per request.', 'Bestimmt, wie viele Tool-Schritte Levi pro Anfrage ausfuehren darf.')); ?></p>
+                        <label class="levi-form-label" for="levi_speed_mode"><?php echo esc_html($this->tr('How many work steps per request?', 'Wie viele Arbeitsschritte pro Anfrage?')); ?></label>
+                        <div style="display: flex; gap: 0.75rem; align-items: center;">
+                            <select id="levi_speed_mode" name="<?php echo esc_attr($this->optionName); ?>[levi_speed_mode]" class="levi-form-select" style="flex: 1;">
+                                <option value="fast" <?php selected($curSpeed, 'fast'); ?>><?php echo esc_html($this->tr('Few (8 steps)', 'Wenig (8 Schritte)')); ?></option>
+                                <option value="balanced" <?php selected($curSpeed, 'balanced'); ?>><?php echo esc_html($this->tr('Standard (12 steps, recommended)', 'Standard (12 Schritte, empfohlen)')); ?></option>
+                                <option value="careful" <?php selected($curSpeed, 'careful'); ?>><?php echo esc_html($this->tr('Many (18 steps)', 'Viel (18 Schritte)')); ?></option>
+                                <option value="custom" <?php selected($curSpeed, 'custom'); ?>><?php echo esc_html($this->tr('Custom', 'Benutzerdefiniert')); ?></option>
+                            </select>
+                            <input type="number" id="levi_iterations_value"
+                                   name="<?php echo esc_attr($this->optionName); ?>[max_tool_iterations]"
+                                   value="<?php echo esc_attr($curMaxIterations); ?>"
+                                   min="4" max="30" class="levi-form-input levi-input-small" style="width: 80px;">
+                        </div>
+                        <p class="levi-form-help"><?php echo esc_html($this->tr(
+                            'Each tool action (read page, write plugin, etc.) counts as one step. Complex tasks need more steps. If too few, Levi stops and asks you to continue.',
+                            'Jede Tool-Aktion (Seite lesen, Plugin schreiben, etc.) zaehlt als ein Schritt. Komplexe Aufgaben brauchen mehr Schritte. Bei zu wenigen bricht Levi ab und bittet dich, fortzufahren.'
+                        )); ?></p>
                     </div>
+
+                    <script>
+                    (function() {
+                        var thoroughnessMap = {low: 30, balanced: 50, high: 80};
+                        var speedMap = {fast: 8, balanced: 12, careful: 18};
+
+                        var tSelect = document.getElementById('levi_thoroughness');
+                        var tInput = document.getElementById('levi_history_value');
+                        var sSelect = document.getElementById('levi_speed_mode');
+                        var sInput = document.getElementById('levi_iterations_value');
+
+                        if (tSelect && tInput) {
+                            tSelect.addEventListener('change', function() {
+                                if (thoroughnessMap[this.value] !== undefined) {
+                                    tInput.value = thoroughnessMap[this.value];
+                                }
+                            });
+                            tInput.addEventListener('input', function() {
+                                var val = parseInt(this.value, 10);
+                                var matched = false;
+                                for (var k in thoroughnessMap) {
+                                    if (thoroughnessMap[k] === val) { tSelect.value = k; matched = true; break; }
+                                }
+                                if (!matched) { tSelect.value = 'custom'; }
+                            });
+                        }
+                        if (sSelect && sInput) {
+                            sSelect.addEventListener('change', function() {
+                                if (speedMap[this.value] !== undefined) {
+                                    sInput.value = speedMap[this.value];
+                                }
+                            });
+                            sInput.addEventListener('input', function() {
+                                var val = parseInt(this.value, 10);
+                                var matched = false;
+                                for (var k in speedMap) {
+                                    if (speedMap[k] === val) { sSelect.value = k; matched = true; break; }
+                                }
+                                if (!matched) { sSelect.value = 'custom'; }
+                            });
+                        }
+                    })();
+                    </script>
                 </div>
 
                 <!-- AI Response Settings -->
