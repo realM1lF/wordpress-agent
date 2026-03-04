@@ -732,6 +732,18 @@
     background: rgba(0, 0, 0, 0.3);
 }
 
+.levi-message-time {
+    display: block;
+    font-size: 10px;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.35);
+    margin-top: 4px;
+    user-select: none;
+}
+.levi-message-user .levi-message-time {
+    text-align: right;
+}
+
 /* Confirmation Card (Dark Chat Theme) */
 .levi-confirmation-card {
     margin: 8px 16px 8px 52px;

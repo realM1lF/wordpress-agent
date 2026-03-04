@@ -652,7 +652,17 @@
             });
         }
 
-        function addMessage(text, role, attachments) {
+        function formatTimestamp(dateInput) {
+            var d = dateInput ? new Date(dateInput) : new Date();
+            if (isNaN(d.getTime())) { d = new Date(); }
+            var hh = String(d.getHours()).padStart(2, '0');
+            var mm = String(d.getMinutes()).padStart(2, '0');
+            var dd = String(d.getDate()).padStart(2, '0');
+            var mo = String(d.getMonth() + 1).padStart(2, '0');
+            return dd + '.' + mo + '. ' + hh + ':' + mm;
+        }
+
+        function addMessage(text, role, attachments, timestamp) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'levi-message levi-message-' + role;
 
@@ -677,7 +687,9 @@
             }
             inner += renderMessageContent(text, role);
 
-            let html = buildAvatarHtml(role) + '<div class="levi-message-main"><div class="levi-message-content">' + inner + '</div>';
+            var ts = formatTimestamp(timestamp);
+            let html = buildAvatarHtml(role) + '<div class="levi-message-main"><div class="levi-message-content">' + inner + '</div>'
+                + '<span class="levi-message-time">' + ts + '</span>';
 
             if (role === 'user') {
                 html += '<button type="button" class="levi-message-edit-btn dashicons dashicons-edit" title="Nachricht bearbeiten" aria-label="Nachricht bearbeiten"></button>';
@@ -780,7 +792,7 @@
                     return;
                 }
                 if (msg.role === 'user' || msg.role === 'assistant') {
-                    addMessage(msg.content, msg.role);
+                    addMessage(msg.content, msg.role, null, msg.created_at);
                 }
             });
         }
