@@ -226,7 +226,6 @@ class SettingsPage {
 
         $sanitized['memory_identity_k'] = max(1, min(20, absint($input['memory_identity_k'] ?? 5)));
         $sanitized['memory_reference_k'] = max(1, min(20, absint($input['memory_reference_k'] ?? 5)));
-        $sanitized['memory_episodic_k'] = max(1, min(20, absint($input['memory_episodic_k'] ?? 4)));
         $sanitized['memory_min_similarity'] = max(0.0, min(1.0, (float) ($input['memory_min_similarity'] ?? 0.6)));
 
         $sanitized['pii_redaction'] = !empty($input['pii_redaction']) ? 1 : 0;
@@ -410,10 +409,6 @@ class SettingsPage {
                                 ?>
                                 <p class="levi-stat-files"><?php echo esc_html(implode(', ', $referenceNames)); ?></p>
                             <?php endif; ?>
-                        </div>
-                        <div class="levi-stat-item">
-                            <span class="levi-stat-value"><?php echo number_format($stats['episodic_memories'] ?? 0); ?></span>
-                            <span class="levi-stat-label"><?php _e('Episodic', 'levi-agent'); ?></span>
                         </div>
                     </div>
                 </div>
@@ -725,16 +720,6 @@ class SettingsPage {
                     </div>
 
                     <div class="levi-form-row">
-                        <div class="levi-form-group">
-                            <label class="levi-form-label"><?php echo esc_html($this->tr('Episodic Memories', 'Episodic-Memories')); ?></label>
-                            <input type="number" 
-                                   name="<?php echo esc_attr($this->optionName); ?>[memory_episodic_k]" 
-                                   value="<?php echo esc_attr($settings['memory_episodic_k']); ?>"
-                                   min="1" max="20" class="levi-form-input levi-input-small">
-                            <p class="levi-form-help levi-hint">
-                                <?php echo esc_html($this->tr('Controls how many recent episode entries are loaded (recent actions/outcomes). Higher values improve continuity across longer tasks, lower values reduce carry-over from old context.', 'Steuert, wie viele episodische Eintraege (juengste Aktionen/Ergebnisse) geladen werden. Hoehere Werte verbessern Kontinuitaet bei laengeren Aufgaben, niedrigere reduzieren Altkontext.')); ?>
-                            </p>
-                        </div>
                         <div class="levi-form-group">
                             <label class="levi-form-label"><?php echo esc_html($this->tr('Min Similarity', 'Min. Aehnlichkeit')); ?></label>
                             <input type="number" 
@@ -1262,7 +1247,6 @@ class SettingsPage {
             'require_confirmation_destructive' => 1,
             'memory_identity_k' => 5,
             'memory_reference_k' => 5,
-            'memory_episodic_k' => 4,
             'memory_min_similarity' => 0.6,
             'pii_redaction' => 1,
             'blocked_post_types' => '',

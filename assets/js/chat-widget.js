@@ -285,6 +285,9 @@
 
                     const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                     addMessage(cleanedMessage, 'assistant');
+                    if (data.pending_confirmation) {
+                        appendConfirmationCard(data.pending_confirmation);
+                    }
                     clearSessionFilesQuietly();
                     return true;
 
@@ -348,6 +351,9 @@
 
                 const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                 addMessage(cleanedMessage, 'assistant');
+                if (data.pending_confirmation) {
+                    appendConfirmationCard(data.pending_confirmation);
+                }
                 clearSessionFilesQuietly();
             })
             .catch(error => {
@@ -693,6 +699,72 @@
             }
 
             messages.appendChild(messageDiv);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function appendConfirmationCard(pending) {
+            if (!pending || !pending.action_id) return;
+
+            var card = document.createElement('div');
+            card.className = 'levi-confirmation-card';
+            card.setAttribute('data-action-id', pending.action_id);
+
+            var label = document.createElement('div');
+            label.className = 'levi-confirmation-label';
+            label.textContent = 'Levi moechte: ' + (pending.description || pending.tool || 'Aktion ausfuehren');
+            card.appendChild(label);
+
+            var btnRow = document.createElement('div');
+            btnRow.className = 'levi-confirmation-buttons';
+
+            var confirmBtn = document.createElement('button');
+            confirmBtn.type = 'button';
+            confirmBtn.className = 'levi-confirm-btn levi-confirm-btn-primary';
+            confirmBtn.textContent = 'Bestaetigen';
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className = 'levi-confirm-btn levi-confirm-btn-secondary';
+            cancelBtn.textContent = 'Abbrechen';
+
+            btnRow.appendChild(confirmBtn);
+            btnRow.appendChild(cancelBtn);
+            card.appendChild(btnRow);
+
+            confirmBtn.addEventListener('click', function() {
+                confirmBtn.disabled = true;
+                cancelBtn.disabled = true;
+                confirmBtn.textContent = 'Wird ausgefuehrt...';
+                card.classList.add('levi-confirmation-loading');
+
+                fetch(leviAgent.restUrl + 'chat/confirm-action', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-WP-Nonce': leviAgent.nonce,
+                    },
+                    body: JSON.stringify({ action_id: pending.action_id }),
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(result) {
+                    card.remove();
+                    if (result.message) {
+                        addMessage(result.message, 'assistant');
+                    } else if (result.error) {
+                        addMessage('❌ ' + result.error, 'assistant');
+                    }
+                })
+                .catch(function(err) {
+                    card.remove();
+                    addMessage('❌ Bestaetigung fehlgeschlagen: ' + err.message, 'assistant');
+                });
+            });
+
+            cancelBtn.addEventListener('click', function() {
+                card.remove();
+            });
+
+            messages.appendChild(card);
             messages.scrollTop = messages.scrollHeight;
         }
 

@@ -162,6 +162,21 @@ class ChatController extends WP_REST_Controller {
                 'permission_callback' => [$this, 'checkPermission'],
             ],
         ]);
+
+        register_rest_route($this->namespace, '/' . $this->rest_base . '/confirm-action', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [$this, 'confirmAction'],
+                'permission_callback' => [$this, 'checkPermission'],
+                'args' => [
+                    'action_id' => [
+                        'required' => true,
+                        'type' => 'string',
+                        'sanitize_callback' => 'sanitize_text_field',
+                    ],
+                ],
+            ],
+        ]);
     }
 
     public function getStatus(WP_REST_Request $request): WP_REST_Response {
@@ -172,6 +187,54 @@ class ChatController extends WP_REST_Controller {
             'tables_ok' => $tableExists,
             'ai_configured' => $this->aiClient->isConfigured(),
             'user_id' => get_current_user_id(),
+        ], 200);
+    }
+
+    public function confirmAction(WP_REST_Request $request): WP_REST_Response {
+        $actionId = (string) $request->get_param('action_id');
+        $userId = get_current_user_id();
+
+        $transientKey = 'levi_pending_' . $actionId;
+        $pending = get_transient($transientKey);
+
+        if (!is_array($pending) || empty($pending['tool_name'])) {
+            return new WP_REST_Response([
+                'success' => false,
+                'error' => 'Aktion nicht gefunden oder abgelaufen. Bitte erneut anfordern.',
+            ], 404);
+        }
+
+        if ((int) ($pending['user_id'] ?? 0) !== $userId) {
+            return new WP_REST_Response([
+                'success' => false,
+                'error' => 'Keine Berechtigung fuer diese Aktion.',
+            ], 403);
+        }
+
+        $toolName = (string) $pending['tool_name'];
+        $toolArgs = is_array($pending['tool_args']) ? $pending['tool_args'] : [];
+        $sessionId = (string) ($pending['session_id'] ?? '');
+
+        $result = $this->toolRegistry->execute($toolName, $toolArgs);
+        $this->logToolExecution($sessionId, $userId, $toolName, $toolArgs, $result);
+
+        delete_transient($transientKey);
+
+        $summary = $this->describeToolAction($toolName, $toolArgs);
+        $ok = !empty($result['success']);
+        $assistantMessage = $ok
+            ? '✅ ' . $summary . ' – erfolgreich ausgefuehrt.'
+            : '❌ ' . $summary . ' – fehlgeschlagen: ' . ($result['error'] ?? 'Unbekannter Fehler');
+
+        if ($sessionId !== '') {
+            $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+        }
+
+        return new WP_REST_Response([
+            'success' => $ok,
+            'message' => $assistantMessage,
+            'tool' => $toolName,
+            'result' => $result,
         ], 200);
     }
 
@@ -313,23 +376,6 @@ class ChatController extends WP_REST_Controller {
         $messages = $this->buildMessages($sessionId, $message, true);
         $tools = $this->toolRegistry->getDefinitions();
 
-        if ($this->hasUserConfirmationSignal($message)) {
-            $confirmed = $this->executePendingConfirmation($sessionId, $userId);
-            if ($confirmed !== null) {
-                $toolName = $confirmed['tool'];
-                $ok = !empty($confirmed['result']['success']);
-                $summary = $this->summarizeToolResult($confirmed['result']);
-                $messages[] = [
-                    'role' => 'system',
-                    'content' => sprintf(
-                        'Der Nutzer hat die ausstehende Aktion bestaetigt. %s wurde ausgefuehrt: %s',
-                        $toolName,
-                        $ok ? $summary : ('Fehler: ' . $summary)
-                    ),
-                ];
-            }
-        }
-
         // Heartbeat callback for SSE keepalive during AI calls
         $heartbeat = function () {
             if (connection_aborted()) {
@@ -459,6 +505,7 @@ class ChatController extends WP_REST_Controller {
         callable $heartbeat
     ): void {
         $toolResults = [];
+        $pendingConfirmation = null;
         $runtimeSettings = $this->settings->getSettings();
         $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 12));
         $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
@@ -500,9 +547,23 @@ class ChatController extends WP_REST_Controller {
                         'tool' => $functionName,
                     ];
                 } elseif ($requireConfirmation && $this->isDestructiveTool($functionName) && !$hasConfirmation) {
+                    $actionId = wp_generate_uuid4();
+                    set_transient('levi_pending_' . $actionId, [
+                        'tool_name' => $functionName,
+                        'tool_args' => $functionArgs,
+                        'session_id' => $sessionId,
+                        'user_id' => $userId,
+                        'created_at' => time(),
+                    ], 300);
+                    $pendingConfirmation = [
+                        'action_id' => $actionId,
+                        'tool' => $functionName,
+                        'description' => $this->describeToolAction($functionName, $functionArgs),
+                    ];
                     $result = [
                         'success' => false,
                         'needs_confirmation' => true,
+                        'action_id' => $actionId,
                         'error' => 'Fuer diese Aktion brauche ich eine explizite Bestaetigung.',
                         'tool' => $functionName,
                     ];
@@ -610,13 +671,17 @@ class ChatController extends WP_REST_Controller {
 
                 $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
-                $this->emitSSE('done', [
+                $donePayload = [
                     'session_id' => $sessionId,
                     'message' => $finalMessage,
                     'model' => $nextResponse['model'] ?? null,
                     'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
                     'truncated' => $this->wasResponseTruncated($nextResponse),
-                ]);
+                ];
+                if ($pendingConfirmation !== null) {
+                    $donePayload['pending_confirmation'] = $pendingConfirmation;
+                }
+                $this->emitSSE('done', $donePayload);
                 return;
             }
         }
@@ -624,11 +689,15 @@ class ChatController extends WP_REST_Controller {
         $finalMessage = 'Ich habe mehrere Teilaufgaben ausgefuehrt, aber brauche eine kurze Bestaetigung zum naechsten Schritt.';
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
-        $this->emitSSE('done', [
+        $fallbackPayload = [
             'session_id' => $sessionId,
             'message' => $finalMessage,
             'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
-        ]);
+        ];
+        if ($pendingConfirmation !== null) {
+            $fallbackPayload['pending_confirmation'] = $pendingConfirmation;
+        }
+        $this->emitSSE('done', $fallbackPayload);
     }
 
     private function getToolProgressLabel(string $toolName, string $phase): string {
@@ -712,23 +781,6 @@ class ChatController extends WP_REST_Controller {
 
         // Get available tools
         $tools = $this->toolRegistry->getDefinitions();
-
-        if ($this->hasUserConfirmationSignal($message)) {
-            $confirmed = $this->executePendingConfirmation($sessionId, $userId);
-            if ($confirmed !== null) {
-                $toolName = $confirmed['tool'];
-                $ok = !empty($confirmed['result']['success']);
-                $summary = $this->summarizeToolResult($confirmed['result']);
-                $messages[] = [
-                    'role' => 'system',
-                    'content' => sprintf(
-                        'Der Nutzer hat die ausstehende Aktion bestaetigt. %s wurde ausgefuehrt: %s',
-                        $toolName,
-                        $ok ? $summary : ('Fehler: ' . $summary)
-                    ),
-                ];
-            }
-        }
 
         // Get AI client (uses alternative model for simple queries)
         $aiClient = $this->getAIClient();
@@ -884,6 +936,7 @@ class ChatController extends WP_REST_Controller {
     private function handleToolCalls(array $messageData, array $messages, string $sessionId, int $userId, string $latestUserMessage): WP_REST_Response {
         $toolResults = [];
         $executionTrace = [];
+        $pendingConfirmation = null;
         $runtimeSettings = $this->settings->getSettings();
         $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 12));
         $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
@@ -932,9 +985,23 @@ class ChatController extends WP_REST_Controller {
                         'tool' => $functionName,
                     ];
                 } elseif ($requireConfirmation && $this->isDestructiveTool($functionName) && !$hasConfirmation) {
+                    $actionId = wp_generate_uuid4();
+                    set_transient('levi_pending_' . $actionId, [
+                        'tool_name' => $functionName,
+                        'tool_args' => $functionArgs,
+                        'session_id' => $sessionId,
+                        'user_id' => $userId,
+                        'created_at' => time(),
+                    ], 300);
+                    $pendingConfirmation = [
+                        'action_id' => $actionId,
+                        'tool' => $functionName,
+                        'description' => $this->describeToolAction($functionName, $functionArgs),
+                    ];
                     $result = [
                         'success' => false,
                         'needs_confirmation' => true,
+                        'action_id' => $actionId,
                         'error' => 'Für diese Aktion brauche ich eine explizite Bestätigung von dir.',
                         'tool' => $functionName,
                     ];
@@ -1046,7 +1113,7 @@ class ChatController extends WP_REST_Controller {
 
                 $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
-                return new WP_REST_Response([
+                $responsePayload = [
                     'session_id' => $sessionId,
                     'message' => $finalMessage,
                     'model' => $nextResponse['model'] ?? null,
@@ -1054,20 +1121,28 @@ class ChatController extends WP_REST_Controller {
                     'execution_trace' => $executionTrace,
                     'truncated' => $this->wasResponseTruncated($nextResponse),
                     'timestamp' => current_time('mysql'),
-                ], 200);
+                ];
+                if ($pendingConfirmation !== null) {
+                    $responsePayload['pending_confirmation'] = $pendingConfirmation;
+                }
+                return new WP_REST_Response($responsePayload, 200);
             }
         }
 
         $finalMessage = 'Ich habe mehrere Teilaufgaben ausgeführt, aber brauche eine kurze Bestätigung zum nächsten Schritt.';
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
-        return new WP_REST_Response([
+        $fallbackPayload = [
             'session_id' => $sessionId,
             'message' => $finalMessage,
             'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
             'execution_trace' => $executionTrace,
             'timestamp' => current_time('mysql'),
-        ], 200);
+        ];
+        if ($pendingConfirmation !== null) {
+            $fallbackPayload['pending_confirmation'] = $pendingConfirmation;
+        }
+        return new WP_REST_Response($fallbackPayload, 200);
     }
 
     private function buildMessages(string $sessionId, string $newMessage, bool $includeUploadedContext = true): array {
@@ -1205,54 +1280,59 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function getSystemPrompt(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): string {
-        // ALWAYS load identity (rules.md, knowledge.md are CRITICAL)
-        // Fast Mode only skips the expensive Vector Memory search, never the rules!
+        // Identity: cached static full text (ALWAYS, every message)
         try {
-            $identity = new Identity();
-            $basePrompt = $identity->getSystemPrompt();
+            $basePrompt = $this->getCachedIdentity();
         } catch (\Throwable $e) {
             error_log('Levi Identity Error: ' . $e->getMessage());
             $basePrompt = "You are Levi, a helpful AI assistant for WordPress.";
         }
-        
-        // Check if query needs deep memory retrieval (Vector DB search)
-        $isSimpleQuery = false;
+
+        // Dynamic context: user name, role, time (ALWAYS, fresh per request, no disk I/O)
+        try {
+            $basePrompt .= "\n\n---\n\n" . Identity::getDynamicContext();
+        } catch (\Throwable $e) {
+            // non-critical
+        }
+
+        // QueryClassifier: evaluate once, pass strategy through
+        $strategy = ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => false];
         if (!empty($query)) {
             try {
                 $classifier = new QueryClassifier();
-                $isSimpleQuery = !$classifier->needsDeepRetrieval($query);
+                $strategy = $classifier->getRetrievalStrategy($query);
             } catch (\Throwable $e) {
-                // Ignore, assume complex
+                $strategy = ['identity' => true, 'reference' => true, 'snapshot' => true, 'full_tools' => true];
             }
         }
-        
-        // Add relevant memories if query provided (optional - don't fail chat if memory fails)
-        if (!empty($query) && !$isSimpleQuery) {
+
+        // Context Layer: only when strategy demands it (knowledge/complex queries)
+        if ($strategy['reference'] || $strategy['snapshot']) {
             try {
-                $relevantMemories = $this->getRelevantMemories($query);
-                if (!empty($relevantMemories)) {
-                    $basePrompt .= "\n\n# Relevant Context\n\n" . $relevantMemories;
+                $contextMemories = $this->getContextMemories($query, $strategy);
+                if (!empty($contextMemories)) {
+                    $basePrompt .= "\n\n# Relevant Context\n\n" . $contextMemories;
                 }
             } catch (\Throwable $e) {
                 error_log('Levi Memory Error: ' . $e->getMessage());
             }
         }
 
-        // Add state baseline for ALL queries (fast - from wp_options)
-        // This is needed for system-specific questions like "Wie ist meine Elementor-Einstellung?"
+        // State Baseline metadata (ALWAYS, cheap -- from wp_options)
         $stateBaseline = StateSnapshotService::getPromptContext();
         if ($stateBaseline !== '') {
             $basePrompt .= "\n\n# Daily WordPress State Baseline\n\n" . $stateBaseline;
         }
-        
-        // Only add uploaded context for complex queries
+
+        // Uploaded file context only for non-simple queries
+        $isSimpleQuery = !$strategy['reference'] && !$strategy['snapshot'] && !$strategy['full_tools'];
         if (!$isSimpleQuery && $includeUploadedContext && !empty($sessionId)) {
             $uploadedContext = $this->buildUploadedFilesContext($sessionId, get_current_user_id());
             if ($uploadedContext !== '') {
                 $basePrompt .= "\n\n# Session File Context\n\n" . $uploadedContext;
             }
         }
-        
+
         return $basePrompt;
     }
     
@@ -1305,6 +1385,60 @@ ID 3: Datenschutzerklärung
 PROMPT;
     }
 
+    /**
+     * Get cached identity text from WordPress transient.
+     * Caches only the static content (soul+rules+knowledge). getDynamicContext() is appended separately per request.
+     */
+    private function getCachedIdentity(): string {
+        $this->ensureMemoryFreshness();
+
+        $cached = get_transient('levi_identity_cache');
+        if (is_string($cached) && $cached !== '') {
+            return $cached;
+        }
+
+        $identity = new Identity();
+        $content = $identity->getFullContent();
+        $hash = $identity->getContentHash();
+
+        if ($content !== '') {
+            set_transient('levi_identity_cache', $content, HOUR_IN_SECONDS);
+            set_transient('levi_identity_hash', $hash, HOUR_IN_SECONDS);
+        }
+
+        return $content !== '' ? $content : "You are Levi, a helpful AI assistant for WordPress.";
+    }
+
+    /**
+     * Check if identity files changed (throttled to once per 60 seconds).
+     * If changed: invalidate cache and re-sync identity to Vector DB.
+     */
+    private function ensureMemoryFreshness(): void {
+        if (get_transient('levi_identity_freshness_checked')) {
+            return;
+        }
+        set_transient('levi_identity_freshness_checked', '1', 60);
+
+        try {
+            $identity = new Identity();
+            $currentHash = $identity->getContentHash();
+            $storedHash = get_transient('levi_identity_hash');
+
+            if ($storedHash !== false && $storedHash === $currentHash) {
+                return;
+            }
+
+            delete_transient('levi_identity_cache');
+
+            $loader = new \Levi\Agent\Memory\MemoryLoader();
+            $loader->loadIdentityFiles();
+
+            set_transient('levi_identity_hash', $currentHash, HOUR_IN_SECONDS);
+        } catch (\Throwable $e) {
+            error_log('Levi ensureMemoryFreshness: ' . $e->getMessage());
+        }
+    }
+
     private function summarizeToolResult(array $result): string {
         if (($result['needs_confirmation'] ?? false) === true) {
             return 'Warte auf explizite Bestätigung';
@@ -1338,40 +1472,21 @@ PROMPT;
         return 'Fehler bei Ausführung';
     }
 
-    private function executePendingConfirmation(string $sessionId, int $userId): ?array {
-        global $wpdb;
-        $table = $wpdb->prefix . 'levi_audit_log';
-
-        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
-            return null;
-        }
-
-        $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT tool_name, tool_args FROM {$table}
-             WHERE session_id = %s AND success = 0 AND result_summary LIKE %s
-             ORDER BY executed_at DESC LIMIT 1",
-            $sessionId,
-            '%Bestätigung%'
-        ), ARRAY_A);
-
-        if (!$row || empty($row['tool_name'])) {
-            return null;
-        }
-
-        $toolName = (string) $row['tool_name'];
-        $toolArgs = json_decode((string) ($row['tool_args'] ?? '{}'), true);
-        if (!is_array($toolArgs)) {
-            $toolArgs = [];
-        }
-
-        $result = $this->toolRegistry->execute($toolName, $toolArgs);
-        $this->logToolExecution($sessionId, $userId, $toolName, $toolArgs, $result);
-
-        return [
-            'tool' => $toolName,
-            'args' => $toolArgs,
-            'result' => $result,
-        ];
+    private function describeToolAction(string $toolName, array $args): string {
+        return match ($toolName) {
+            'delete_post' => 'Beitrag' . (!empty($args['id']) ? ' #' . $args['id'] : '') . ' loeschen',
+            'install_plugin' => "Plugin '" . ($args['plugin_slug'] ?? '?') . "' installieren",
+            'switch_theme' => "Theme zu '" . ($args['theme'] ?? $args['stylesheet'] ?? '?') . "' wechseln",
+            'update_any_option' => "Option '" . ($args['option'] ?? '?') . "' aendern",
+            'manage_user' => 'Benutzer-Aktion: ' . ($args['action'] ?? '?'),
+            'delete_plugin_file' => 'Plugin-Datei loeschen',
+            'delete_theme_file' => 'Theme-Datei loeschen',
+            'execute_wp_code' => 'PHP-Code ausfuehren',
+            'manage_woocommerce' => 'WooCommerce-Aktion: ' . ($args['action'] ?? '?'),
+            'manage_menu' => 'Menue-Aktion: ' . ($args['action'] ?? '?'),
+            'manage_cron' => 'Cron-Aktion: ' . ($args['action'] ?? '?'),
+            default => $toolName,
+        };
     }
 
     private function isDestructiveTool(string $toolName): bool {
@@ -1493,32 +1608,21 @@ PROMPT;
     }
 
     
-    private function getRelevantMemories(string $query): string {
-
-        
-        // Check if query needs deep retrieval
-        try {
-            $classifier = new QueryClassifier();
-            $classification = $classifier->getClassificationDetails($query);
-                if (!$classifier->needsDeepRetrieval($query)) {
-                // Simple query - skip expensive vector search
-                return '';
-            }
-        } catch (\Throwable $e) {
-            return '';
-        }
-        
+    /**
+     * Fetch context memories from Vector DB based on the retrieval strategy.
+     * Only searches reference and state_snapshot -- identity comes from transient cache.
+     */
+    private function getContextMemories(string $query, array $strategy): string {
         try {
             $vectorStore = new VectorStore();
         } catch (\Throwable $e) {
             error_log('Levi VectorStore init: ' . $e->getMessage());
             return '';
         }
-        
-        // Try cache first
+
         $cache = new EmbeddingCache();
         $queryEmbedding = $cache->get($query);
-        
+
         if ($queryEmbedding === null) {
             $queryEmbedding = $vectorStore->generateEmbedding($query);
             if (!is_wp_error($queryEmbedding) && !empty($queryEmbedding)) {
@@ -1528,49 +1632,42 @@ PROMPT;
         if (is_wp_error($queryEmbedding) || empty($queryEmbedding)) {
             return '';
         }
-        
+
         $memories = [];
         try {
             $runtimeSettings = $this->settings->getSettings();
-            $identityK = max(1, (int) ($runtimeSettings['memory_identity_k'] ?? 5));
             $referenceK = max(1, (int) ($runtimeSettings['memory_reference_k'] ?? 5));
-            $episodicK = max(1, (int) ($runtimeSettings['memory_episodic_k'] ?? 4));
             $similarity = (float) ($runtimeSettings['memory_min_similarity'] ?? 0.6);
 
-            $identityResults = $vectorStore->searchSimilar($queryEmbedding, 'identity', $identityK, $similarity);
-            $referenceResults = $vectorStore->searchSimilar($queryEmbedding, 'reference', $referenceK, $similarity);
-            $stateSnapshotResults = $vectorStore->searchSimilar(
-                $queryEmbedding,
-                'state_snapshot',
-                2,
-                max(0.5, $similarity - 0.1)
-            );
-            $userId = get_current_user_id();
-            $episodicResults = $vectorStore->searchEpisodicMemories($queryEmbedding, $userId, $episodicK, $similarity);
-            
-            if (!empty($identityResults)) {
-                $memories[] = "## Identity Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $identityResults));
+            if (!empty($strategy['reference'])) {
+                $referenceResults = $vectorStore->searchSimilar($queryEmbedding, 'reference', $referenceK, $similarity);
+                if (!empty($referenceResults)) {
+                    $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $referenceResults));
+                }
             }
-            if (!empty($referenceResults)) {
-                $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $referenceResults));
-            }
-            if (!empty($stateSnapshotResults)) {
-                $snapshotTexts = array_map(function ($r) {
-                    $content = (string) ($r['content'] ?? '');
-                    if (mb_strlen($content) > 1500) {
-                        $content = mb_substr($content, 0, 1500) . "\n...[truncated]";
-                    }
-                    return $content;
-                }, $stateSnapshotResults);
-                $memories[] = "## Historical System Snapshots\n" . implode("\n\n", $snapshotTexts);
-            }
-            if (!empty($episodicResults)) {
-                $memories[] = "## Learned Preferences\n" . implode("\n", array_map(fn($r) => $r['fact'], $episodicResults));
+
+            if (!empty($strategy['snapshot'])) {
+                $stateSnapshotResults = $vectorStore->searchSimilar(
+                    $queryEmbedding,
+                    'state_snapshot',
+                    2,
+                    max(0.5, $similarity - 0.1)
+                );
+                if (!empty($stateSnapshotResults)) {
+                    $snapshotTexts = array_map(function ($r) {
+                        $content = (string) ($r['content'] ?? '');
+                        if (mb_strlen($content) > 1500) {
+                            $content = mb_substr($content, 0, 1500) . "\n...[truncated]";
+                        }
+                        return $content;
+                    }, $stateSnapshotResults);
+                    $memories[] = "## Historical System Snapshots\n" . implode("\n\n", $snapshotTexts);
+                }
             }
         } catch (\Throwable $e) {
             error_log('Levi Memory search: ' . $e->getMessage());
         }
-        
+
         return implode("\n\n", $memories);
     }
 

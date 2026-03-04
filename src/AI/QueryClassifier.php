@@ -12,12 +12,12 @@ namespace Levi\Agent\AI;
  */
 class QueryClassifier {
     
-    /**
-     * Query types
-     */
+    public const TYPE_GREETING = 'greeting';
     public const TYPE_SIMPLE = 'simple';
-    public const TYPE_COMPLEX = 'complex';
+    public const TYPE_KNOWLEDGE = 'knowledge';
+    public const TYPE_DATA = 'data';
     public const TYPE_ACTION = 'action';
+    public const TYPE_COMPLEX = 'complex';
     
     /**
      * Check if query needs deep memory retrieval
@@ -30,57 +30,100 @@ class QueryClassifier {
      */
     public function needsDeepRetrieval(string $query): bool {
         $type = $this->classify($query);
-        return $type !== self::TYPE_SIMPLE;
+        return !in_array($type, [self::TYPE_SIMPLE, self::TYPE_GREETING], true);
     }
     
     /**
-     * Classify query type
-     * 
-     * @param string $query
-     * @return string One of TYPE_ constants
+     * Classify query type into one of 6 categories.
      */
     public function classify(string $query): string {
         $lower = mb_strtolower(trim($query));
-        
-        // Empty query
+
         if ($lower === '') {
             return self::TYPE_SIMPLE;
         }
-        
-        // Action queries - always need tools and deep retrieval
+
+        if ($this->isGreeting($lower)) {
+            return self::TYPE_GREETING;
+        }
+
         if ($this->isActionQuery($lower)) {
             return self::TYPE_ACTION;
         }
-        
-        // Simple knowledge questions (check FIRST before data retrieval)
-        // "Was ist Elementor?" = simple knowledge, not data retrieval
+
         if ($this->isSimpleKnowledgeQuery($lower)) {
-            // But check if it's also a data query - "Was ist installiert?" needs tool
             if (!$this->needsDataRetrieval($lower)) {
                 return self::TYPE_SIMPLE;
             }
         }
-        
-        // Data retrieval queries - need tools but may not need memory
-        // Examples: "Welche Seiten habe ich?", "Zeige mir alle Plugins"
+
         if ($this->needsDataRetrieval($lower)) {
-            return self::TYPE_COMPLEX;
+            return self::TYPE_DATA;
         }
-        
-        // Complex questions that benefit from context
+
         if ($this->isComplexQuery($lower)) {
-            return self::TYPE_COMPLEX;
+            if ($this->needsSetupContext($lower)) {
+                return self::TYPE_COMPLEX;
+            }
+            return self::TYPE_KNOWLEDGE;
         }
-        
-        // Default: treat as complex to be safe (needs tool = not simple)
+
+        if ($this->mentionsWordPressObjects($lower)) {
+            return self::TYPE_KNOWLEDGE;
+        }
+
         return self::TYPE_COMPLEX;
     }
+
+    /**
+     * Return a retrieval strategy array that tells the caller which data layers to activate.
+     * Called once per request; result is passed through to getContextMemories().
+     */
+    public function getRetrievalStrategy(string $query): array {
+        $type = $this->classify($query);
+
+        return match ($type) {
+            self::TYPE_GREETING => ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => false],
+            self::TYPE_SIMPLE   => ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => false],
+            self::TYPE_KNOWLEDGE => ['identity' => true, 'reference' => true,  'snapshot' => true,  'full_tools' => false],
+            self::TYPE_DATA     => ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => true],
+            self::TYPE_ACTION   => ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => true],
+            self::TYPE_COMPLEX  => ['identity' => true, 'reference' => true,  'snapshot' => true,  'full_tools' => true],
+            default             => ['identity' => true, 'reference' => true,  'snapshot' => true,  'full_tools' => true],
+        };
+    }
     
+    private function isGreeting(string $lower): bool {
+        $greetingPatterns = [
+            '/^(hi|hallo|hey|moin|servus|guten (morgen|tag|abend)|na\b|yo\b|hello|good (morning|evening|afternoon))/u',
+            '/^(wie geht|wie gehts|was geht|alles klar|na wie)/u',
+        ];
+        foreach ($greetingPatterns as $pattern) {
+            if (preg_match($pattern, $lower)) {
+                if (mb_strlen($lower) < 60) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private function needsSetupContext(string $lower): bool {
+        $setupPatterns = [
+            '/\b(setup|einrichtung|konfiguration|empfehl|empfiehl|welches plugin|bestes plugin|welches theme|passend|geeignet)\b/u',
+            '/\b(optimier|verbesser|diagnos|analyse|problem|fehler|langsam|schneller|performance|seo)\b/u',
+            '/\b(warum|why|wieso|weshalb)\b/u',
+        ];
+        foreach ($setupPatterns as $pattern) {
+            if (preg_match($pattern, $lower)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Check if query is an action query (creates/updates/deletes)
-     * 
-     * @param string $lower Lowercase query
-     * @return bool
      */
     private function isActionQuery(string $lower): bool {
         $actionPatterns = [
@@ -300,33 +343,26 @@ class QueryClassifier {
     }
     
     /**
-     * Get human-readable classification reason
-     * Useful for debugging
-     * 
-     * @param string $query
-     * @return array
+     * Get human-readable classification details (for debugging).
      */
     public function getClassificationDetails(string $query): array {
         $type = $this->classify($query);
+        $strategy = $this->getRetrievalStrategy($query);
         $lower = mb_strtolower(trim($query));
-        
-        // Determine specific reason
-        $reason = 'Unknown';
-        if ($type === self::TYPE_SIMPLE) {
-            $reason = 'Simple knowledge question - no tools or deep retrieval needed';
-        } elseif ($type === self::TYPE_ACTION) {
-            $reason = 'Action request (create/update/delete) - needs tools and full context';
-        } elseif ($type === self::TYPE_COMPLEX) {
-            if ($this->needsDataRetrieval($lower)) {
-                $reason = 'Data retrieval question - needs tools to fetch current state';
-            } else {
-                $reason = 'Complex question - needs context from memories';
-            }
-        }
-        
+
+        $reasons = [
+            self::TYPE_GREETING  => 'Greeting - identity only',
+            self::TYPE_SIMPLE    => 'Simple knowledge question - no tools or deep retrieval needed',
+            self::TYPE_KNOWLEDGE => 'Knowledge/consultation - needs reference + snapshot context',
+            self::TYPE_DATA      => 'Data retrieval - needs tools for live data',
+            self::TYPE_ACTION    => 'Action request - needs tools to execute',
+            self::TYPE_COMPLEX   => 'Complex question - needs full context + tools',
+        ];
+
         return [
             'type' => $type,
-            'reason' => $reason,
+            'reason' => $reasons[$type] ?? 'Unknown',
+            'strategy' => $strategy,
             'needs_deep_retrieval' => $this->needsDeepRetrieval($query),
             'mentions_wp_objects' => $this->mentionsWordPressObjects($lower),
             'needs_data_retrieval' => $this->needsDataRetrieval($lower),

@@ -732,6 +732,60 @@
     background: rgba(0, 0, 0, 0.3);
 }
 
+/* Confirmation Card */
+.levi-confirmation-card {
+    margin: 8px 16px 8px 52px;
+    padding: 12px 16px;
+    background: rgba(59, 130, 246, 0.06);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 12px;
+    animation: levi-fade-in 0.2s ease;
+}
+.levi-confirmation-label {
+    font-size: 13px;
+    color: #374151;
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+.levi-confirmation-buttons {
+    display: flex;
+    gap: 8px;
+}
+.levi-confirm-btn {
+    padding: 6px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: opacity 0.15s, background 0.15s;
+}
+.levi-confirm-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.levi-confirm-btn-primary {
+    background: #3b82f6;
+    color: #fff;
+}
+.levi-confirm-btn-primary:hover:not(:disabled) {
+    background: #2563eb;
+}
+.levi-confirm-btn-secondary {
+    background: #e5e7eb;
+    color: #374151;
+}
+.levi-confirm-btn-secondary:hover:not(:disabled) {
+    background: #d1d5db;
+}
+.levi-confirmation-loading .levi-confirmation-label {
+    opacity: 0.6;
+}
+@keyframes levi-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 @media (max-width: 900px) {
     .levi-chat-window,
     .levi-chat-window-fullwidth {
