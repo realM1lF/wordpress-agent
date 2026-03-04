@@ -37,11 +37,14 @@ class UpdateAnyOptionTool implements ToolInterface {
     }
 
     public function execute(array $params): array {
-        $option = sanitize_key($params['option']);
+        $option = sanitize_key($params['option'] ?? '');
+        if ($option === '') {
+            return ['success' => false, 'error' => 'option is required.'];
+        }
+
         $isJson = $params['is_json'] ?? false;
-        
-        // Decode JSON if needed
-        $value = $isJson ? json_decode($params['value'], true) : $params['value'];
+
+        $value = $isJson ? json_decode($params['value'] ?? '', true) : ($params['value'] ?? '');
         
         if ($isJson && json_last_error() !== JSON_ERROR_NONE) {
             return [

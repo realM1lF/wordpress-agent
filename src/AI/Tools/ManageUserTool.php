@@ -53,7 +53,7 @@ class ManageUserTool implements ToolInterface {
     }
 
     public function execute(array $params): array {
-        $action = $params['action'];
+        $action = $params['action'] ?? '';
 
         return match ($action) {
             'create' => !current_user_can('create_users')
@@ -107,11 +107,22 @@ class ManageUserTool implements ToolInterface {
         if (empty($params['user_id'])) {
             return [
                 'success' => false,
-                'error' => 'User ID required',
+                'error' => 'User ID required.',
+                'suggestion' => 'Use get_users to list available users and find the correct ID.',
             ];
         }
 
-        $userdata = ['ID' => intval($params['user_id'])];
+        $userId = intval($params['user_id']);
+        $existingUser = get_user_by('id', $userId);
+        if (!$existingUser) {
+            return [
+                'success' => false,
+                'error' => 'User not found.',
+                'suggestion' => 'Use get_users to list available users and verify the ID.',
+            ];
+        }
+
+        $userdata = ['ID' => $userId];
 
         if (!empty($params['email'])) {
             $userdata['user_email'] = sanitize_email($params['email']);

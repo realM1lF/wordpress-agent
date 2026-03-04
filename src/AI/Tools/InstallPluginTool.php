@@ -83,6 +83,7 @@ class InstallPluginTool implements ToolInterface {
             return [
                 'success' => false,
                 'error' => 'Plugin not found: ' . $api->get_error_message(),
+                'suggestion' => 'Check the exact plugin slug on wordpress.org/plugins/{slug}. Use get_plugins to see already installed plugins.',
             ];
         }
 

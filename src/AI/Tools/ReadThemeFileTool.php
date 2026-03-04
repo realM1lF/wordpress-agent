@@ -65,7 +65,17 @@ class ReadThemeFileTool implements ToolInterface {
 
         $themeRoot = trailingslashit(get_theme_root()) . $slug;
         if (!is_dir($themeRoot)) {
-            return ['success' => false, 'error' => 'Theme directory does not exist.'];
+            $resolved = $this->resolveThemeDirectory($slug);
+            if ($resolved !== null) {
+                $themeRoot = $resolved;
+                $slug = basename($resolved);
+            } else {
+                return [
+                    'success' => false,
+                    'error' => 'Theme directory does not exist.',
+                    'suggestion' => 'Use get_themes to list installed themes and find the correct theme_slug.',
+                ];
+            }
         }
 
         $targetPath = $themeRoot . '/' . $relativePath;
@@ -117,5 +127,33 @@ class ReadThemeFileTool implements ToolInterface {
             'truncated' => $nextOffset < $size,
             'content' => $content,
         ];
+    }
+
+    private function resolveThemeDirectory(string $requestedSlug): ?string {
+        $themesDir = get_theme_root();
+        if (!is_dir($themesDir)) {
+            return null;
+        }
+        $entries = scandir($themesDir);
+        if ($entries === false) {
+            return null;
+        }
+        $normalized = $this->normalizeSlug($requestedSlug);
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..' || !is_dir($themesDir . '/' . $entry)) {
+                continue;
+            }
+            if ($entry === $requestedSlug) {
+                continue;
+            }
+            if ($this->normalizeSlug($entry) === $normalized) {
+                return $themesDir . '/' . $entry;
+            }
+        }
+        return null;
+    }
+
+    private function normalizeSlug(string $slug): string {
+        return strtolower(str_replace(['-', '_'], '', $slug));
     }
 }

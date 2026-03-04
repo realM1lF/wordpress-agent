@@ -935,6 +935,144 @@
     display: none;
 }
 
+/* Model Comparison Tables - Dark Theme Aligned */
+.levi-model-info {
+    margin-top: var(--levi-space-lg);
+}
+
+.levi-model-info h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--levi-text-primary);
+    margin: var(--levi-space-lg) 0 var(--levi-space-md);
+    padding-bottom: var(--levi-space-sm);
+    border-bottom: 1px solid var(--levi-border-subtle);
+}
+
+.levi-table-wrap {
+    background: var(--levi-bg-surface);
+    border: 1px solid var(--levi-border-subtle);
+    border-radius: var(--levi-radius-md);
+    overflow: hidden;
+    margin-bottom: var(--levi-space-lg);
+}
+
+.levi-data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.levi-data-table thead {
+    background: var(--levi-bg-secondary);
+}
+
+.levi-data-table th {
+    padding: var(--levi-space-md);
+    text-align: left;
+    font-weight: 600;
+    color: var(--levi-text-primary);
+    border-bottom: 1px solid var(--levi-border-subtle);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.levi-data-table td {
+    padding: var(--levi-space-md);
+    color: var(--levi-text-secondary);
+    border-bottom: 1px solid var(--levi-border-subtle);
+}
+
+.levi-data-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.levi-data-table tbody tr {
+    transition: background var(--levi-transition-fast);
+}
+
+.levi-data-table tbody tr:hover {
+    background: rgba(124, 58, 237, 0.05);
+}
+
+.levi-row-featured {
+    background: rgba(124, 58, 237, 0.08) !important;
+    border-left: 3px solid var(--levi-accent);
+}
+
+.levi-row-featured td:first-child {
+    position: relative;
+}
+
+.levi-row-featured td:first-child::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--levi-accent);
+}
+
+.levi-model-name {
+    font-weight: 600;
+    color: var(--levi-text-primary);
+}
+
+.levi-row-featured .levi-model-name {
+    color: #a78bfa;
+}
+
+.levi-score {
+    font-weight: 600;
+    color: var(--levi-success);
+}
+
+.levi-price {
+    font-family: "Inter", system-ui, monospace;
+    font-size: 12px;
+}
+
+.levi-price-low {
+    color: var(--levi-success);
+}
+
+.levi-price-high {
+    color: var(--levi-warning);
+}
+
+.levi-data-table .levi-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--levi-bg-hover);
+    border: 1px solid var(--levi-border-subtle);
+    margin-left: 4px;
+}
+
+.levi-rating {
+    font-weight: 600;
+    color: #fbbf24;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.levi-row-featured .levi-rating {
+    color: #a78bfa;
+}
+
+/* Responsive tables */
+@media (max-width: 782px) {
+    .levi-data-table {
+        font-size: 12px;
+    }
+    
+    .levi-data-table th,
+    .levi-data-table td {
+        padding: var(--levi-space-sm);
+    }
+}
+
 /* Responsive adjustments */
 @media (max-width: 782px) {
     .levi-settings-header {

@@ -7,9 +7,11 @@ use WP_Error;
 class StateSnapshotService {
     public const EVENT_HOOK = 'levi_agent_daily_state_snapshot';
     public const MEMORY_SYNC_HOOK = 'levi_agent_daily_memory_sync';
+    public const EVENT_SNAPSHOT_HOOK = 'levi_agent_event_snapshot';
     private const META_OPTION = 'levi_agent_state_snapshot_meta';
     private const LAST_OPTION = 'levi_agent_state_snapshot_last';
     private const MEMORY_SYNC_OPTION = 'levi_agent_memory_sync_meta';
+    private const EVENT_DEBOUNCE_KEY = 'levi_snapshot_event_debounce';
 
     public function __construct() {
         add_action('init', [$this, 'ensureSchedule']);
@@ -17,6 +19,11 @@ class StateSnapshotService {
         add_action(self::MEMORY_SYNC_HOOK, [self::class, 'runMemorySync']);
         add_action(self::MEMORY_SYNC_HOOK . '_initial', [self::class, 'runMemorySync']);
         add_action('admin_init', [$this, 'maybeRunOverdueTasks']);
+
+        add_action(self::EVENT_SNAPSHOT_HOOK, [$this, 'runDailySync']);
+        add_action('activated_plugin', [self::class, 'scheduleSnapshotUpdate']);
+        add_action('deactivated_plugin', [self::class, 'scheduleSnapshotUpdate']);
+        add_action('switch_theme', [self::class, 'scheduleSnapshotUpdate']);
     }
 
     public function ensureSchedule(): void {
@@ -55,6 +62,22 @@ class StateSnapshotService {
         }
     }
 
+    /**
+     * Schedule a snapshot update with debounce (max 1 per 5 minutes).
+     * Uses wp_schedule_single_event with a 5-second delay so WordPress
+     * has finished updating its internal state before we capture.
+     */
+    public static function scheduleSnapshotUpdate(): void {
+        if (get_transient(self::EVENT_DEBOUNCE_KEY)) {
+            return;
+        }
+        set_transient(self::EVENT_DEBOUNCE_KEY, '1', 5 * MINUTE_IN_SECONDS);
+
+        if (!wp_next_scheduled(self::EVENT_SNAPSHOT_HOOK)) {
+            wp_schedule_single_event(time() + 5, self::EVENT_SNAPSHOT_HOOK);
+        }
+    }
+
     public static function scheduleEvent(): void {
         $nextRun = self::calculateNextRunTimestamp();
         if (!wp_next_scheduled(self::EVENT_HOOK)) {
@@ -66,7 +89,7 @@ class StateSnapshotService {
     }
 
     public static function unscheduleEvent(): void {
-        foreach ([self::EVENT_HOOK, self::MEMORY_SYNC_HOOK, self::MEMORY_SYNC_HOOK . '_initial'] as $hook) {
+        foreach ([self::EVENT_HOOK, self::MEMORY_SYNC_HOOK, self::MEMORY_SYNC_HOOK . '_initial', self::EVENT_SNAPSHOT_HOOK] as $hook) {
             $timestamp = wp_next_scheduled($hook);
             while ($timestamp !== false) {
                 wp_unschedule_event($timestamp, $hook);
@@ -74,6 +97,7 @@ class StateSnapshotService {
             }
         }
         delete_option('levi_initial_memory_sync_done');
+        delete_transient(self::EVENT_DEBOUNCE_KEY);
     }
 
     public function runDailySync(): void {
