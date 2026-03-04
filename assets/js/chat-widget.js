@@ -711,7 +711,7 @@
 
             var label = document.createElement('div');
             label.className = 'levi-confirmation-label';
-            label.textContent = 'Levi moechte: ' + (pending.description || pending.tool || 'Aktion ausfuehren');
+            label.textContent = 'Levi möchte: ' + (pending.description || pending.tool || 'Aktion ausführen');
             card.appendChild(label);
 
             var btnRow = document.createElement('div');
@@ -720,7 +720,7 @@
             var confirmBtn = document.createElement('button');
             confirmBtn.type = 'button';
             confirmBtn.className = 'levi-confirm-btn levi-confirm-btn-primary';
-            confirmBtn.textContent = 'Bestaetigen';
+            confirmBtn.textContent = 'Bestätigen';
 
             var cancelBtn = document.createElement('button');
             cancelBtn.type = 'button';
@@ -734,7 +734,7 @@
             confirmBtn.addEventListener('click', function() {
                 confirmBtn.disabled = true;
                 cancelBtn.disabled = true;
-                confirmBtn.textContent = 'Wird ausgefuehrt...';
+                confirmBtn.textContent = 'Wird ausgeführt...';
                 card.classList.add('levi-confirmation-loading');
 
                 fetch(leviAgent.restUrl + 'chat/confirm-action', {
@@ -756,7 +756,7 @@
                 })
                 .catch(function(err) {
                     card.remove();
-                    addMessage('❌ Bestaetigung fehlgeschlagen: ' + err.message, 'assistant');
+                    addMessage('❌ Bestätigung fehlgeschlagen: ' + err.message, 'assistant');
                 });
             });
 

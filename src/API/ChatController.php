@@ -594,6 +594,20 @@ class ChatController extends WP_REST_Controller {
                 ];
             }
 
+            if ($pendingConfirmation !== null) {
+                $confirmMsg = $pendingConfirmation['description']
+                    ?? $this->describeToolAction($pendingConfirmation['tool'] ?? '', []);
+                $finalMessage = 'Fuer diese Aktion brauche ich deine Bestaetigung. Bitte klicke auf den Button unter dieser Nachricht. 🔒';
+                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+                $this->emitSSE('done', [
+                    'session_id' => $sessionId,
+                    'message' => $finalMessage,
+                    'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
+                    'pending_confirmation' => $pendingConfirmation,
+                ]);
+                return;
+            }
+
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
             if (!empty($postWriteMessages)) {
                 $this->emitSSE('progress', [
@@ -631,7 +645,7 @@ class ChatController extends WP_REST_Controller {
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
-                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
+                if ($pendingConfirmation === null && $this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
                     $mutationNudgeCount++;
                     $messages[] = [
                         'role' => 'system',
@@ -1021,7 +1035,7 @@ class ChatController extends WP_REST_Controller {
                     'iteration' => $iteration,
                     'step' => count($executionTrace) + 1,
                     'tool' => $functionName,
-                    'status' => ($result['success'] ?? false) ? 'completed' : 'failed',
+                    'status' => ($result['success'] ?? false) ? 'completed' : (!empty($result['needs_confirmation']) ? 'awaiting_confirmation' : 'failed'),
                     'timestamp' => current_time('mysql'),
                     'summary' => $this->summarizeToolResult($result),
                 ];
@@ -1032,6 +1046,18 @@ class ChatController extends WP_REST_Controller {
                     'tool_call_id' => $toolCallId,
                     'content' => $this->compactToolResultForModel($result),
                 ];
+            }
+
+            if ($pendingConfirmation !== null) {
+                $finalMessage = 'Fuer diese Aktion brauche ich deine Bestaetigung. Bitte klicke auf den Button unter dieser Nachricht.';
+                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+                $responsePayload = [
+                    'session_id' => $sessionId,
+                    'message' => $finalMessage,
+                    'execution_trace' => $executionTrace,
+                    'pending_confirmation' => $pendingConfirmation,
+                ];
+                return new WP_REST_Response($responsePayload, 200);
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
@@ -1073,7 +1099,7 @@ class ChatController extends WP_REST_Controller {
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
-                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
+                if ($pendingConfirmation === null && $this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
                     $mutationNudgeCount++;
                     $messages[] = [
                         'role' => 'system',
@@ -1966,7 +1992,10 @@ PROMPT;
         $deduplicated = array_values($lastByKey);
 
         $successful = array_filter($deduplicated, fn($r) => ($r['result']['success'] ?? false) === true);
-        $failed = array_filter($deduplicated, fn($r) => ($r['result']['success'] ?? false) !== true);
+        $failed = array_filter($deduplicated, fn($r) =>
+            ($r['result']['success'] ?? false) !== true
+            && empty($r['result']['needs_confirmation'])
+        );
 
         // Self-healing: if a tool failed once but later succeeded (same tool name,
         // different args_key), the failure is considered resolved.
