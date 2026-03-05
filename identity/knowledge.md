@@ -9,7 +9,7 @@ Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in me
 |-------|--------|-------------|
 | wordpress-lllm-developer.txt | WordPress Core: Block Editor, Themes, REST API, Hooks, WP-CLI | Immer bei WP-Entwicklung |
 | woocommerce-llm-developer.txt | WooCommerce: Produkte, Cart, Hooks, REST API | Bei Shops, Produkten, Warenkorb |
-| elementor-llm-developer.txt | Elementor: Addons, Widgets, Controls, Hooks, Forms, Themes | Bei Page-Builder, Elementor-Addons |
+| elementor-llm-developer.txt | Elementor: Addons, Widgets, Controls, Hooks, Forms, Themes, Layouting via _elementor_data | Bei Page-Builder, Elementor-Layouts, Elementor-Addons |
 
 Diese Dateien werden taeglich aktualisiert. Nutze sie als erste Referenz, bevor du ratest.
 

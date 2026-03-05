@@ -46,6 +46,11 @@
                     <span class="dashicons dashicons-paperclip"></span>
                 </button>
                 <input id="levi-chat-file-input" type="file" accept=".txt,.md,.csv,.json,.xml,.log,.jpg,.jpeg,.png,.gif,.webp,text/plain,text/markdown,text/csv,application/json,image/*" multiple hidden>
+                <?php if ((new \Levi\Agent\Admin\SettingsPage())->isWebSearchEnabled()): ?>
+                <button id="levi-chat-web-search-btn" class="levi-chat-web-search-btn" type="button" title="<?php esc_attr_e('Web-Suche für diese Nachricht aktivieren', 'levi-agent'); ?>">
+                    <span class="dashicons dashicons-admin-site-alt3"></span>
+                </button>
+                <?php endif; ?>
                 <textarea 
                     id="levi-chat-input" 
                     class="levi-chat-input" 

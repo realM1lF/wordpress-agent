@@ -140,6 +140,7 @@ class Registry {
             new ReadErrorLogTool(),
             new WooCommerceProductTool(),
             new WooCommerceShopTool(),
+            new ElementorReadTool(),
         ];
 
         $writeTools = [
@@ -161,6 +162,8 @@ class Registry {
             new PostMetaTool(),
             new ManageTaxonomyTool(),
             new WooCommerceManageTool(),
+            new ElementorBuildTool(),
+            new ElementorManageTool(),
             new ManageMenuTool(),
             new ManageCronTool(),
             new UploadMediaTool(),

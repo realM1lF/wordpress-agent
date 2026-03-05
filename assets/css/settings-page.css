@@ -1111,3 +1111,134 @@
         padding: var(--levi-space-md);
     }
 }
+
+/* ── Cron Tasks Tab ──────────────────────────────────────────── */
+
+.levi-cron-table .levi-cron-actions {
+    white-space: nowrap;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.levi-cron-actions .levi-btn-small {
+    padding: 4px 6px;
+    min-width: unset;
+    line-height: 1;
+}
+
+.levi-cron-actions .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.levi-btn-danger {
+    color: #dc3545;
+    border-color: rgba(220, 53, 69, 0.3);
+}
+
+.levi-btn-danger:hover {
+    background: rgba(220, 53, 69, 0.1);
+    border-color: rgba(220, 53, 69, 0.5);
+}
+
+.levi-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.levi-status-active {
+    background: rgba(40, 167, 69, 0.12);
+    color: #28a745;
+    border: 1px solid rgba(40, 167, 69, 0.25);
+}
+
+.levi-status-paused {
+    background: rgba(255, 193, 7, 0.12);
+    color: #b8860b;
+    border: 1px solid rgba(255, 193, 7, 0.25);
+}
+
+.levi-status-error {
+    background: rgba(220, 53, 69, 0.12);
+    color: #dc3545;
+    border: 1px solid rgba(220, 53, 69, 0.25);
+}
+
+.levi-badge-warning {
+    background: rgba(255, 193, 7, 0.12);
+    color: #b8860b;
+    border: 1px solid rgba(255, 193, 7, 0.25);
+}
+
+.levi-badge-confirmed {
+    background: rgba(0, 123, 255, 0.1);
+    color: #0056b3;
+    border: 1px solid rgba(0, 123, 255, 0.25);
+    margin-left: 4px;
+}
+
+.levi-btn-email-active {
+    background: rgba(124, 58, 237, 0.15) !important;
+    border-color: rgba(124, 58, 237, 0.4) !important;
+    color: #7c3aed !important;
+    font-size: 10px;
+    vertical-align: middle;
+    cursor: help;
+}
+
+.levi-muted {
+    color: #999;
+}
+
+.levi-cron-detail td {
+    background: #f8f9fa;
+    border-top: none;
+}
+
+.levi-cron-result pre {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 300px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.levi-collapsible-header {
+    cursor: pointer;
+    user-select: none;
+}
+
+.levi-collapsible-header:hover {
+    opacity: 0.85;
+}
+
+.levi-collapse-icon {
+    transition: transform 0.2s ease;
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+.levi-cron-all-events {
+    margin-top: var(--levi-space-xl, 2rem);
+}
+
+@keyframes levi-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.levi-spin {
+    animation: levi-spin 1s linear infinite;
+}

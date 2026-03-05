@@ -26,14 +26,19 @@ class OpenRouterClient implements AIClientInterface {
         return $this->apiKey !== null;
     }
 
-    public function chat(array $messages, array $tools = [], ?callable $heartbeat = null): array|WP_Error {
+    public function chat(array $messages, array $tools = [], ?callable $heartbeat = null, bool $webSearch = false): array|WP_Error {
         if (!$this->apiKey) {
             return new WP_Error('not_configured', 'OpenRouter API key not configured');
         }
 
+        $model = $this->model;
+        if ($webSearch) {
+            $model .= ':online';
+        }
+
         $temperature = $this->resolveTemperature($messages);
         $payload = [
-            'model' => $this->model,
+            'model' => $model,
             'messages' => $messages,
             'temperature' => $temperature,
             'max_tokens' => $this->maxTokens,

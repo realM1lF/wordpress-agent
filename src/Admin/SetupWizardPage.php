@@ -17,7 +17,7 @@ class SetupWizardPage {
 
     public function addMenuPage(): void {
         add_submenu_page(
-            'options-general.php',
+            'levi-agent-settings',
             'Levi Setup',
             'Levi Setup',
             'manage_options',
@@ -37,7 +37,7 @@ class SetupWizardPage {
 
     public function enqueueAssets(): void {
         $screen = get_current_screen();
-        if (!$screen || $screen->id !== 'settings_page_' . $this->pageSlug) {
+        if (!$screen || !str_contains($screen->id, $this->pageSlug)) {
             return;
         }
 
@@ -72,7 +72,7 @@ class SetupWizardPage {
         }
 
         update_option('levi_setup_wizard_pending', 0);
-        wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=1'));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=1'));
         exit;
     }
 
@@ -104,7 +104,7 @@ class SetupWizardPage {
 
         $apiKey = trim((string) ($_POST['levi_openrouter_api_key'] ?? ''));
         if ($apiKey === '') {
-            wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2&error=missing_key'));
+            wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=2&error=missing_key'));
             exit;
         }
 
@@ -122,7 +122,7 @@ class SetupWizardPage {
 
         update_option('levi_plan_tier', 'pro');
 
-        wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=3&saved=pro'));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=3&saved=pro'));
         exit;
     }
 
@@ -170,7 +170,7 @@ class SetupWizardPage {
             'speed' => $speed,
         ]);
 
-        wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=4&saved=tuning'));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=4&saved=tuning'));
         exit;
     }
 
@@ -190,7 +190,7 @@ class SetupWizardPage {
             $snapshotStatus = 'error';
         }
 
-        wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=4&done=1&snapshot=' . urlencode($snapshotStatus)));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=4&done=1&snapshot=' . urlencode($snapshotStatus)));
         exit;
     }
 
@@ -274,7 +274,7 @@ class SetupWizardPage {
                         </div>
                     </div>
                     <div>
-                        <a class="levi-btn levi-btn-secondary levi-btn-small" href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-settings')); ?>"><?php echo esc_html('Assistent überspringen →'); ?></a>
+                        <a class="levi-btn levi-btn-secondary levi-btn-small" href="<?php echo esc_url(admin_url('admin.php?page=levi-agent-settings')); ?>"><?php echo esc_html('Assistent überspringen →'); ?></a>
                     </div>
                 </div>
             </header>
@@ -297,7 +297,7 @@ class SetupWizardPage {
                         <p><?php _e('Auf den nächsten Seiten führen wir dich sicher durch die Einrichtung.', 'levi-agent'); ?></p>
 
                         <div class="levi-form-actions">
-                            <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Los geht\'s', 'levi-agent'); ?></a>
+                            <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Los geht\'s', 'levi-agent'); ?></a>
                         </div>
                     </section>
                 <?php endif; ?>
@@ -336,7 +336,7 @@ class SetupWizardPage {
                             <p class="levi-form-help"><?php _e('Modell: Kimi K2.5 (Moonshot)', 'levi-agent'); ?></p>
 
                             <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=1')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=1')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
                                 <button type="submit" class="levi-btn levi-btn-primary"><?php _e('Weiter', 'levi-agent'); ?></button>
                             </div>
                         </form>
@@ -407,7 +407,7 @@ class SetupWizardPage {
                             </div>
 
                             <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
                                 <button type="submit" class="levi-btn levi-btn-primary"><?php _e('Einstellungen übernehmen', 'levi-agent'); ?></button>
                             </div>
                         </form>
@@ -434,7 +434,7 @@ class SetupWizardPage {
                             </div>
 
                             <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-settings')); ?>"><?php _e('Zu den Einstellungen', 'levi-agent'); ?></a>
+                                <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=levi-agent-settings')); ?>"><?php _e('Zu den Einstellungen', 'levi-agent'); ?></a>
                                 <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url()); ?>" onclick="setTimeout(function(){ var t = document.getElementById('levi-chat-toggle'); if(t) t.click(); }, 500); return true;"><?php _e('Chat öffnen', 'levi-agent'); ?></a>
                             </div>
                         <?php else: ?>
@@ -445,7 +445,7 @@ class SetupWizardPage {
                                 <?php wp_nonce_field('levi_setup_wizard_step5'); ?>
                                 <input type="hidden" name="levi_setup_action" value="complete_setup">
                                 <div class="levi-form-actions">
-                                    <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=3')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                    <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=3')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
                                     <button type="submit" class="levi-btn levi-btn-primary" id="levi-setup-complete-btn"><?php _e('Levi jetzt starten', 'levi-agent'); ?></button>
                                 </div>
                             </form>

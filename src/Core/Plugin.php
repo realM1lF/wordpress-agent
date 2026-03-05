@@ -8,6 +8,7 @@ use Levi\Agent\Admin\SettingsPage;
 use Levi\Agent\AI\AIClientFactory;
 use Levi\Agent\API\ChatController;
 use Levi\Agent\Memory\StateSnapshotService;
+use Levi\Agent\Cron\CronTaskRunner;
 
 class Plugin {
     private static ?self $instance = null;
@@ -32,6 +33,9 @@ class Plugin {
         // REST API
         new ChatController();
         new StateSnapshotService();
+        
+        // Cron Task Runner
+        new CronTaskRunner();
         
         // Assets
         add_action('admin_enqueue_scripts', [$this, 'enqueueAssets']);

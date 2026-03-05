@@ -19,21 +19,28 @@ class SettingsPage {
         add_action('wp_ajax_levi_repair_database', [$this, 'ajaxRepairDatabase']);
         add_action('wp_ajax_levi_run_state_snapshot', [$this, 'ajaxRunStateSnapshot']);
         add_action('wp_ajax_levi_clear_audit_log', [$this, 'ajaxClearAuditLog']);
+        add_action('wp_ajax_levi_run_cron_task', [$this, 'ajaxRunCronTask']);
+        add_action('wp_ajax_levi_toggle_cron_task', [$this, 'ajaxToggleCronTask']);
+        add_action('wp_ajax_levi_delete_cron_task', [$this, 'ajaxDeleteCronTask']);
+        add_action('wp_ajax_levi_toggle_cron_email', [$this, 'ajaxToggleCronEmail']);
+        add_action('wp_dashboard_setup', [$this, 'registerDashboardWidget']);
     }
 
     public function addMenuPage(): void {
-        add_options_page(
+        add_menu_page(
             __('Levi AI Agent', 'levi-agent'),
             __('Levi AI', 'levi-agent'),
             'manage_options',
             $this->pageSlug,
-            [$this, 'renderPage']
+            [$this, 'renderPage'],
+            'dashicons-format-chat',
+            81
         );
     }
 
     public function enqueueAssets(): void {
         $screen = get_current_screen();
-        if (!$screen || $screen->id !== 'settings_page_' . $this->pageSlug) {
+        if (!$screen || $screen->id !== 'toplevel_page_' . $this->pageSlug) {
             return;
         }
 
@@ -79,6 +86,9 @@ class SettingsPage {
                 'status_not_run' => $this->tr('Not run yet', 'Noch nicht gelaufen'),
                 'status_unchanged' => $this->tr('Unchanged', 'Unverändert'),
                 'status_changed_stored' => $this->tr('Updated and stored', 'Aktualisiert und gespeichert'),
+                'confirmDelete' => $this->tr('Delete this task permanently?', 'Diese Aufgabe endgültig löschen?'),
+                'emailOn' => $this->tr('Email notifications on — click to disable', 'E-Mail aktiv — klicken zum Deaktivieren'),
+                'emailOff' => $this->tr('Enable email notifications', 'E-Mail deaktiviert — klicken zum Aktivieren'),
             ],
         ]);
     }
@@ -146,53 +156,81 @@ class SettingsPage {
     }
 
     public function sanitizeSettings(array $input): array {
-        $sanitized = [];
         $existing = get_option($this->optionName, []);
+        if (!is_array($existing)) {
+            $existing = [];
+        }
+        // Start with defaults merged with existing saved values.
+        // Only fields actually present in $input will be overwritten below.
+        $sanitized = array_merge($this->getDefaults(), $existing);
 
-        $provider = sanitize_key($input['ai_provider'] ?? ($existing['ai_provider'] ?? 'openrouter'));
-        $providers = $this->getProviderLabels();
-        $sanitized['ai_provider'] = isset($providers[$provider]) ? $provider : 'openrouter';
+        // --- Provider & Auth (ai-provider tab) ---
+        if (array_key_exists('ai_provider', $input)) {
+            $provider = sanitize_key($input['ai_provider']);
+            $providers = $this->getProviderLabels();
+            $sanitized['ai_provider'] = isset($providers[$provider]) ? $provider : 'openrouter';
+        }
 
-        $authMethod = sanitize_key($input['ai_auth_method'] ?? ($existing['ai_auth_method'] ?? 'api_key'));
-        $authOptions = $this->getAuthMethodOptions($sanitized['ai_provider']);
-        $sanitized['ai_auth_method'] = isset($authOptions[$authMethod]) ? $authMethod : array_key_first($authOptions);
+        if (array_key_exists('ai_auth_method', $input)) {
+            $authMethod = sanitize_key($input['ai_auth_method']);
+            $authOptions = $this->getAuthMethodOptions($sanitized['ai_provider']);
+            $sanitized['ai_auth_method'] = isset($authOptions[$authMethod]) ? $authMethod : array_key_first($authOptions);
+        }
 
-        // API Keys
+        // API Keys — only overwrite if explicitly submitted
         $keyFields = ['openrouter_api_key', 'openai_api_key', 'anthropic_api_key'];
         foreach ($keyFields as $keyField) {
-            $newKey = isset($input[$keyField]) ? trim((string) $input[$keyField]) : '';
-            if ($newKey !== '') {
-                $sanitized[$keyField] = sanitize_text_field($newKey);
-            } elseif (!empty($existing[$keyField])) {
-                $sanitized[$keyField] = $existing[$keyField];
+            if (isset($input[$keyField])) {
+                $newKey = trim((string) $input[$keyField]);
+                if ($newKey !== '') {
+                    $sanitized[$keyField] = sanitize_text_field($newKey);
+                }
             }
         }
 
-        // Models
+        // Models — only overwrite if submitted
         $modelFields = [
             'openrouter' => 'openrouter_model',
             'openai' => 'openai_model',
             'anthropic' => 'anthropic_model',
         ];
         foreach ($modelFields as $modelProvider => $settingKey) {
-            $allowedModels = $this->getAllowedModelsForProvider($modelProvider);
-            $candidate = sanitize_text_field($input[$settingKey] ?? ($existing[$settingKey] ?? ''));
-            $sanitized[$settingKey] = isset($allowedModels[$candidate]) ? $candidate : array_key_first($allowedModels);
+            if (array_key_exists($settingKey, $input)) {
+                $allowedModels = $this->getAllowedModelsForProvider($modelProvider);
+                $candidate = sanitize_text_field($input[$settingKey]);
+                $sanitized[$settingKey] = isset($allowedModels[$candidate]) ? $candidate : array_key_first($allowedModels);
+            }
         }
 
-        // Alternative model (for OpenRouter only)
-        $allowedAltModels = $this->getAllowedAltModelsForProvider('openrouter');
-        $altCandidate = sanitize_text_field($input['openrouter_alt_model'] ?? ($existing['openrouter_alt_model'] ?? ''));
-        $sanitized['openrouter_alt_model'] = isset($allowedAltModels[$altCandidate]) ? $altCandidate : array_key_first($allowedAltModels);
+        if (array_key_exists('openrouter_alt_model', $input)) {
+            $allowedAltModels = $this->getAllowedAltModelsForProvider('openrouter');
+            $altCandidate = sanitize_text_field($input['openrouter_alt_model']);
+            $sanitized['openrouter_alt_model'] = isset($allowedAltModels[$altCandidate]) ? $altCandidate : array_key_first($allowedAltModels);
+        }
 
-        // Numeric & Boolean Settings
-        $sanitized['rate_limit'] = max(1, min(1000, absint($input['rate_limit'] ?? 50)));
-        $sanitized['max_tokens'] = max(1, min(131072, absint($input['max_tokens'] ?? 131072)));
-        $sanitized['ai_timeout'] = max(1, absint($input['ai_timeout'] ?? 120));
-        $sanitized['php_time_limit'] = max(0, absint($input['php_time_limit'] ?? 180));
-        $sanitized['max_context_tokens'] = max(1000, min(500000, absint($input['max_context_tokens'] ?? 100000)));
+        // Web search toggle (has hidden input value="0", so key present = tab was rendered)
+        if (array_key_exists('web_search_enabled', $input)) {
+            $sanitized['web_search_enabled'] = !empty($input['web_search_enabled']) ? 1 : 0;
+        }
 
-        // Behavior presets (dropdowns shared with wizard)
+        // --- Numeric settings (safety / advanced tabs) ---
+        if (array_key_exists('rate_limit', $input)) {
+            $sanitized['rate_limit'] = max(1, min(1000, absint($input['rate_limit'])));
+        }
+        if (array_key_exists('max_tokens', $input)) {
+            $sanitized['max_tokens'] = max(1, min(131072, absint($input['max_tokens'])));
+        }
+        if (array_key_exists('ai_timeout', $input)) {
+            $sanitized['ai_timeout'] = max(1, absint($input['ai_timeout']));
+        }
+        if (array_key_exists('php_time_limit', $input)) {
+            $sanitized['php_time_limit'] = max(0, absint($input['php_time_limit']));
+        }
+        if (array_key_exists('max_context_tokens', $input)) {
+            $sanitized['max_context_tokens'] = max(1000, min(500000, absint($input['max_context_tokens'])));
+        }
+
+        // --- Behavior presets (safety tab / wizard) ---
         $thoroughness = sanitize_key($input['levi_thoroughness'] ?? '');
         $safetyMode = sanitize_key($input['levi_safety_mode'] ?? '');
         $speedMode = sanitize_key($input['levi_speed_mode'] ?? '');
@@ -203,14 +241,12 @@ class SettingsPage {
                 'low' => 30,
                 default => 50,
             };
-        } else {
-            $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'] ?? 50)));
+        } elseif (array_key_exists('history_context_limit', $input)) {
+            $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'])));
         }
 
         if (in_array($safetyMode, ['strict', 'standard'], true)) {
             $sanitized['require_confirmation_destructive'] = $safetyMode === 'strict' ? 1 : 0;
-        } else {
-            $sanitized['require_confirmation_destructive'] = !empty($input['require_confirmation_destructive']) ? 1 : 0;
         }
 
         if (in_array($speedMode, ['fast', 'balanced', 'careful'], true)) {
@@ -219,29 +255,44 @@ class SettingsPage {
                 'careful' => 18,
                 default => 12,
             };
-        } else {
-            $sanitized['max_tool_iterations'] = max(4, min(30, absint($input['max_tool_iterations'] ?? 12)));
+        } elseif (array_key_exists('max_tool_iterations', $input)) {
+            $sanitized['max_tool_iterations'] = max(4, min(30, absint($input['max_tool_iterations'])));
         }
 
         if ($thoroughness !== '' || $safetyMode !== '' || $speedMode !== '') {
             update_option('levi_setup_tuning_mode', [
                 'thoroughness' => in_array($thoroughness, ['low', 'balanced', 'high'], true) ? $thoroughness : 'custom',
-                'safety' => $safetyMode ?: 'strict',
+                'safety' => in_array($safetyMode, ['strict', 'standard'], true) ? $safetyMode : 'custom',
                 'speed' => in_array($speedMode, ['fast', 'balanced', 'careful'], true) ? $speedMode : 'custom',
             ]);
         }
 
-        $profileCandidate = sanitize_key($input['tool_profile'] ?? 'standard');
-        $sanitized['tool_profile'] = in_array($profileCandidate, \Levi\Agent\AI\Tools\Registry::VALID_PROFILES, true)
-            ? $profileCandidate
-            : 'standard';
+        // --- Tool profile ---
+        if (array_key_exists('tool_profile', $input)) {
+            $profileCandidate = sanitize_key($input['tool_profile']);
+            $sanitized['tool_profile'] = in_array($profileCandidate, \Levi\Agent\AI\Tools\Registry::VALID_PROFILES, true)
+                ? $profileCandidate
+                : 'standard';
+        }
 
-        $sanitized['memory_identity_k'] = max(1, min(20, absint($input['memory_identity_k'] ?? 5)));
-        $sanitized['memory_reference_k'] = max(1, min(20, absint($input['memory_reference_k'] ?? 5)));
-        $sanitized['memory_min_similarity'] = max(0.0, min(1.0, (float) ($input['memory_min_similarity'] ?? 0.6)));
+        // --- Memory settings (memory tab) ---
+        if (array_key_exists('memory_identity_k', $input)) {
+            $sanitized['memory_identity_k'] = max(1, min(20, absint($input['memory_identity_k'])));
+        }
+        if (array_key_exists('memory_reference_k', $input)) {
+            $sanitized['memory_reference_k'] = max(1, min(20, absint($input['memory_reference_k'])));
+        }
+        if (array_key_exists('memory_min_similarity', $input)) {
+            $sanitized['memory_min_similarity'] = max(0.0, min(1.0, (float) $input['memory_min_similarity']));
+        }
 
-        $sanitized['pii_redaction'] = !empty($input['pii_redaction']) ? 1 : 0;
-        $sanitized['blocked_post_types'] = sanitize_textarea_field($input['blocked_post_types'] ?? '');
+        // --- Safety tab booleans (hidden input ensures key is present when tab is rendered) ---
+        if (array_key_exists('pii_redaction', $input)) {
+            $sanitized['pii_redaction'] = !empty($input['pii_redaction']) ? 1 : 0;
+        }
+        if (array_key_exists('blocked_post_types', $input)) {
+            $sanitized['blocked_post_types'] = sanitize_textarea_field($input['blocked_post_types']);
+        }
 
         return $sanitized;
     }
@@ -258,6 +309,7 @@ class SettingsPage {
             'memory' => ['icon' => 'dashicons-database', 'label' => $this->tr('Memory', 'Memory')],
             'safety' => ['icon' => 'dashicons-shield', 'label' => $this->tr('Limits & Safety', 'Limits & Sicherheit')],
             'advanced' => ['icon' => 'dashicons-admin-tools', 'label' => $this->tr('Advanced', 'Erweitert')],
+            'cron-tasks' => ['icon' => 'dashicons-clock', 'label' => $this->tr('Scheduled Tasks', 'Geplante Aufgaben')],
         ];
         ?>
         <div class="levi-settings-wrap">
@@ -295,7 +347,7 @@ class SettingsPage {
                 <div class="levi-nav-tabs">
                     <?php foreach ($tabs as $tabId => $tabData): 
                         $isActive = $activeTab === $tabId;
-                        $tabUrl = add_query_arg(['page' => $this->pageSlug, 'tab' => $tabId], admin_url('options-general.php'));
+                        $tabUrl = add_query_arg(['page' => $this->pageSlug, 'tab' => $tabId], admin_url('admin.php'));
                     ?>
                         <a href="<?php echo esc_url($tabUrl); ?>" 
                            class="levi-nav-tab <?php echo $isActive ? 'levi-nav-tab-active' : ''; ?>">
@@ -308,6 +360,9 @@ class SettingsPage {
 
             <!-- Main Content -->
             <main class="levi-settings-main">
+                <?php if ($activeTab === 'cron-tasks'): ?>
+                    <?php $this->renderCronTasksTab(); ?>
+                <?php else: ?>
                 <form method="post" action="options.php" class="levi-settings-form">
                     <?php settings_fields('levi_agent_settings_group'); ?>
                     
@@ -331,6 +386,7 @@ class SettingsPage {
                         </span>
                     </div>
                 </form>
+                <?php endif; ?>
             </main>
         </div>
         <?php
@@ -492,7 +548,7 @@ class SettingsPage {
                         </div>
                     </div>
                     <div class="levi-card-footer">
-                        <a href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-setup-wizard&step=1')); ?>" class="levi-btn levi-btn-small levi-btn-secondary">
+                        <a href="<?php echo esc_url(admin_url('admin.php?page=levi-agent-setup-wizard&step=1')); ?>" class="levi-btn levi-btn-small levi-btn-secondary">
                             <span class="dashicons dashicons-admin-generic"></span>
                             <?php echo esc_html($this->tr('Run Setup Wizard', 'Einrichtungsassistent starten')); ?>
                         </a>
@@ -686,6 +742,35 @@ class SettingsPage {
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+
+            <!-- Web Search -->
+            <div class="levi-form-card">
+                <h3><?php echo esc_html($this->tr('Web Search', 'Web-Suche')); ?></h3>
+                <p class="levi-form-description">
+                    <?php echo esc_html($this->tr(
+                        'When enabled, a globe button appears in the chat input. Click it before sending a message to let Levi search the web for current information.',
+                        'Wenn aktiviert, erscheint ein Globus-Button im Chat. Klicke ihn vor dem Senden einer Nachricht, damit Levi im Internet nach aktuellen Infos suchen kann.'
+                    )); ?>
+                </p>
+                <div class="levi-form-group">
+                    <label class="levi-toggle-label">
+                        <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" value="0">
+                        <input type="checkbox" 
+                               name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" 
+                               value="1" 
+                               <?php checked(!empty($settings['web_search_enabled'])); ?>
+                               class="levi-toggle-input">
+                        <span class="levi-toggle-switch"></span>
+                        <span class="levi-toggle-text"><?php echo esc_html($this->tr('Enable Web Search', 'Web-Suche aktivieren')); ?></span>
+                    </label>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr(
+                            'Note: Web search incurs additional costs per request at OpenRouter. The user controls when to use it via the chat toggle.',
+                            'Hinweis: Web-Suche verursacht zusätzliche Kosten pro Anfrage bei OpenRouter. Der Nutzer steuert per Toggle im Chat, wann sie genutzt wird.'
+                        )); ?>
+                    </p>
                 </div>
             </div>
         </div>
@@ -1275,6 +1360,10 @@ class SettingsPage {
         return $this->getModelForProvider($this->getProvider());
     }
 
+    public function isWebSearchEnabled(): bool {
+        return !empty($this->getSettings()['web_search_enabled']);
+    }
+
     public function getModelForProvider(string $provider): string {
         $settings = $this->getSettings();
         
@@ -1305,8 +1394,8 @@ class SettingsPage {
         return $this->getModelForProvider($provider);
     }
 
-    public function getSettings(): array {
-        $defaults = [
+    public function getDefaults(): array {
+        return [
             'ai_provider' => 'openrouter',
             'ai_auth_method' => 'api_key',
             'openrouter_api_key' => '',
@@ -1330,8 +1419,11 @@ class SettingsPage {
             'memory_min_similarity' => 0.6,
             'pii_redaction' => 1,
             'blocked_post_types' => '',
+            'web_search_enabled' => 0,
         ];
+    }
 
+    public function getSettings(): array {
         $settings = get_option($this->optionName, []);
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
@@ -1340,7 +1432,7 @@ class SettingsPage {
             $settings = [];
         }
 
-        return array_merge($defaults, $settings);
+        return array_merge($this->getDefaults(), $settings);
     }
 
     public function ajaxRepairDatabase(): void {
@@ -1390,6 +1482,260 @@ class SettingsPage {
         ]);
     }
 
+    // ── Cron Tasks Tab ────────────────────────────────────────────
+
+    private function renderCronTasksTab(): void {
+        $tasks = \Levi\Agent\Cron\CronTaskRunner::getAllTasks();
+        $scheduleLabels = [
+            'hourly' => $this->tr('Hourly', 'Stündlich'),
+            'twicedaily' => $this->tr('Twice Daily', '2x täglich'),
+            'daily' => $this->tr('Daily', 'Täglich'),
+            'weekly' => $this->tr('Weekly', 'Wöchentlich'),
+        ];
+        ?>
+        <div class="levi-settings-section">
+            <div class="levi-section-header">
+                <h2><?php echo esc_html($this->tr("Levi's Tasks", 'Levis Aufgaben')); ?></h2>
+                <p><?php echo esc_html($this->tr(
+                    'Recurring read-only tasks that Levi executes automatically. Ask Levi in chat to create new tasks.',
+                    'Wiederkehrende Lese-Aufgaben, die Levi automatisch ausführt. Bitte Levi im Chat, neue Aufgaben anzulegen.'
+                )); ?></p>
+            </div>
+
+            <?php if (empty($tasks)): ?>
+                <div class="levi-notice levi-notice-info">
+                    <p><?php echo esc_html($this->tr(
+                        'No scheduled tasks yet. Ask Levi in the chat to create one, e.g.: "Check daily if there are plugin updates."',
+                        'Noch keine geplanten Aufgaben. Bitte Levi im Chat, z.B.: „Prüfe täglich ob es Plugin-Updates gibt."'
+                    )); ?></p>
+                </div>
+            <?php else: ?>
+                <div class="levi-table-wrap">
+                    <table class="levi-data-table levi-cron-table">
+                        <thead>
+                            <tr>
+                                <th><?php echo esc_html($this->tr('Name', 'Name')); ?></th>
+                                <th><?php echo esc_html($this->tr('Tool', 'Tool')); ?></th>
+                                <th><?php echo esc_html($this->tr('Interval', 'Intervall')); ?></th>
+                                <th><?php echo esc_html($this->tr('Last Run', 'Letzter Lauf')); ?></th>
+                                <th><?php echo esc_html($this->tr('Next Run', 'Nächster Lauf')); ?></th>
+                                <th><?php echo esc_html($this->tr('Status', 'Status')); ?></th>
+                                <th><?php echo esc_html($this->tr('Actions', 'Aktionen')); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($tasks as $task):
+                            $isActive = !empty($task['active']);
+                            $hook = $task['hook'] ?? '';
+                            $nextRun = $hook ? wp_next_scheduled($hook) : null;
+                            $lastResult = $task['last_result'] ?? null;
+                            $hasError = $lastResult && str_contains($lastResult, '"success":false');
+                            $isWriteTask = in_array($task['tool'] ?? '', \Levi\Agent\Cron\CronTaskRunner::CONFIRMABLE_TOOLS, true);
+                            $statusClass = $isActive ? ($hasError ? 'levi-status-error' : 'levi-status-active') : 'levi-status-paused';
+                            $statusLabel = $isActive ? ($hasError ? $this->tr('Error', 'Fehler') : $this->tr('Active', 'Aktiv')) : $this->tr('Paused', 'Pausiert');
+                        ?>
+                            <tr data-task-id="<?php echo esc_attr($task['id']); ?>">
+                                <td>
+                                    <strong><?php echo esc_html($task['name'] ?? ''); ?></strong>
+                                </td>
+                                <td>
+                                    <code><?php echo esc_html($task['tool'] ?? ''); ?></code>
+                                    <?php if ($isWriteTask): ?>
+                                        <span class="levi-badge levi-badge-confirmed" title="<?php echo esc_attr($this->tr('Write tool — confirmed by user', 'Schreib-Tool — vom Nutzer bestätigt')); ?>">write</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo esc_html($scheduleLabels[$task['schedule'] ?? ''] ?? ($task['schedule'] ?? '-')); ?></td>
+                                <td>
+                                    <?php if (!empty($task['last_run'])): ?>
+                                        <?php echo esc_html(wp_date('d.m.Y H:i', $task['last_run'])); ?>
+                                    <?php else: ?>
+                                        <span class="levi-muted">—</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($nextRun): ?>
+                                        <?php echo esc_html(wp_date('d.m.Y H:i', $nextRun)); ?>
+                                        <?php if ($nextRun < time()): ?>
+                                            <span class="levi-badge levi-badge-warning"><?php echo esc_html($this->tr('overdue', 'überfällig')); ?></span>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <span class="levi-muted">—</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span class="levi-badge <?php echo esc_attr($statusClass); ?>"><?php echo esc_html($statusLabel); ?></span>
+                                </td>
+                                <td class="levi-cron-actions">
+                                    <button type="button" class="levi-btn levi-btn-small levi-btn-secondary levi-cron-run" data-task-id="<?php echo esc_attr($task['id']); ?>" title="<?php echo esc_attr($this->tr('Run now', 'Jetzt ausführen')); ?>">
+                                        <span class="dashicons dashicons-controls-play"></span>
+                                    </button>
+                                    <button type="button" class="levi-btn levi-btn-small levi-btn-secondary levi-cron-toggle" data-task-id="<?php echo esc_attr($task['id']); ?>" title="<?php echo esc_attr($isActive ? $this->tr('Pause', 'Pausieren') : $this->tr('Resume', 'Fortsetzen')); ?>">
+                                        <span class="dashicons <?php echo $isActive ? 'dashicons-controls-pause' : 'dashicons-controls-forward'; ?>"></span>
+                                    </button>
+                                    <button type="button" class="levi-btn levi-btn-small levi-btn-danger levi-cron-delete" data-task-id="<?php echo esc_attr($task['id']); ?>" title="<?php echo esc_attr($this->tr('Delete', 'Löschen')); ?>">
+                                        <span class="dashicons dashicons-trash"></span>
+                                    </button>
+                                    <?php $emailActive = !empty($task['notify_email']); ?>
+                                    <button type="button" class="levi-btn levi-btn-small <?php echo $emailActive ? 'levi-btn-email-active' : 'levi-btn-secondary'; ?> levi-cron-email-toggle" data-task-id="<?php echo esc_attr($task['id']); ?>" title="<?php echo esc_attr($emailActive ? $this->tr('Email notifications on — click to disable', 'E-Mail-Benachrichtigung aktiv — klicken zum Deaktivieren') : $this->tr('Enable email notifications', 'E-Mail-Benachrichtigung aktivieren')); ?>">
+                                        <span class="dashicons dashicons-email-alt"></span>
+                                    </button>
+                                    <?php if ($lastResult): ?>
+                                        <button type="button" class="levi-btn levi-btn-small levi-btn-secondary levi-cron-expand" data-task-id="<?php echo esc_attr($task['id']); ?>" title="<?php echo esc_attr($this->tr('Show result', 'Ergebnis anzeigen')); ?>">
+                                            <span class="dashicons dashicons-arrow-down-alt2"></span>
+                                        </button>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <?php if ($lastResult): ?>
+                            <tr class="levi-cron-detail" data-detail-for="<?php echo esc_attr($task['id']); ?>" style="display:none;">
+                                <td colspan="7">
+                                    <div class="levi-cron-result">
+                                        <strong><?php echo esc_html($this->tr('Last Result:', 'Letztes Ergebnis:')); ?></strong>
+                                        <pre><?php echo esc_html($lastResult); ?></pre>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- All WordPress Cron Events (read-only) -->
+        <div class="levi-settings-section levi-cron-all-events">
+            <div class="levi-section-header levi-collapsible-header" id="levi-cron-all-toggle">
+                <h2>
+                    <span class="dashicons dashicons-arrow-right-alt2 levi-collapse-icon"></span>
+                    <?php echo esc_html($this->tr('All WordPress Cron Events', 'Alle WordPress Cron-Events')); ?>
+                </h2>
+                <p><?php echo esc_html($this->tr(
+                    'Read-only overview of all scheduled WordPress events (including other plugins).',
+                    'Nur-Lese-Übersicht aller geplanten WordPress-Events (inkl. anderer Plugins).'
+                )); ?></p>
+            </div>
+            <div class="levi-collapsible-content" id="levi-cron-all-content" style="display:none;">
+                <?php
+                $crons = _get_cron_array();
+                $allEvents = [];
+                $now = time();
+                if (is_array($crons)) {
+                    foreach ($crons as $timestamp => $hooks) {
+                        foreach ($hooks as $hook => $entries) {
+                            foreach ($entries as $entry) {
+                                $allEvents[] = [
+                                    'hook' => $hook,
+                                    'timestamp' => $timestamp,
+                                    'schedule' => $entry['schedule'] ?: 'once',
+                                    'overdue' => $timestamp < $now,
+                                    'is_levi' => str_starts_with($hook, 'levi_'),
+                                ];
+                            }
+                        }
+                    }
+                }
+                usort($allEvents, fn($a, $b) => $a['timestamp'] <=> $b['timestamp']);
+                ?>
+                <div class="levi-table-wrap">
+                    <table class="levi-data-table">
+                        <thead>
+                            <tr>
+                                <th>Hook</th>
+                                <th><?php echo esc_html($this->tr('Schedule', 'Zeitplan')); ?></th>
+                                <th><?php echo esc_html($this->tr('Next Run', 'Nächste Ausführung')); ?></th>
+                                <th><?php echo esc_html($this->tr('Status', 'Status')); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach (array_slice($allEvents, 0, 100) as $event): ?>
+                            <tr class="<?php echo $event['is_levi'] ? 'levi-row-featured' : ''; ?>">
+                                <td><code><?php echo esc_html($event['hook']); ?></code></td>
+                                <td><?php echo esc_html($scheduleLabels[$event['schedule']] ?? $event['schedule']); ?></td>
+                                <td><?php echo esc_html(wp_date('d.m.Y H:i:s', $event['timestamp'])); ?></td>
+                                <td>
+                                    <?php if ($event['overdue']): ?>
+                                        <span class="levi-badge levi-badge-warning"><?php echo esc_html($this->tr('overdue', 'überfällig')); ?></span>
+                                    <?php else: ?>
+                                        <span class="levi-badge levi-status-active"><?php echo esc_html($this->tr('scheduled', 'geplant')); ?></span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    // ── Cron AJAX Handlers ──────────────────────────────────────────
+
+    public function ajaxRunCronTask(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $taskId = sanitize_text_field($_POST['task_id'] ?? '');
+        if ($taskId === '') {
+            wp_send_json_error($this->tr('Task ID missing.', 'Task-ID fehlt.'));
+        }
+
+        $runner = new \Levi\Agent\Cron\CronTaskRunner();
+        $result = $runner->executeTask($taskId);
+
+        if (!empty($result['success'])) {
+            wp_send_json_success([
+                'message' => $this->tr('Task executed.', 'Aufgabe ausgeführt.'),
+                'result' => $result,
+            ]);
+        } else {
+            wp_send_json_error($result['error'] ?? $this->tr('Task failed.', 'Aufgabe fehlgeschlagen.'));
+        }
+    }
+
+    public function ajaxToggleCronTask(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $taskId = sanitize_text_field($_POST['task_id'] ?? '');
+        if ($taskId === '') {
+            wp_send_json_error($this->tr('Task ID missing.', 'Task-ID fehlt.'));
+        }
+
+        $result = \Levi\Agent\Cron\CronTaskRunner::toggleTask($taskId);
+
+        if (!empty($result['success'])) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result['error'] ?? $this->tr('Could not toggle task.', 'Task konnte nicht geändert werden.'));
+        }
+    }
+
+    public function ajaxDeleteCronTask(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $taskId = sanitize_text_field($_POST['task_id'] ?? '');
+        if ($taskId === '') {
+            wp_send_json_error($this->tr('Task ID missing.', 'Task-ID fehlt.'));
+        }
+
+        $result = \Levi\Agent\Cron\CronTaskRunner::deleteTask($taskId);
+
+        if (!empty($result['success'])) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result['error'] ?? $this->tr('Could not delete task.', 'Task konnte nicht gelöscht werden.'));
+        }
+    }
+
     private function getAuditLogRows(int $limit = 20): array {
         global $wpdb;
         $table = $wpdb->prefix . 'levi_audit_log';
@@ -1406,5 +1752,203 @@ class SettingsPage {
         );
 
         return is_array($rows) ? $rows : [];
+    }
+
+    // ── Dashboard Widget ────────────────────────────────────────────
+
+    public function registerDashboardWidget(): void {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        wp_add_dashboard_widget(
+            'levi_cron_results_widget',
+            'Levi — Geplante Aufgaben',
+            [$this, 'renderDashboardWidget'],
+            null,
+            [],
+            'normal',
+            'high'
+        );
+    }
+
+    public function renderDashboardWidget(): void {
+        $tasks = \Levi\Agent\Cron\CronTaskRunner::getAllTasks();
+
+        if (empty($tasks)) {
+            echo '<p class="levi-dw-empty">Keine geplanten Aufgaben konfiguriert. <a href="' . esc_url(admin_url('admin.php?page=levi-agent-settings&tab=cron-tasks')) . '">Aufgaben verwalten</a></p>';
+            return;
+        }
+
+        $tasksWithResults = array_filter($tasks, fn($t) => !empty($t['last_result']));
+        usort($tasksWithResults, fn($a, $b) => ($b['last_run'] ?? 0) <=> ($a['last_run'] ?? 0));
+
+        if (empty($tasksWithResults)) {
+            echo '<p class="levi-dw-empty">Noch keine Ergebnisse vorhanden — Aufgaben wurden noch nicht ausgefuehrt.</p>';
+            return;
+        }
+
+        echo '<div class="levi-dw-list">';
+        foreach ($tasksWithResults as $task) {
+            $name = esc_html($task['name'] ?? $task['id']);
+            $tool = esc_html($task['tool'] ?? '');
+            $lastRun = !empty($task['last_run']) ? wp_date('d.m.Y H:i', $task['last_run']) : '—';
+            $rawResult = $task['last_result'] ?? '';
+            $hasError = str_contains($rawResult, '"success":false');
+            $statusClass = $hasError ? 'levi-dw-error' : 'levi-dw-success';
+            $statusIcon = $hasError ? '⚠' : '✓';
+            $taskId = esc_attr($task['id'] ?? '');
+
+            $decoded = json_decode($rawResult, true);
+            $summary = $this->buildResultSummary($decoded, $rawResult);
+
+            echo '<div class="levi-dw-item ' . $statusClass . '">';
+            echo   '<div class="levi-dw-header" data-toggle="levi-dw-detail-' . $taskId . '">';
+            echo     '<span class="levi-dw-status-icon">' . $statusIcon . '</span>';
+            echo     '<div class="levi-dw-meta">';
+            echo       '<strong class="levi-dw-name">' . $name . '</strong>';
+            echo       '<span class="levi-dw-info"><code>' . $tool . '</code> · ' . esc_html($lastRun) . '</span>';
+            echo     '</div>';
+            echo     '<span class="levi-dw-chevron dashicons dashicons-arrow-down-alt2"></span>';
+            echo   '</div>';
+            echo   '<div class="levi-dw-summary">' . $summary . '</div>';
+            echo   '<div class="levi-dw-detail" id="levi-dw-detail-' . $taskId . '" style="display:none;">';
+            echo     '<pre class="levi-dw-raw">' . esc_html($this->formatJsonForDisplay($rawResult)) . '</pre>';
+            echo   '</div>';
+            echo '</div>';
+        }
+        echo '</div>';
+
+        echo '<p class="levi-dw-footer"><a href="' . esc_url(admin_url('admin.php?page=levi-agent-settings&tab=cron-tasks')) . '">Alle Aufgaben verwalten →</a></p>';
+
+        $this->renderDashboardWidgetStyles();
+        $this->renderDashboardWidgetScript();
+    }
+
+    private function buildResultSummary(?array $decoded, string $raw): string {
+        if (!is_array($decoded)) {
+            $excerpt = mb_substr(strip_tags($raw), 0, 120);
+            return '<span class="levi-dw-text">' . esc_html($excerpt) . (mb_strlen($raw) > 120 ? '…' : '') . '</span>';
+        }
+
+        if (!empty($decoded['error'])) {
+            return '<span class="levi-dw-text levi-dw-error-text">Fehler: ' . esc_html(mb_substr($decoded['error'], 0, 150)) . '</span>';
+        }
+
+        $parts = [];
+
+        if (isset($decoded['updated']) && is_int($decoded['updated'])) {
+            $parts[] = $decoded['updated'] . ' aktualisiert';
+        }
+        if (isset($decoded['total']) && is_int($decoded['total'])) {
+            $parts[] = $decoded['total'] . ' Eintraege';
+        }
+        if (isset($decoded['message']) && is_string($decoded['message'])) {
+            $parts[] = mb_substr($decoded['message'], 0, 100);
+        }
+        if (!empty($decoded['posts']) && is_array($decoded['posts'])) {
+            $parts[] = count($decoded['posts']) . ' Beitraege';
+        }
+        if (!empty($decoded['plugins']) && is_array($decoded['plugins'])) {
+            $parts[] = count($decoded['plugins']) . ' Plugins';
+        }
+
+        if (empty($parts)) {
+            if (!empty($decoded['success'])) {
+                return '<span class="levi-dw-text">Erfolgreich ausgefuehrt</span>';
+            }
+            $excerpt = mb_substr($raw, 0, 120);
+            return '<span class="levi-dw-text">' . esc_html($excerpt) . '</span>';
+        }
+
+        return '<span class="levi-dw-text">' . esc_html(implode(' · ', $parts)) . '</span>';
+    }
+
+    private function formatJsonForDisplay(string $json): string {
+        $decoded = json_decode($json, true);
+        if (!is_array($decoded)) {
+            return $json;
+        }
+        return wp_json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: $json;
+    }
+
+    private function renderDashboardWidgetStyles(): void {
+        static $rendered = false;
+        if ($rendered) return;
+        $rendered = true;
+        ?>
+        <style>
+            .levi-dw-list { display: flex; flex-direction: column; gap: 8px; }
+            .levi-dw-item { border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; background: #fff; }
+            .levi-dw-item.levi-dw-error { border-left: 3px solid #dc3545; }
+            .levi-dw-item.levi-dw-success { border-left: 3px solid #28a745; }
+            .levi-dw-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; user-select: none; }
+            .levi-dw-header:hover { background: #f8f9fa; }
+            .levi-dw-status-icon { font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
+            .levi-dw-error .levi-dw-status-icon { color: #dc3545; }
+            .levi-dw-success .levi-dw-status-icon { color: #28a745; }
+            .levi-dw-meta { flex: 1; min-width: 0; }
+            .levi-dw-name { display: block; font-size: 13px; line-height: 1.3; color: #1d2327; }
+            .levi-dw-info { display: block; font-size: 11px; color: #646970; margin-top: 2px; }
+            .levi-dw-info code { font-size: 11px; background: #f0f0f1; padding: 1px 5px; border-radius: 3px; }
+            .levi-dw-chevron { flex-shrink: 0; color: #8c8f94; font-size: 16px !important; width: 16px !important; height: 16px !important; transition: transform 0.2s; }
+            .levi-dw-item.levi-dw-open .levi-dw-chevron { transform: rotate(180deg); }
+            .levi-dw-summary { padding: 0 12px 10px 40px; font-size: 12px; color: #50575e; }
+            .levi-dw-text { line-height: 1.4; }
+            .levi-dw-error-text { color: #dc3545; }
+            .levi-dw-detail { padding: 0 12px 12px 12px; }
+            .levi-dw-raw { background: #f6f7f7; border: 1px solid #e0e0e0; border-radius: 4px; padding: 10px; font-size: 11px; line-height: 1.5; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+            .levi-dw-footer { margin: 10px 0 0; text-align: right; font-size: 12px; }
+            .levi-dw-empty { color: #646970; font-style: italic; }
+        </style>
+        <?php
+    }
+
+    private function renderDashboardWidgetScript(): void {
+        static $rendered = false;
+        if ($rendered) return;
+        $rendered = true;
+        ?>
+        <script>
+        jQuery(function($) {
+            $(document).on('click', '.levi-dw-header[data-toggle]', function() {
+                var targetId = $(this).attr('data-toggle');
+                var $detail = $('#' + targetId);
+                var $item = $(this).closest('.levi-dw-item');
+                $detail.slideToggle(200);
+                $item.toggleClass('levi-dw-open');
+            });
+        });
+        </script>
+        <?php
+    }
+
+    // ── Cron Email Toggle AJAX ──────────────────────────────────────
+
+    public function ajaxToggleCronEmail(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $taskId = sanitize_text_field($_POST['task_id'] ?? '');
+        if ($taskId === '') {
+            wp_send_json_error($this->tr('Task ID missing.', 'Task-ID fehlt.'));
+        }
+
+        $tasks = \Levi\Agent\Cron\CronTaskRunner::getAllTasks();
+        if (!isset($tasks[$taskId])) {
+            wp_send_json_error($this->tr('Task not found.', 'Aufgabe nicht gefunden.'));
+        }
+
+        $tasks[$taskId]['notify_email'] = empty($tasks[$taskId]['notify_email']);
+        update_option('levi_custom_cron_tasks', $tasks, false);
+
+        wp_send_json_success([
+            'task_id' => $taskId,
+            'notify_email' => $tasks[$taskId]['notify_email'],
+            'message' => $tasks[$taskId]['notify_email']
+                ? $this->tr('Email notifications enabled.', 'E-Mail-Benachrichtigungen aktiviert.')
+                : $this->tr('Email notifications disabled.', 'E-Mail-Benachrichtigungen deaktiviert.'),
+        ]);
     }
 }
