@@ -27,11 +27,13 @@ class StateSnapshotService {
     }
 
     public function ensureSchedule(): void {
-        if (!wp_next_scheduled(self::EVENT_HOOK)) {
-            wp_schedule_event(self::calculateNextRunTimestamp(), 'daily', self::EVENT_HOOK);
-        }
-        if (!wp_next_scheduled(self::MEMORY_SYNC_HOOK)) {
-            wp_schedule_event(self::calculateNextRunTimestamp(), 'daily', self::MEMORY_SYNC_HOOK);
+        $nextRun = self::calculateNextRunTimestamp();
+        foreach ([self::EVENT_HOOK, self::MEMORY_SYNC_HOOK] as $hook) {
+            $timestamp = wp_next_scheduled($hook);
+            if ($timestamp !== false) {
+                wp_unschedule_event($timestamp, $hook);
+            }
+            wp_schedule_event($nextRun, 'daily', $hook);
         }
     }
 
@@ -265,7 +267,7 @@ class StateSnapshotService {
     private static function calculateNextRunTimestamp(): int {
         $timezone = wp_timezone();
         $now = new \DateTimeImmutable('now', $timezone);
-        $next = $now->setTime(0, 7, 0);
+        $next = $now->setTime(12, 0, 0);
         if ($next <= $now) {
             $next = $next->modify('+1 day');
         }

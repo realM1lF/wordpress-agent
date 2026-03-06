@@ -37,6 +37,8 @@
         let uploadedFiles = [];
         let currentAbortController = null;
         let editingMessageEl = null;
+        let webSearchActive = false;
+        const webSearchBtn = document.getElementById('levi-chat-web-search-btn');
 
         function setChatOpen(isOpen) {
             window_.style.display = isOpen ? 'flex' : 'none';
@@ -69,10 +71,12 @@
             setFullWidth(true);
         }
 
-        // Restore server-side history if we already have a session
+        // Restore server-side history if we already have a session; otherwise show full greeting
         if (sessionId) {
             loadHistory(sessionId);
             loadSessionUploads(sessionId);
+        } else {
+            renderHistory([]);
         }
 
         // Toggle chat window
@@ -96,6 +100,13 @@
         // Clear current session
         if (clear) {
             clear.addEventListener('click', clearCurrentSession);
+        }
+
+        if (webSearchBtn) {
+            webSearchBtn.addEventListener('click', function() {
+                webSearchActive = !webSearchActive;
+                webSearchBtn.classList.toggle('levi-web-search-active', webSearchActive);
+            });
         }
 
         if (uploadBtn && fileInput) {
@@ -172,9 +183,8 @@
                 renderUploadedFiles();
             }
 
-            const taskMode = inferTaskMode(text);
-            const typing = addTypingIndicator(taskMode);
-            const phaseTimers = scheduleTypingPhases(typing, taskMode);
+            const typing = addTypingIndicator();
+            const phaseTimers = scheduleTypingPhases();
             setSendingState(true);
 
             if (supportsReadableStream()) {
@@ -185,6 +195,9 @@
         }
 
         async function sendMessageSSE(text, typing, phaseTimers, isEdit) {
+            var useWebSearch = webSearchActive;
+            webSearchActive = false;
+            if (webSearchBtn) webSearchBtn.classList.remove('levi-web-search-active');
             try {
                 const response = await fetch(leviAgent.streamUrl, {
                     method: 'POST',
@@ -196,6 +209,7 @@
                         message: text,
                         session_id: sessionId,
                         replace_last: isEdit || false,
+                        web_search: useWebSearch,
                     }),
                     signal: currentAbortController ? currentAbortController.signal : undefined,
                 });
@@ -310,6 +324,9 @@
         }
 
         function sendMessageClassic(text, typing, phaseTimers, isEdit) {
+            var useWebSearch = webSearchActive;
+            webSearchActive = false;
+            if (webSearchBtn) webSearchBtn.classList.remove('levi-web-search-active');
             fetch(leviAgent.restUrl + 'chat', {
                 method: 'POST',
                 headers: {
@@ -320,6 +337,7 @@
                     message: text,
                     session_id: sessionId,
                     replace_last: isEdit || false,
+                    web_search: useWebSearch,
                 }),
                 signal: currentAbortController ? currentAbortController.signal : undefined,
             })
@@ -749,6 +767,9 @@
                 confirmBtn.textContent = 'Wird ausgeführt...';
                 card.classList.add('levi-confirmation-loading');
 
+                var typingIndicator = addTypingIndicator();
+                typingIndicator.setLabel('Levi führt bestätigte Aktion aus...');
+
                 fetch(leviAgent.restUrl + 'chat/confirm-action', {
                     method: 'POST',
                     headers: {
@@ -759,6 +780,7 @@
                 })
                 .then(function(r) { return r.json(); })
                 .then(function(result) {
+                    typingIndicator.remove();
                     card.remove();
                     if (result.message) {
                         addMessage(result.message, 'assistant');
@@ -767,6 +789,7 @@
                     }
                 })
                 .catch(function(err) {
+                    typingIndicator.remove();
                     card.remove();
                     addMessage('❌ Bestätigung fehlgeschlagen: ' + err.message, 'assistant');
                 });
@@ -783,7 +806,11 @@
         function renderHistory(historyMessages) {
             messages.innerHTML = '';
             if (!Array.isArray(historyMessages) || historyMessages.length === 0) {
-                addMessage('Hallo ' + (leviAgent.userName || '') + '! 👋\nIch bin dein WordPress KI-Assistent. Wie kann ich dir helfen?', 'assistant');
+                var greeting = 'Hallo ' + (leviAgent.userName || '') + '! 👋\n\nIch bin dein WordPress KI-Assistent. Wie kann ich dir helfen?\n\n'
+                    + '<span class="levi-session-hint">Das ist eine neue Session. Levi merkt sich den Gespraechsverlauf innerhalb dieser Session (bis zu 30 Tage). '
+                    + 'Nutze den Papierkorb-Button um die Session zu löschen und eine neue zu starten.</span>'
+                    + '<span class="levi-session-alert">VORSICHT: Ein Seitenwechsel unterbricht laufende Aufgaben von Levi. Falls du also an etwas arbeiten möchtest während Levi eine Aufgabe bearbeitet, öffne dir bitte einen neuen Tab und arbeite in diesem.</span>';
+                addMessage(greeting, 'assistant');
                 return;
             }
 
@@ -825,7 +852,7 @@
             });
         }
 
-        function addTypingIndicator(taskMode) {
+        function addTypingIndicator() {
             const typingDiv = document.createElement('div');
             typingDiv.className = 'levi-message levi-message-assistant';
             typingDiv.innerHTML =
@@ -848,7 +875,7 @@
                 }
             };
 
-            setLabel(getTypingLabel(taskMode, 'start'));
+            setLabel('Levi verarbeitet die Anfrage...');
 
             return {
                 setLabel,
@@ -862,32 +889,8 @@
             };
         }
 
-        function inferTaskMode(text) {
-            const t = String(text || '').toLowerCase();
-            if (/\b(code|plugin|php|javascript|js|css|datei|funktion|implement|bugfix|refactor)\b/.test(t)) {
-                return 'code';
-            }
-            if (/\b(rechtschreibung|analyse|prüf|review|durchsuch|korrigier)\b/.test(t)) {
-                return 'analysis';
-            }
-            return 'write';
-        }
-
-        function getTypingLabel(taskMode, phase) {
-            if (taskMode === 'code') {
-                return phase === 'final' ? 'Levi finalisiert Code...' : 'Levi codet...';
-            }
-            if (taskMode === 'analysis') {
-                return phase === 'final' ? 'Levi fasst Ergebnisse zusammen...' : 'Levi analysiert...';
-            }
-            return phase === 'final' ? 'Levi finalisiert Antwort...' : 'Levi schreibt...';
-        }
-
-        function scheduleTypingPhases(typing, taskMode) {
-            return [
-                setTimeout(() => typing.setLabel('Levi arbeitet...'), 2200),
-                setTimeout(() => typing.setLabel(getTypingLabel(taskMode, 'final')), 5200),
-            ];
+        function scheduleTypingPhases() {
+            return [];
         }
 
         function clearPhaseTimers(timerIds) {

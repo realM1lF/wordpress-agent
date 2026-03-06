@@ -318,6 +318,30 @@
     color: #d1d5db;
 }
 
+.levi-session-hint {
+    display: block;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.8em;
+    font-weight: 400;
+    color: rgba(229, 231, 235, 0.65);
+    line-height: 1.4;
+}
+
+.levi-session-alert {
+    display: block;
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    border-radius: 6px;
+    font-size: 0.75em;
+    font-weight: 500;
+    color: rgba(250, 204, 21, 0.95);
+    line-height: 1.35;
+}
+
 .levi-message-assistant .levi-message-content table {
     border-collapse: collapse;
     width: 100%;
@@ -488,6 +512,39 @@
 }
 
 .levi-chat-upload-btn .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.levi-chat-web-search-btn {
+    margin: auto 0;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #94a3b8;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.levi-chat-web-search-btn:hover {
+    background: #1e293b;
+    color: #60a5fa;
+}
+
+.levi-chat-web-search-btn.levi-web-search-active {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: #3b82f6;
+    color: #60a5fa;
+}
+
+.levi-chat-web-search-btn .dashicons {
     font-size: 18px;
     width: 18px;
     height: 18px;

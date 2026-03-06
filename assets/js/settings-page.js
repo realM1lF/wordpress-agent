@@ -275,6 +275,137 @@
             var notConn = (leviSettings.i18n && leviSettings.i18n.notConnected) ? leviSettings.i18n.notConnected : 'Not Connected';
             $status.find('.levi-status-text').text(isConnected ? conn : notConn);
         }
+
+        // ── Cron Task Handlers ──────────────────────────────────────
+
+        $(document).on('click', '.levi-cron-run', function() {
+            var $btn = $(this);
+            var taskId = $btn.data('task-id');
+            $btn.prop('disabled', true).find('.dashicons').removeClass('dashicons-controls-play').addClass('dashicons-update levi-spin');
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: { action: 'levi_run_cron_task', nonce: leviSettings.nonce, task_id: taskId },
+                success: function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data || 'Error');
+                        $btn.prop('disabled', false).find('.dashicons').removeClass('dashicons-update levi-spin').addClass('dashicons-controls-play');
+                    }
+                },
+                error: function() {
+                    alert('Request failed');
+                    $btn.prop('disabled', false).find('.dashicons').removeClass('dashicons-update levi-spin').addClass('dashicons-controls-play');
+                }
+            });
+        });
+
+        $(document).on('click', '.levi-cron-toggle', function() {
+            var $btn = $(this);
+            var taskId = $btn.data('task-id');
+            $btn.prop('disabled', true);
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: { action: 'levi_toggle_cron_task', nonce: leviSettings.nonce, task_id: taskId },
+                success: function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data || 'Error');
+                        $btn.prop('disabled', false);
+                    }
+                },
+                error: function() {
+                    alert('Request failed');
+                    $btn.prop('disabled', false);
+                }
+            });
+        });
+
+        $(document).on('click', '.levi-cron-delete', function() {
+            var $btn = $(this);
+            var taskId = $btn.data('task-id');
+            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.confirmDelete) || 'Delete this task?';
+            if (!confirm(confirmMsg)) return;
+
+            $btn.prop('disabled', true);
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: { action: 'levi_delete_cron_task', nonce: leviSettings.nonce, task_id: taskId },
+                success: function(response) {
+                    if (response.success) {
+                        $btn.closest('tr').next('.levi-cron-detail').remove();
+                        $btn.closest('tr').fadeOut(300, function() { $(this).remove(); });
+                    } else {
+                        alert(response.data || 'Error');
+                        $btn.prop('disabled', false);
+                    }
+                },
+                error: function() {
+                    alert('Request failed');
+                    $btn.prop('disabled', false);
+                }
+            });
+        });
+
+        $(document).on('click', '.levi-cron-email-toggle', function() {
+            var $btn = $(this);
+            var taskId = $btn.data('task-id');
+            $btn.prop('disabled', true);
+            $.post(leviSettings.ajaxUrl, {
+                action: 'levi_toggle_cron_email',
+                nonce: leviSettings.nonce,
+                task_id: taskId
+            }, function(response) {
+                $btn.prop('disabled', false);
+                if (response.success) {
+                    var active = response.data.notify_email;
+                    $btn.toggleClass('levi-btn-email-active', active)
+                        .toggleClass('levi-btn-secondary', !active);
+                    $btn.attr('title', active
+                        ? (leviSettings.i18n && leviSettings.i18n.emailOn || 'E-Mail aktiv')
+                        : (leviSettings.i18n && leviSettings.i18n.emailOff || 'E-Mail deaktiviert'));
+                } else {
+                    alert(response.data || 'Error');
+                }
+            }).fail(function() {
+                $btn.prop('disabled', false);
+                alert('Request failed');
+            });
+        });
+
+        $(document).on('click', '.levi-cron-expand', function() {
+            var taskId = $(this).data('task-id');
+            var $detail = $('tr.levi-cron-detail[data-detail-for="' + taskId + '"]');
+            var $icon = $(this).find('.dashicons');
+
+            if ($detail.is(':visible')) {
+                $detail.slideUp(200);
+                $icon.removeClass('dashicons-arrow-up-alt2').addClass('dashicons-arrow-down-alt2');
+            } else {
+                $detail.slideDown(200);
+                $icon.removeClass('dashicons-arrow-down-alt2').addClass('dashicons-arrow-up-alt2');
+            }
+        });
+
+        $('#levi-cron-all-toggle').on('click', function() {
+            var $content = $('#levi-cron-all-content');
+            var $icon = $(this).find('.levi-collapse-icon');
+
+            if ($content.is(':visible')) {
+                $content.slideUp(300);
+                $icon.removeClass('dashicons-arrow-down-alt2').addClass('dashicons-arrow-right-alt2');
+            } else {
+                $content.slideDown(300);
+                $icon.removeClass('dashicons-arrow-right-alt2').addClass('dashicons-arrow-down-alt2');
+            }
+        });
     });
 
 })(jQuery);
