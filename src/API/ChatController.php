@@ -170,7 +170,7 @@ class ChatController extends WP_REST_Controller {
         register_rest_route($this->namespace, '/' . $this->rest_base . '/confirm-action', [
             [
                 'methods' => WP_REST_Server::CREATABLE,
-                'callback' => [$this, 'confirmAction'],
+                'callback' => [$this, 'confirmActionStream'],
                 'permission_callback' => [$this, 'checkPermission'],
                 'args' => [
                     'action_id' => [
@@ -194,7 +194,35 @@ class ChatController extends WP_REST_Controller {
         ], 200);
     }
 
-    public function confirmAction(WP_REST_Request $request): WP_REST_Response {
+    public function confirmActionStream(WP_REST_Request $request): void {
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 180);
+        if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
+            @set_time_limit($phpTimeLimit);
+        }
+        ignore_user_abort(false);
+
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache');
+        header('Connection: keep-alive');
+        header('X-Accel-Buffering: no');
+
+        try {
+            $this->processConfirmationStreaming($request);
+        } catch (\Throwable $e) {
+            error_log('Levi Confirm Stream Error: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            $this->emitSSE('error', [
+                'message' => 'Internal error: ' . $e->getMessage(),
+            ]);
+        }
+
+        die();
+    }
+
+    private function processConfirmationStreaming(WP_REST_Request $request): void {
         $actionId = (string) $request->get_param('action_id');
         $userId = get_current_user_id();
 
@@ -202,101 +230,155 @@ class ChatController extends WP_REST_Controller {
         $pending = get_transient($transientKey);
 
         if (!is_array($pending) || empty($pending['tool_name'])) {
-            return new WP_REST_Response([
-                'success' => false,
-                'error' => 'Aktion nicht gefunden oder abgelaufen. Bitte erneut anfordern.',
-            ], 404);
+            $this->emitSSE('error', ['message' => 'Aktion nicht gefunden oder abgelaufen. Bitte erneut anfordern.']);
+            return;
         }
 
         if ((int) ($pending['user_id'] ?? 0) !== $userId) {
-            return new WP_REST_Response([
-                'success' => false,
-                'error' => 'Keine Berechtigung fuer diese Aktion.',
-            ], 403);
+            $this->emitSSE('error', ['message' => 'Keine Berechtigung fuer diese Aktion.']);
+            return;
         }
 
         $toolName = (string) $pending['tool_name'];
         $toolArgs = is_array($pending['tool_args']) ? $pending['tool_args'] : [];
         $sessionId = (string) ($pending['session_id'] ?? '');
 
+        $this->emitSSE('progress', [
+            'message' => $this->getToolProgressLabel($toolName, 'start'),
+            'tool' => $toolName,
+        ]);
+
         $result = $this->toolRegistry->execute($toolName, $toolArgs);
         $this->logToolExecution($sessionId, $userId, $toolName, $toolArgs, $result);
-
         delete_transient($transientKey);
 
-        $summary = $this->describeToolAction($toolName, $toolArgs);
         $ok = !empty($result['success']);
         $compactResult = $this->compactToolResultForModel($result);
 
-        $assistantMessage = $this->generateConfirmationFollowUp(
-            $sessionId, $userId, $toolName, $summary, $ok, $compactResult
-        );
+        $this->emitSSE('progress', [
+            'message' => $this->getToolProgressLabel($toolName, $ok ? 'done' : 'failed'),
+            'tool' => $toolName,
+            'success' => $ok,
+        ]);
 
-        if ($sessionId !== '') {
-            $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+        if (!$ok || !$this->aiClient->isConfigured() || $sessionId === '') {
+            $summary = $this->describeToolAction($toolName, $toolArgs);
+            $statusLine = $ok
+                ? "✅ {$summary} – erfolgreich ausgefuehrt."
+                : "❌ {$summary} – fehlgeschlagen.";
+            $finalMessage = $statusLine . "\n\n" . mb_substr($compactResult, 0, 500);
+            $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+            $this->emitSSE('done', [
+                'session_id' => $sessionId,
+                'message' => $finalMessage,
+            ]);
+            return;
         }
 
-        return new WP_REST_Response([
-            'success' => $ok,
+        $messages = $this->buildMessagesForConfirmation($sessionId, $toolName, $toolArgs, $compactResult);
+        $heartbeat = function () {
+            if (connection_aborted()) {
+                return;
+            }
+            $this->emitSSE('heartbeat', []);
+        };
+
+        $this->emitSSE('status', ['message' => 'Levi arbeitet...']);
+
+        $response = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat);
+        if (is_wp_error($response)) {
+            $errMsgLower = mb_strtolower($response->get_error_message());
+            if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
+                $response = $this->aiClient->chat($messages, [], $heartbeat);
+            }
+        }
+        if (is_wp_error($response)) {
+            $summary = $this->describeToolAction($toolName, $toolArgs);
+            $finalMessage = "✅ {$summary} – erfolgreich ausgefuehrt.";
+            $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+            $this->emitSSE('done', ['session_id' => $sessionId, 'message' => $finalMessage]);
+            return;
+        }
+
+        $messageData = $response['choices'][0]['message'] ?? [];
+
+        if (!empty($messageData['tool_calls'])) {
+            $latestUserMessage = $this->getLatestUserMessage($sessionId);
+            $this->handleToolCallsStreaming(
+                $messageData, $messages, $sessionId, $userId,
+                $latestUserMessage, $heartbeat
+            );
+            return;
+        }
+
+        $assistantMessage = $this->sanitizeAssistantMessageContent(
+            (string) ($messageData['content'] ?? '')
+        );
+        if ($assistantMessage === '') {
+            $summary = $this->describeToolAction($toolName, $toolArgs);
+            $assistantMessage = "✅ {$summary} – erfolgreich ausgefuehrt.";
+        }
+
+        $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+        $this->emitSSE('done', [
+            'session_id' => $sessionId,
             'message' => $assistantMessage,
-            'tool' => $toolName,
-            'result' => $result,
-        ], 200);
+        ]);
     }
 
-    private function generateConfirmationFollowUp(
+    private function buildMessagesForConfirmation(
         string $sessionId,
-        int $userId,
         string $toolName,
-        string $summary,
-        bool $ok,
+        array $toolArgs,
         string $compactResult
-    ): string {
-        $statusLine = $ok
-            ? "✅ {$summary} – erfolgreich ausgefuehrt."
-            : "❌ {$summary} – fehlgeschlagen.";
+    ): array {
+        $messages = [];
 
-        if (!$this->aiClient->isConfigured() || $sessionId === '') {
-            return $statusLine . "\n\n" . mb_substr($compactResult, 0, 500);
+        $messages[] = [
+            'role' => 'system',
+            'content' => $this->getSystemPrompt('', $sessionId, false),
+        ];
+
+        $runtimeSettings = $this->settings->getSettings();
+        $historyLimit = max(10, (int) ($runtimeSettings['history_context_limit'] ?? 50));
+        $history = $this->conversationRepo->getHistory($sessionId, $historyLimit);
+        foreach ($history as $msg) {
+            if (in_array($msg['role'], ['user', 'assistant'])) {
+                $messages[] = ['role' => $msg['role'], 'content' => $msg['content']];
+            }
         }
 
-        try {
-            $history = $this->conversationRepo->getHistory($sessionId, 20);
-            $messages = [];
+        $fakeToolCallId = 'confirmed_' . substr(md5($toolName . wp_json_encode($toolArgs)), 0, 12);
+        $messages[] = [
+            'role' => 'assistant',
+            'content' => null,
+            'tool_calls' => [[
+                'id' => $fakeToolCallId,
+                'type' => 'function',
+                'function' => [
+                    'name' => $toolName,
+                    'arguments' => wp_json_encode($toolArgs),
+                ],
+            ]],
+        ];
 
-            $identityContent = $this->getCachedIdentity();
-            $messages[] = [
-                'role' => 'system',
-                'content' => $identityContent
-                    . "\n\n[SYSTEM] Der Nutzer hat soeben eine Aktion bestaetigt. "
-                    . "Du hast das Tool '{$toolName}' ausgefuehrt. "
-                    . "Erklaere dem Nutzer kurz und verstaendlich, was passiert ist und was das Ergebnis bedeutet. "
-                    . "Halte dich an das Tool-Ergebnis – erfinde nichts dazu.",
-            ];
+        $messages[] = [
+            'role' => 'tool',
+            'tool_call_id' => $fakeToolCallId,
+            'content' => $compactResult,
+        ];
 
-            foreach ($history as $msg) {
-                if (in_array($msg['role'], ['user', 'assistant'])) {
-                    $messages[] = ['role' => $msg['role'], 'content' => $msg['content']];
-                }
+        return $this->trimMessagesToBudget($messages);
+    }
+
+    private function getLatestUserMessage(string $sessionId): string {
+        $history = $this->conversationRepo->getHistory($sessionId, 10);
+        for ($i = count($history) - 1; $i >= 0; $i--) {
+            if (($history[$i]['role'] ?? '') === 'user') {
+                return (string) ($history[$i]['content'] ?? '');
             }
-
-            $messages[] = [
-                'role' => 'user',
-                'content' => "[Nutzer hat die Aktion bestaetigt]\n\nTool: {$toolName}\nStatus: " . ($ok ? 'Erfolg' : 'Fehlgeschlagen') . "\nErgebnis:\n{$compactResult}",
-            ];
-
-            $response = $this->aiClient->chat($messages, []);
-            if (!is_wp_error($response)) {
-                $content = trim($response['choices'][0]['message']['content'] ?? '');
-                if ($content !== '') {
-                    return $content;
-                }
-            }
-        } catch (\Throwable $e) {
-            error_log('Levi confirmAction follow-up error: ' . $e->getMessage());
         }
-
-        return $statusLine;
+        return '';
     }
 
     public function checkPermission(): bool {
@@ -610,7 +692,7 @@ class ChatController extends WP_REST_Controller {
                         'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin.',
                         'tool' => $functionName,
                     ];
-                } elseif ($requireConfirmation && $this->isDestructiveTool($functionName) && !$hasConfirmation) {
+                } elseif ($requireConfirmation && $this->isDestructiveTool($functionName, $functionArgs) && !$hasConfirmation) {
                     $actionId = wp_generate_uuid4();
                     set_transient('levi_pending_' . $actionId, [
                         'tool_name' => $functionName,
@@ -631,6 +713,21 @@ class ChatController extends WP_REST_Controller {
                         'error' => 'Fuer diese Aktion brauche ich eine explizite Bestaetigung.',
                         'tool' => $functionName,
                     ];
+
+                    $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                    $toolResults[] = [
+                        'tool' => $functionName,
+                        'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'result' => $result,
+                        'seq' => count($toolResults),
+                        'iteration' => $iteration,
+                    ];
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCallId,
+                        'content' => $this->compactToolResultForModel($result),
+                    ];
+                    break;
                 } else {
                     $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
                 }
@@ -1091,7 +1188,7 @@ class ChatController extends WP_REST_Controller {
                         'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin. Kläre kurz, ob ich bestehendes ändern oder wirklich neu erstellen soll.',
                         'tool' => $functionName,
                     ];
-                } elseif ($requireConfirmation && $this->isDestructiveTool($functionName) && !$hasConfirmation) {
+                } elseif ($requireConfirmation && $this->isDestructiveTool($functionName, $functionArgs) && !$hasConfirmation) {
                     $actionId = wp_generate_uuid4();
                     set_transient('levi_pending_' . $actionId, [
                         'tool_name' => $functionName,
@@ -1112,6 +1209,29 @@ class ChatController extends WP_REST_Controller {
                         'error' => 'Für diese Aktion brauche ich eine explizite Bestätigung von dir.',
                         'tool' => $functionName,
                     ];
+
+                    $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                    $toolResults[] = [
+                        'tool' => $functionName,
+                        'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'result' => $result,
+                        'seq' => count($toolResults),
+                        'iteration' => $iteration,
+                    ];
+                    $executionTrace[] = [
+                        'iteration' => $iteration,
+                        'step' => count($executionTrace) + 1,
+                        'tool' => $functionName,
+                        'status' => 'awaiting_confirmation',
+                        'timestamp' => current_time('mysql'),
+                        'summary' => $this->summarizeToolResult($result),
+                    ];
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCallId,
+                        'content' => $this->compactToolResultForModel($result),
+                    ];
+                    break;
                 } else {
                     $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
                 }
@@ -1617,9 +1737,7 @@ PROMPT;
             'delete_theme_file' => 'Theme-Datei loeschen'
                 . (!empty($args['relative_path']) ? ": {$args['relative_path']}" : ''),
             'execute_wp_code' => $this->describePhpCode($args['code'] ?? ''),
-            'manage_woocommerce' => 'WooCommerce: ' . ($args['action'] ?? '?')
-                . (!empty($args['product_id']) ? " (Produkt #{$args['product_id']})" : '')
-                . (!empty($args['order_id']) ? " (Bestellung #{$args['order_id']})" : ''),
+            'manage_woocommerce' => $this->describeWooCommerceAction($args),
             'manage_elementor' => 'Elementor: ' . ($args['action'] ?? '?')
                 . (!empty($args['page_id']) ? " (Seite #{$args['page_id']})" : ''),
             'manage_menu' => 'Menue: ' . ($args['action'] ?? '?')
@@ -1628,6 +1746,25 @@ PROMPT;
                 . (!empty($args['name']) ? " '{$args['name']}'" : '')
                 . (!empty($args['hook']) ? " ({$args['hook']})" : ''),
             default => $toolName,
+        };
+    }
+
+    private function describeWooCommerceAction(array $args): string {
+        $action = (string) ($args['action'] ?? '?');
+        return match ($action) {
+            'create_product' => "Neues WooCommerce-Produkt erstellen: '" . ($args['name'] ?? '?') . "' (Typ: " . ($args['product_type'] ?? 'simple') . ")",
+            'update_product' => 'WooCommerce-Produkt #' . ($args['product_id'] ?? '?') . ' aktualisieren',
+            'delete_product' => 'WooCommerce-Produkt #' . ($args['product_id'] ?? '?') . ' loeschen',
+            'set_product_attributes' => 'Attribute fuer Produkt #' . ($args['product_id'] ?? '?') . ' setzen',
+            'create_variations' => 'Variationen fuer Produkt #' . ($args['product_id'] ?? '?') . ' erstellen',
+            'update_variation' => 'Variation #' . ($args['variation_id'] ?? '?') . ' aktualisieren',
+            'delete_variation' => 'Variation #' . ($args['variation_id'] ?? '?') . ' loeschen',
+            'update_order_status' => 'Bestellstatus #' . ($args['order_id'] ?? '?') . ' auf ' . ($args['order_status'] ?? '?') . ' setzen',
+            'configure_tax' => 'Steuer-Einstellungen aendern',
+            'create_coupon' => "Coupon '" . ($args['coupon_code'] ?? '?') . "' erstellen",
+            'update_coupon' => 'Coupon #' . ($args['coupon_id'] ?? '?') . ' aktualisieren',
+            'delete_coupon' => 'Coupon #' . ($args['coupon_id'] ?? '?') . ' loeschen',
+            default => 'WooCommerce: ' . $action,
         };
     }
 
@@ -1644,7 +1781,18 @@ PROMPT;
         return "PHP-Code ausfuehren: " . $preview;
     }
 
-    private function isDestructiveTool(string $toolName): bool {
+    private function isDestructiveTool(string $toolName, array $args = []): bool {
+        if ($toolName === 'manage_woocommerce') {
+            $action = (string) ($args['action'] ?? '');
+            return in_array($action, [
+                'delete_product',
+                'delete_variation',
+                'delete_coupon',
+                'update_order_status',
+                'configure_tax',
+            ], true);
+        }
+
         return in_array($toolName, [
             'create_plugin',
             'delete_post',
@@ -1655,7 +1803,6 @@ PROMPT;
             'delete_plugin_file',
             'delete_theme_file',
             'execute_wp_code',
-            'manage_woocommerce',
             'manage_elementor',
             'manage_menu',
             'manage_cron',

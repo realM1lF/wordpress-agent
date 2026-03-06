@@ -44,20 +44,20 @@ class SettingsPage {
             return;
         }
 
-        // Levi Settings Styles
+        $settingsCss = LEVI_AGENT_PLUGIN_DIR . 'assets/css/settings-page.css';
         wp_enqueue_style(
             'levi-agent-settings',
             LEVI_AGENT_PLUGIN_URL . 'assets/css/settings-page.css',
             [],
-            LEVI_AGENT_VERSION
+            file_exists($settingsCss) ? (string) filemtime($settingsCss) : LEVI_AGENT_VERSION
         );
 
-        // Levi Settings JavaScript
+        $settingsJs = LEVI_AGENT_PLUGIN_DIR . 'assets/js/settings-page.js';
         wp_enqueue_script(
             'levi-agent-settings',
             LEVI_AGENT_PLUGIN_URL . 'assets/js/settings-page.js',
             ['jquery'],
-            LEVI_AGENT_VERSION,
+            file_exists($settingsJs) ? (string) filemtime($settingsJs) : LEVI_AGENT_VERSION,
             true
         );
 

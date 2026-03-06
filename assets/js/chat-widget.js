@@ -761,38 +761,71 @@
             btnRow.appendChild(cancelBtn);
             card.appendChild(btnRow);
 
-            confirmBtn.addEventListener('click', function() {
+            confirmBtn.addEventListener('click', async function() {
                 confirmBtn.disabled = true;
                 cancelBtn.disabled = true;
                 confirmBtn.textContent = 'Wird ausgeführt...';
                 card.classList.add('levi-confirmation-loading');
 
-                var typingIndicator = addTypingIndicator();
-                typingIndicator.setLabel('Levi führt bestätigte Aktion aus...');
+                var typing = addTypingIndicator();
+                typing.setLabel('Levi führt bestätigte Aktion aus...');
+                setSendingState(true);
 
-                fetch(leviAgent.restUrl + 'chat/confirm-action', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-WP-Nonce': leviAgent.nonce,
-                    },
-                    body: JSON.stringify({ action_id: pending.action_id }),
-                })
-                .then(function(r) { return r.json(); })
-                .then(function(result) {
-                    typingIndicator.remove();
-                    card.remove();
-                    if (result.message) {
-                        addMessage(result.message, 'assistant');
-                    } else if (result.error) {
-                        addMessage('❌ ' + result.error, 'assistant');
+                try {
+                    var resp = await fetch(leviAgent.restUrl + 'chat/confirm-action', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-WP-Nonce': leviAgent.nonce,
+                        },
+                        body: JSON.stringify({ action_id: pending.action_id }),
+                    });
+
+                    if (!resp.ok && !resp.body) {
+                        throw new Error('Server error: ' + resp.status);
                     }
-                })
-                .catch(function(err) {
-                    typingIndicator.remove();
+
+                    var reader = resp.body.getReader();
+                    var decoder = new TextDecoder();
+                    var buffer = '';
+                    var finalHandled = false;
+                    var phaseTimers = {};
+
+                    while (true) {
+                        var chunk = await reader.read();
+                        if (chunk.done) break;
+
+                        buffer += decoder.decode(chunk.value, { stream: true });
+
+                        while (buffer.includes('\n\n')) {
+                            var eventEnd = buffer.indexOf('\n\n');
+                            var eventStr = buffer.substring(0, eventEnd);
+                            buffer = buffer.substring(eventEnd + 2);
+
+                            var lines = eventStr.split('\n');
+                            for (var li = 0; li < lines.length; li++) {
+                                if (!lines[li].startsWith('data: ')) continue;
+                                try {
+                                    var data = JSON.parse(lines[li].substring(6));
+                                    finalHandled = handleSSEEvent(data, typing, phaseTimers) || finalHandled;
+                                } catch (e) {
+                                    console.warn('SSE parse error:', e, lines[li]);
+                                }
+                            }
+                        }
+                    }
+
                     card.remove();
+                    if (!finalHandled) {
+                        typing.complete();
+                        setSendingState(false);
+                    }
+                } catch (err) {
+                    typing.remove();
+                    card.remove();
+                    setSendingState(false);
                     addMessage('❌ Bestätigung fehlgeschlagen: ' + err.message, 'assistant');
-                });
+                }
             });
 
             cancelBtn.addEventListener('click', function() {

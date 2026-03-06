@@ -91,11 +91,12 @@ class Plugin {
             return;
         }
 
+        $cssFile = LEVI_AGENT_PLUGIN_DIR . 'assets/css/chat-widget.css';
         wp_enqueue_style(
             'levi-agent-chat',
             LEVI_AGENT_PLUGIN_URL . 'assets/css/chat-widget.css',
             [],
-            LEVI_AGENT_VERSION
+            file_exists($cssFile) ? (string) filemtime($cssFile) : LEVI_AGENT_VERSION
         );
 
         // Same markdown rendering behavior as Mohami UI (GFM + sanitizer).
@@ -115,11 +116,12 @@ class Plugin {
             true
         );
 
+        $jsFile = LEVI_AGENT_PLUGIN_DIR . 'assets/js/chat-widget.js';
         wp_enqueue_script(
             'levi-agent-chat',
             LEVI_AGENT_PLUGIN_URL . 'assets/js/chat-widget.js',
             ['levi-marked', 'levi-dompurify'],
-            LEVI_AGENT_VERSION,
+            file_exists($jsFile) ? (string) filemtime($jsFile) : LEVI_AGENT_VERSION,
             true
         );
 

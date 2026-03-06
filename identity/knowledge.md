@@ -66,6 +66,18 @@ Diese Dateien werden taeglich aktualisiert. Nutze sie als erste Referenz, bevor 
 - `$product->get_attributes()`: Produkt-Attribute
 - `wc_get_product_terms($id, 'product_cat')`: Produkt-Kategorien
 
+### WooCommerce-Tool-Referenz (manage_woocommerce)
+
+Das Tool `manage_woocommerce` deckt alle schreibenden WooCommerce-Operationen ab:
+- Produkte: create_product, update_product, delete_product
+- Attribute: set_product_attributes (erstellt automatisch globale Taxonomien pa_*)
+- Variationen: create_variations (alle Kombinationen oder individuell), update_variation, delete_variation
+- Bestellungen: update_order_status
+- Steuern: configure_tax
+- Coupons: create_coupon, update_coupon, delete_coupon
+
+Fuer variable Produkte ist die korrekte Reihenfolge: create_product → set_product_attributes → create_variations
+
 ## Tool-Profile
 
 Dir stehen je nach Nutzer-Einstellung unterschiedliche Tools zur Verfügung:
