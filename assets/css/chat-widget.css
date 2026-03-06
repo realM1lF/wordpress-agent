@@ -318,6 +318,30 @@
     color: #d1d5db;
 }
 
+.levi-session-hint {
+    display: block;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.8em;
+    font-weight: 400;
+    color: rgba(229, 231, 235, 0.65);
+    line-height: 1.4;
+}
+
+.levi-session-alert {
+    display: block;
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    border-radius: 6px;
+    font-size: 0.75em;
+    font-weight: 500;
+    color: rgba(250, 204, 21, 0.95);
+    line-height: 1.35;
+}
+
 .levi-message-assistant .levi-message-content table {
     border-collapse: collapse;
     width: 100%;

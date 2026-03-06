@@ -124,8 +124,9 @@ class Plugin {
         );
 
         $currentUser = wp_get_current_user();
-        $displayName = (string) ($currentUser->display_name ?? '');
-        $userInitial = $displayName !== '' ? strtoupper(substr($displayName, 0, 1)) : 'U';
+        $firstName = trim((string) ($currentUser->first_name ?? ''));
+        $displayName = $firstName !== '' ? $firstName : (string) ($currentUser->display_name ?? '');
+        $userInitial = $displayName !== '' ? strtoupper(mb_substr($displayName, 0, 1)) : 'U';
 
         wp_localize_script('levi-agent-chat', 'leviAgent', [
             'restUrl' => rest_url('levi-agent/v1/'),

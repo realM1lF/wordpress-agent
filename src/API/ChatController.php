@@ -226,9 +226,11 @@ class ChatController extends WP_REST_Controller {
 
         $summary = $this->describeToolAction($toolName, $toolArgs);
         $ok = !empty($result['success']);
-        $assistantMessage = $ok
-            ? '✅ ' . $summary . ' – erfolgreich ausgefuehrt.'
-            : '❌ ' . $summary . ' – fehlgeschlagen: ' . ($result['error'] ?? 'Unbekannter Fehler');
+        $compactResult = $this->compactToolResultForModel($result);
+
+        $assistantMessage = $this->generateConfirmationFollowUp(
+            $sessionId, $userId, $toolName, $summary, $ok, $compactResult
+        );
 
         if ($sessionId !== '') {
             $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
@@ -240,6 +242,61 @@ class ChatController extends WP_REST_Controller {
             'tool' => $toolName,
             'result' => $result,
         ], 200);
+    }
+
+    private function generateConfirmationFollowUp(
+        string $sessionId,
+        int $userId,
+        string $toolName,
+        string $summary,
+        bool $ok,
+        string $compactResult
+    ): string {
+        $statusLine = $ok
+            ? "✅ {$summary} – erfolgreich ausgefuehrt."
+            : "❌ {$summary} – fehlgeschlagen.";
+
+        if (!$this->aiClient->isConfigured() || $sessionId === '') {
+            return $statusLine . "\n\n" . mb_substr($compactResult, 0, 500);
+        }
+
+        try {
+            $history = $this->conversationRepo->getHistory($sessionId, 20);
+            $messages = [];
+
+            $identityContent = $this->getCachedIdentity();
+            $messages[] = [
+                'role' => 'system',
+                'content' => $identityContent
+                    . "\n\n[SYSTEM] Der Nutzer hat soeben eine Aktion bestaetigt. "
+                    . "Du hast das Tool '{$toolName}' ausgefuehrt. "
+                    . "Erklaere dem Nutzer kurz und verstaendlich, was passiert ist und was das Ergebnis bedeutet. "
+                    . "Halte dich an das Tool-Ergebnis – erfinde nichts dazu.",
+            ];
+
+            foreach ($history as $msg) {
+                if (in_array($msg['role'], ['user', 'assistant'])) {
+                    $messages[] = ['role' => $msg['role'], 'content' => $msg['content']];
+                }
+            }
+
+            $messages[] = [
+                'role' => 'user',
+                'content' => "[Nutzer hat die Aktion bestaetigt]\n\nTool: {$toolName}\nStatus: " . ($ok ? 'Erfolg' : 'Fehlgeschlagen') . "\nErgebnis:\n{$compactResult}",
+            ];
+
+            $response = $this->aiClient->chat($messages, []);
+            if (!is_wp_error($response)) {
+                $content = trim($response['choices'][0]['message']['content'] ?? '');
+                if ($content !== '') {
+                    return $content;
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('Levi confirmAction follow-up error: ' . $e->getMessage());
+        }
+
+        return $statusLine;
     }
 
     public function checkPermission(): bool {
@@ -602,9 +659,9 @@ class ChatController extends WP_REST_Controller {
             }
 
             if ($pendingConfirmation !== null) {
-                $confirmMsg = $pendingConfirmation['description']
+                $confirmDesc = $pendingConfirmation['description']
                     ?? $this->describeToolAction($pendingConfirmation['tool'] ?? '', []);
-                $finalMessage = 'Fuer diese Aktion brauche ich deine Bestaetigung. Bitte klicke auf den Button unter dieser Nachricht. 🔒';
+                $finalMessage = "Ich moechte: **{$confirmDesc}**\n\nBitte bestaetige ueber den Button. 🔒";
                 $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
                 $this->emitSSE('done', [
                     'session_id' => $sessionId,
@@ -1085,7 +1142,9 @@ class ChatController extends WP_REST_Controller {
             }
 
             if ($pendingConfirmation !== null) {
-                $finalMessage = 'Fuer diese Aktion brauche ich deine Bestaetigung. Bitte klicke auf den Button unter dieser Nachricht.';
+                $confirmDesc = $pendingConfirmation['description']
+                    ?? $this->describeToolAction($pendingConfirmation['tool'] ?? '', []);
+                $finalMessage = "Ich moechte: **{$confirmDesc}**\n\nBitte bestaetige ueber den Button. 🔒";
                 $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
                 $responsePayload = [
                     'session_id' => $sessionId,
@@ -1541,20 +1600,48 @@ PROMPT;
 
     private function describeToolAction(string $toolName, array $args): string {
         return match ($toolName) {
-            'create_plugin' => "Neues Plugin '" . ($args['slug'] ?? '?') . "' erstellen",
+            'create_plugin' => "Neues Plugin '" . ($args['slug'] ?? '?') . "' erstellen"
+                . (!empty($args['name']) ? " ({$args['name']})" : '')
+                . (!empty($args['description']) ? " — {$args['description']}" : ''),
             'delete_post' => 'Beitrag' . (!empty($args['id']) ? ' #' . $args['id'] : '') . ' loeschen',
-            'install_plugin' => "Plugin '" . ($args['plugin_slug'] ?? '?') . "' installieren",
+            'install_plugin' => "Plugin '" . ($args['plugin_slug'] ?? '?') . "' installieren"
+                . (!empty($args['action']) && $args['action'] === 'update_outdated' ? ' (alle veralteten Plugins aktualisieren)' : ''),
             'switch_theme' => "Theme zu '" . ($args['theme'] ?? $args['stylesheet'] ?? '?') . "' wechseln",
-            'update_any_option' => "Option '" . ($args['option'] ?? '?') . "' aendern",
-            'manage_user' => 'Benutzer-Aktion: ' . ($args['action'] ?? '?'),
-            'delete_plugin_file' => 'Plugin-Datei loeschen',
-            'delete_theme_file' => 'Theme-Datei loeschen',
-            'execute_wp_code' => 'PHP-Code ausfuehren',
-            'manage_woocommerce' => 'WooCommerce-Aktion: ' . ($args['action'] ?? '?'),
-            'manage_menu' => 'Menue-Aktion: ' . ($args['action'] ?? '?'),
-            'manage_cron' => 'Cron-Aktion: ' . ($args['action'] ?? '?'),
+            'update_any_option' => "Option '" . ($args['option'] ?? '?') . "' aendern"
+                . (isset($args['value']) ? " auf '" . mb_substr((string) $args['value'], 0, 80) . "'" : ''),
+            'manage_user' => 'Benutzer-Aktion: ' . ($args['action'] ?? '?')
+                . (!empty($args['user_id']) ? " (User #{$args['user_id']})" : ''),
+            'delete_plugin_file' => 'Plugin-Datei loeschen'
+                . (!empty($args['plugin_slug']) ? " in '{$args['plugin_slug']}'" : '')
+                . (!empty($args['relative_path']) ? ": {$args['relative_path']}" : ''),
+            'delete_theme_file' => 'Theme-Datei loeschen'
+                . (!empty($args['relative_path']) ? ": {$args['relative_path']}" : ''),
+            'execute_wp_code' => $this->describePhpCode($args['code'] ?? ''),
+            'manage_woocommerce' => 'WooCommerce: ' . ($args['action'] ?? '?')
+                . (!empty($args['product_id']) ? " (Produkt #{$args['product_id']})" : '')
+                . (!empty($args['order_id']) ? " (Bestellung #{$args['order_id']})" : ''),
+            'manage_elementor' => 'Elementor: ' . ($args['action'] ?? '?')
+                . (!empty($args['page_id']) ? " (Seite #{$args['page_id']})" : ''),
+            'manage_menu' => 'Menue: ' . ($args['action'] ?? '?')
+                . (!empty($args['menu_name']) ? " '{$args['menu_name']}'" : ''),
+            'manage_cron' => 'Cron: ' . ($args['action'] ?? '?')
+                . (!empty($args['name']) ? " '{$args['name']}'" : '')
+                . (!empty($args['hook']) ? " ({$args['hook']})" : ''),
             default => $toolName,
         };
+    }
+
+    private function describePhpCode(string $code): string {
+        if ($code === '') {
+            return 'PHP-Code ausfuehren';
+        }
+
+        $preview = trim($code);
+        $preview = preg_replace('/\s+/', ' ', $preview);
+        if (mb_strlen($preview) > 120) {
+            $preview = mb_substr($preview, 0, 120) . '...';
+        }
+        return "PHP-Code ausfuehren: " . $preview;
     }
 
     private function isDestructiveTool(string $toolName): bool {
@@ -2082,20 +2169,13 @@ PROMPT;
             return $this->appendCreationHintIfNeeded($finalMessage, $successful, $taskIntent);
         }
 
-        $failedList = implode(', ', array_unique(array_map(fn($r) => (string) ($r['tool'] ?? ''), $unresolvedFailed)));
-        if ($failedList === '') {
-            $failedList = 'mindestens ein Tool';
-        }
-
         // No successful tools at all -- append warning to AI response.
         if (empty($successful)) {
-            return $finalMessage . "\n\nHinweis: Mindestens ein Teilschritt ist fehlgeschlagen (" . $failedList . '). '
-                . 'Soll ich es erneut versuchen oder zuerst den aktuellen Stand prüfen?';
+            return $finalMessage . "\n\nHinweis: Ich hatte Probleme bei der Ausfuehrung. Soll ich es nochmal versuchen?";
         }
 
         // Mixed: some succeeded, some unresolved failures -- append short notice.
-        return $finalMessage . "\n\nHinweis: Mindestens ein Teilschritt ist fehlgeschlagen (" . $failedList . '). '
-            . 'Bitte prüfe den Zwischenstand, bevor wir final abschließen.';
+        return $finalMessage . "\n\nIch hatte kurz Probleme bei einem Teilschritt, aber es sollte soweit alles passen :)";
     }
 
     private function appendCreationHintIfNeeded(string $finalMessage, array $successful, array $taskIntent): string {

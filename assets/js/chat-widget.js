@@ -71,10 +71,12 @@
             setFullWidth(true);
         }
 
-        // Restore server-side history if we already have a session
+        // Restore server-side history if we already have a session; otherwise show full greeting
         if (sessionId) {
             loadHistory(sessionId);
             loadSessionUploads(sessionId);
+        } else {
+            renderHistory([]);
         }
 
         // Toggle chat window
@@ -765,6 +767,9 @@
                 confirmBtn.textContent = 'Wird ausgeführt...';
                 card.classList.add('levi-confirmation-loading');
 
+                var typingIndicator = addTypingIndicator();
+                typingIndicator.setLabel('Levi führt bestätigte Aktion aus...');
+
                 fetch(leviAgent.restUrl + 'chat/confirm-action', {
                     method: 'POST',
                     headers: {
@@ -775,6 +780,7 @@
                 })
                 .then(function(r) { return r.json(); })
                 .then(function(result) {
+                    typingIndicator.remove();
                     card.remove();
                     if (result.message) {
                         addMessage(result.message, 'assistant');
@@ -783,6 +789,7 @@
                     }
                 })
                 .catch(function(err) {
+                    typingIndicator.remove();
                     card.remove();
                     addMessage('❌ Bestätigung fehlgeschlagen: ' + err.message, 'assistant');
                 });
@@ -799,7 +806,11 @@
         function renderHistory(historyMessages) {
             messages.innerHTML = '';
             if (!Array.isArray(historyMessages) || historyMessages.length === 0) {
-                addMessage('Hallo ' + (leviAgent.userName || '') + '! 👋\nIch bin dein WordPress KI-Assistent. Wie kann ich dir helfen?', 'assistant');
+                var greeting = 'Hallo ' + (leviAgent.userName || '') + '! 👋\n\nIch bin dein WordPress KI-Assistent. Wie kann ich dir helfen?\n\n'
+                    + '<span class="levi-session-hint">Das ist eine neue Session. Levi merkt sich den Gespraechsverlauf innerhalb dieser Session (bis zu 30 Tage). '
+                    + 'Nutze den Papierkorb-Button um die Session zu löschen und eine neue zu starten.</span>'
+                    + '<span class="levi-session-alert">VORSICHT: Ein Seitenwechsel unterbricht laufende Aufgaben von Levi. Falls du also an etwas arbeiten möchtest während Levi eine Aufgabe bearbeitet, öffne dir bitte einen neuen Tab und arbeite in diesem.</span>';
+                addMessage(greeting, 'assistant');
                 return;
             }
 
