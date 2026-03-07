@@ -1,0 +1,31 @@
+---
+description: Changelog-Pflege bei Commits am Plugin
+alwaysApply: true
+---
+
+# Changelog-Pflege
+
+Wenn du einen Commit machst, der **funktionale Änderungen am Plugin** betrifft (neue Features, Bugfixes, UI-Änderungen, Verhaltensänderungen), dann trage die Änderung in `CHANGELOG.md` ein.
+
+## Wann NICHT eintragen
+
+- Reine Infrastruktur-Commits (Changelog selbst, Cursor Rules, README, Docs)
+- Version Bumps ohne inhaltliche Änderung
+- Refactorings ohne sichtbare Auswirkung für den Nutzer
+
+## Format
+
+Unter dem aktuellen Versions-Block eine Zeile ergänzen:
+
+```markdown
+## [0.x.y] – YYYY-MM-DD
+- Kurze Beschreibung der Änderung auf Deutsch
+```
+
+Falls noch kein Block für die aktuelle Version existiert, erstelle einen neuen über dem letzten.
+
+## Wichtig
+
+- Beschreibungen auf **Deutsch**, kurz und verständlich
+- Aus Nutzersicht beschreiben, nicht technisch (z.B. „Bestätigungsdialog zeigt jetzt Seite statt Beitrag" statt „describeToolAction match erweitert")
+- Pro logische Änderung eine Zeile, nicht pro Datei
