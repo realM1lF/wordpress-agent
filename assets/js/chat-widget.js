@@ -393,6 +393,7 @@
             send.disabled = !!isSending;
             input.disabled = !!isSending;
             if (uploadBtn) uploadBtn.disabled = !!isSending;
+            if (webSearchBtn) webSearchBtn.disabled = !!isSending;
             if (isSending) {
                 send.style.display = 'none';
                 if (stop) stop.style.display = 'inline-flex';
@@ -403,6 +404,16 @@
                 input.focus();
             }
         }
+
+        // Warn when leaving/reloading while Levi is processing
+        window.addEventListener('beforeunload', function(e) {
+            if (sendInFlight || uploadInFlight) {
+                e.preventDefault();
+                var msg = 'Levi arbeitet gerade an einer Aufgabe. Ein Seitenwechsel oder Neuladen würde den Prozess unterbrechen. Wirklich verlassen?';
+                e.returnValue = msg;
+                return msg;
+            }
+        });
 
         function uploadSelectedFiles(fileListObj) {
             if (!fileListObj || fileListObj.length === 0 || uploadInFlight) {
