@@ -350,51 +350,54 @@ class VectorStore {
             return [];
         }
 
-        // Calculate bucket hash for pre-filtering (HNSW-like optimization)
-        $queryBucket = $this->calculateBucketHash($queryEmbedding);
-        $similarBuckets = $this->getSimilarBucketPatterns($queryBucket);
-        
-        // Build query with bucket pre-filtering
-        // Include both: matching buckets AND entries without bucket_hash (migration fallback)
-        $sql = 'SELECT id, content, embedding, memory_type, source_file FROM memory_vectors WHERE (';
-        
-        $bucketConditions = [];
-        foreach ($similarBuckets as $i => $pattern) {
-            $bucketConditions[] = "bucket_hash LIKE :bucket{$i}";
-        }
-        // Also include entries without bucket_hash (during migration)
-        $bucketConditions[] = "bucket_hash IS NULL";
-        
-        $sql .= implode(' OR ', $bucketConditions);
-        $sql .= ')';
-        
-        if ($memoryType) {
-            $sql .= ' AND memory_type = :memory_type';
-        }
-        
-        $sql .= ' LIMIT 200'; // Hard limit to avoid too many comparisons
+        // For small datasets (< 3000 vectors), brute-force is fast enough
+        // and avoids recall loss from bucket hash pre-filtering.
+        $totalVectors = $this->getTotalVectorCount($memoryType);
+        $useBucketFilter = $totalVectors > 3000;
 
-        $stmt = $this->db->prepare($sql);
-        
-        // Bind bucket patterns
-        foreach ($similarBuckets as $i => $pattern) {
-            $stmt->bindValue(":bucket{$i}", $pattern, SQLITE3_TEXT);
-        }
-        
-        if ($memoryType) {
-            $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
+        if ($useBucketFilter) {
+            $queryBucket = $this->calculateBucketHash($queryEmbedding);
+            $similarBuckets = $this->getSimilarBucketPatterns($queryBucket);
+
+            $sql = 'SELECT id, content, embedding, memory_type, source_file FROM memory_vectors WHERE (';
+            $bucketConditions = [];
+            foreach ($similarBuckets as $i => $pattern) {
+                $bucketConditions[] = "bucket_hash LIKE :bucket{$i}";
+            }
+            $bucketConditions[] = "bucket_hash IS NULL";
+            $sql .= implode(' OR ', $bucketConditions) . ')';
+            if ($memoryType) {
+                $sql .= ' AND memory_type = :memory_type';
+            }
+            $sql .= ' LIMIT 500';
+
+            $stmt = $this->db->prepare($sql);
+            foreach ($similarBuckets as $i => $pattern) {
+                $stmt->bindValue(":bucket{$i}", $pattern, SQLITE3_TEXT);
+            }
+            if ($memoryType) {
+                $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
+            }
+        } else {
+            $sql = 'SELECT id, content, embedding, memory_type, source_file FROM memory_vectors';
+            if ($memoryType) {
+                $sql .= ' WHERE memory_type = :memory_type';
+            }
+
+            $stmt = $this->db->prepare($sql);
+            if ($memoryType) {
+                $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
+            }
         }
 
         $result = $stmt->execute();
         $similarities = [];
-        $candidatesChecked = 0;
 
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
             $vector = json_decode($row['embedding'], true);
             if (!$vector) continue;
 
             $similarity = $this->cosineSimilarity($queryEmbedding, $vector);
-            $candidatesChecked++;
             
             if ($similarity >= $minSimilarity) {
                 $similarities[] = [
@@ -410,6 +413,22 @@ class VectorStore {
         usort($similarities, fn($a, $b) => $b['similarity'] <=> $a['similarity']);
 
         return array_slice($similarities, 0, $limit);
+    }
+
+    private function getTotalVectorCount(string $memoryType = ''): int {
+        try {
+            if ($memoryType) {
+                $stmt = $this->db->prepare('SELECT COUNT(*) FROM memory_vectors WHERE memory_type = :type');
+                $stmt->bindValue(':type', $memoryType, SQLITE3_TEXT);
+                $result = $stmt->execute();
+            } else {
+                $result = $this->db->query('SELECT COUNT(*) FROM memory_vectors');
+            }
+            $row = $result->fetchArray(SQLITE3_NUM);
+            return (int) ($row[0] ?? 0);
+        } catch (\Exception $e) {
+            return 0;
+        }
     }
     
     /**
@@ -519,6 +538,47 @@ class VectorStore {
             return true;
         } catch (\Exception $e) {
             error_log('VectorStore error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Clear vectors for a specific file only (incremental update).
+     */
+    public function clearFileVectors(string $sourceFile, string $memoryType): bool {
+        if (!$this->db) {
+            return false;
+        }
+
+        try {
+            $stmt = $this->db->prepare(
+                'DELETE FROM memory_vectors WHERE source_file = :source_file AND memory_type = :memory_type'
+            );
+            $stmt->bindValue(':source_file', $sourceFile, SQLITE3_TEXT);
+            $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
+            $stmt->execute();
+            return true;
+        } catch (\Exception $e) {
+            error_log('VectorStore clearFileVectors error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Remove a file from the loaded_files tracking table.
+     */
+    public function unmarkFileLoaded(string $filePath): bool {
+        if (!$this->db) {
+            return false;
+        }
+
+        try {
+            $stmt = $this->db->prepare('DELETE FROM loaded_files WHERE file_path = :file_path');
+            $stmt->bindValue(':file_path', $filePath, SQLITE3_TEXT);
+            $stmt->execute();
+            return true;
+        } catch (\Exception $e) {
+            error_log('VectorStore unmarkFileLoaded error: ' . $e->getMessage());
             return false;
         }
     }

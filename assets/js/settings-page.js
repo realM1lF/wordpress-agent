@@ -53,18 +53,15 @@
             });
         });
 
-        // Reload identity files button
+        // Sync changed memory files button
         $('#levi-reload-memories').on('click', function() {
             const $btn = $(this);
+            const $fetchBtn = $('#levi-fetch-docs');
             const $result = $('#levi-reload-result');
             
-            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.reloadConfirm) ? leviSettings.i18n.reloadConfirm : 'Reload identity files?';
-            if (!confirm(confirmMsg)) {
-                return;
-            }
-            
             $btn.prop('disabled', true);
-            $result.text((leviSettings.i18n && leviSettings.i18n.reloading) ? leviSettings.i18n.reloading : 'Reloading…');
+            $fetchBtn.prop('disabled', true);
+            $result.text((leviSettings.i18n && leviSettings.i18n.reloading) ? leviSettings.i18n.reloading : 'Syncing…');
             
             $.ajax({
                 url: leviSettings.ajaxUrl,
@@ -73,25 +70,69 @@
                     action: 'levi_reload_memories',
                     nonce: leviSettings.nonce,
                 },
+                timeout: 300000,
                 success: function(response) {
                     if (response.success) {
-                        const identityCount = Object.keys(response.data.results.identity.loaded || {}).length;
-                        var reloaded = (leviSettings.i18n && leviSettings.i18n.reloaded) ? leviSettings.i18n.reloaded : 'Reloaded:';
-                        var idLabel = (leviSettings.i18n && leviSettings.i18n.identity) ? leviSettings.i18n.identity : 'identity';
-                        var filesLabel = (leviSettings.i18n && leviSettings.i18n.files) ? leviSettings.i18n.files : 'files';
-                        $result.html('<span class="levi-success">✓ ' + reloaded + ' ' + identityCount + ' ' + idLabel + ' ' + filesLabel + '</span>');
-                        setTimeout(function() {
-                            location.reload();
-                        }, 1500);
+                        $result.html('<span class="levi-success">✓ ' + response.data.message + '</span>');
+                        setTimeout(function() { location.reload(); }, 2000);
                     } else {
-                        $result.html('<span class="levi-error">✗ ' + (response.data || (leviSettings.i18n && leviSettings.i18n.failed ? leviSettings.i18n.failed : 'Failed')) + '</span>');
+                        $result.html('<span class="levi-error">✗ ' + (response.data || 'Failed') + '</span>');
                     }
                 },
                 error: function() {
-                    $result.html('<span class="levi-error">✗ ' + (leviSettings.i18n && leviSettings.i18n.error ? leviSettings.i18n.error : 'Error') + '</span>');
+                    $result.html('<span class="levi-error">✗ Error</span>');
                 },
                 complete: function() {
                     $btn.prop('disabled', false);
+                    $fetchBtn.prop('disabled', false);
+                }
+            });
+        });
+
+        // Fetch docs & sync all button
+        $('#levi-fetch-docs').on('click', function() {
+            const $btn = $(this);
+            const $syncBtn = $('#levi-reload-memories');
+            const $result = $('#levi-reload-result');
+            
+            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.fetchDocsConfirm)
+                ? leviSettings.i18n.fetchDocsConfirm
+                : 'Fetch latest docs and sync? This may take several minutes.';
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+            
+            $btn.prop('disabled', true);
+            $syncBtn.prop('disabled', true);
+            $result.text((leviSettings.i18n && leviSettings.i18n.fetchingDocs) ? leviSettings.i18n.fetchingDocs : 'Fetching docs…');
+            
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'levi_fetch_and_sync_docs',
+                    nonce: leviSettings.nonce,
+                },
+                timeout: 600000,
+                success: function(response) {
+                    if (response.success) {
+                        var status = response.data.fetch.status || 'done';
+                        $result.html('<span class="levi-success">✓ Docs fetched (' + status + ') & synced</span>');
+                        setTimeout(function() { location.reload(); }, 2000);
+                    } else {
+                        $result.html('<span class="levi-error">✗ ' + (response.data || 'Failed') + '</span>');
+                    }
+                },
+                error: function(xhr) {
+                    if (xhr.statusText === 'timeout') {
+                        $result.html('<span class="levi-error">✗ Timeout – check cron log</span>');
+                    } else {
+                        $result.html('<span class="levi-error">✗ Error</span>');
+                    }
+                },
+                complete: function() {
+                    $btn.prop('disabled', false);
+                    $syncBtn.prop('disabled', false);
                 }
             });
         });

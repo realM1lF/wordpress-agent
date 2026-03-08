@@ -6,24 +6,75 @@ use WP_Error;
 
 class MemoryLoader {
     private VectorStore $vectorStore;
-    private int $chunkSize = 500; // Words per chunk
-    private int $chunkOverlap = 50; // Overlap between chunks
+    private int $chunkSize = 500;
+    private int $chunkOverlap = 50;
 
     public function __construct() {
         $this->vectorStore = new VectorStore();
     }
 
     /**
-     * Load all memory files (identity + memories)
+     * Load all memory files (identity + memories).
+     * Legacy method - prefer reloadChangedFiles() for incremental updates.
      */
     public function loadAllMemories(): array {
-        $results = [
+        return [
             'identity' => $this->loadIdentityFiles(),
             'reference' => $this->loadReferenceMemories(),
             'errors' => [],
         ];
+    }
 
-        return $results;
+    /**
+     * Incremental reload: only re-embed files that have actually changed.
+     * Safe against timeouts - already-processed files survive a crash.
+     */
+    public function reloadChangedFiles(): array {
+        $changes = $this->checkForChanges();
+        $loaded = [];
+        $errors = [];
+
+        foreach ($changes['identity'] as $filename) {
+            $path = LEVI_AGENT_PLUGIN_DIR . 'identity/' . $filename;
+            if (!file_exists($path)) {
+                $errors[] = "Identity file not found: $filename";
+                continue;
+            }
+            $this->vectorStore->clearFileVectors($filename, 'identity');
+            $this->vectorStore->unmarkFileLoaded($path);
+
+            $result = $this->processFile($path, 'identity');
+            if (is_wp_error($result)) {
+                $errors[] = $filename . ': ' . $result->get_error_message();
+            } else {
+                $loaded[$filename] = $result;
+            }
+        }
+
+        $referenceFiles = $this->getResolvedReferenceFiles();
+        foreach ($changes['reference'] as $filename) {
+            $path = $referenceFiles[$filename] ?? null;
+            if (!$path || !file_exists($path)) {
+                $errors[] = "Reference file not found: $filename";
+                continue;
+            }
+            $this->vectorStore->clearFileVectors($filename, 'reference');
+            $this->vectorStore->unmarkFileLoaded($path);
+
+            $result = $this->processFile($path, 'reference');
+            if (is_wp_error($result)) {
+                $errors[] = $filename . ': ' . $result->get_error_message();
+            } else {
+                $loaded[$filename] = $result;
+            }
+        }
+
+        return [
+            'changed_identity' => $changes['identity'],
+            'changed_reference' => $changes['reference'],
+            'loaded' => $loaded,
+            'errors' => $errors,
+        ];
     }
 
     /**
@@ -36,9 +87,6 @@ class MemoryLoader {
         $loaded = [];
         $errors = [];
 
-        // Clear existing identity vectors
-        $this->vectorStore->clearMemory('identity');
-
         foreach ($files as $file) {
             $path = $identityDir . $file;
             
@@ -46,6 +94,9 @@ class MemoryLoader {
                 $errors[] = "File not found: $file";
                 continue;
             }
+
+            $this->vectorStore->clearFileVectors($file, 'identity');
+            $this->vectorStore->unmarkFileLoaded($path);
 
             $result = $this->processFile($path, 'identity');
             
@@ -63,34 +114,23 @@ class MemoryLoader {
     }
 
     /**
-     * Load reference memories from memories/ folder
+     * Load reference memories from memories/ folders (plugin dir + uploads dir).
      */
     public function loadReferenceMemories(): array {
-        $memoriesDir = LEVI_AGENT_PLUGIN_DIR . 'memories/';
+        $files = $this->getResolvedReferenceFiles();
         
-        if (!is_dir($memoriesDir)) {
-            return ['loaded' => [], 'errors' => ['Memories directory does not exist']];
+        if (empty($files)) {
+            return ['loaded' => [], 'errors' => ['No reference memory directories found']];
         }
 
-        $files = array_merge(
-            glob($memoriesDir . '*.md') ?: [],
-            glob($memoriesDir . '*.txt') ?: []
-        );
         $loaded = [];
         $errors = [];
 
-        // Clear existing reference vectors
-        $this->vectorStore->clearMemory('reference');
+        foreach ($files as $filename => $filePath) {
+            $this->vectorStore->clearFileVectors($filename, 'reference');
+            $this->vectorStore->unmarkFileLoaded($filePath);
 
-        foreach ($files as $file) {
-            $filename = basename($file);
-            
-            // Skip README
-            if ($filename === 'README.md') {
-                continue;
-            }
-
-            $result = $this->processFile($file, 'reference');
+            $result = $this->processFile($filePath, 'reference');
             
             if (is_wp_error($result)) {
                 $errors[] = $filename . ': ' . $result->get_error_message();
@@ -103,6 +143,55 @@ class MemoryLoader {
             'loaded' => $loaded,
             'errors' => $errors,
         ];
+    }
+
+    /**
+     * Get all reference files from both plugin dir and uploads dir.
+     * Uploads dir takes precedence (newer docs fetched by DocsFetcher).
+     * @return array<string, string> filename => absolute path
+     */
+    private function getResolvedReferenceFiles(): array {
+        $files = [];
+
+        foreach ($this->getReferenceDirectories() as $dir) {
+            if (!is_dir($dir)) {
+                continue;
+            }
+            $found = array_merge(
+                glob($dir . '*.md') ?: [],
+                glob($dir . '*.txt') ?: []
+            );
+            foreach ($found as $path) {
+                $name = basename($path);
+                if ($name === 'README.md') {
+                    continue;
+                }
+                // Later dirs (uploads) override earlier dirs (plugin)
+                $files[$name] = $path;
+            }
+        }
+
+        return $files;
+    }
+
+    /**
+     * Both the bundled plugin memories and the fetched docs in uploads.
+     * @return string[]
+     */
+    private function getReferenceDirectories(): array {
+        $dirs = [];
+
+        $pluginDir = LEVI_AGENT_PLUGIN_DIR . 'memories/';
+        if (is_dir($pluginDir)) {
+            $dirs[] = $pluginDir;
+        }
+
+        $uploadsDir = DocsFetcher::getDocsDirectory() . '/';
+        if (is_dir($uploadsDir) && $uploadsDir !== $pluginDir) {
+            $dirs[] = $uploadsDir;
+        }
+
+        return $dirs;
     }
 
     /**
@@ -257,7 +346,8 @@ class MemoryLoader {
     }
 
     /**
-     * Check if any files have changed and need reloading
+     * Check if any files have changed and need reloading.
+     * Checks identity files and reference files from both plugin and uploads dirs.
      */
     public function checkForChanges(): array {
         $changes = [
@@ -265,11 +355,8 @@ class MemoryLoader {
             'reference' => [],
         ];
 
-        // Check identity files
         $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
-        $files = ['soul.md', 'rules.md', 'knowledge.md'];
-        
-        foreach ($files as $file) {
+        foreach (['soul.md', 'rules.md', 'knowledge.md'] as $file) {
             $path = $identityDir . $file;
             if (file_exists($path)) {
                 $hash = $this->vectorStore->getFileHash($path);
@@ -279,22 +366,11 @@ class MemoryLoader {
             }
         }
 
-        // Check reference files
-        $memoriesDir = LEVI_AGENT_PLUGIN_DIR . 'memories/';
-        if (is_dir($memoriesDir)) {
-            $files = array_merge(
-                glob($memoriesDir . '*.md') ?: [],
-                glob($memoriesDir . '*.txt') ?: []
-            );
-            foreach ($files as $file) {
-                if (basename($file) === 'README.md') {
-                    continue;
-                }
-                
-                $hash = $this->vectorStore->getFileHash($file);
-                if (!$this->vectorStore->isFileLoaded($file, $hash)) {
-                    $changes['reference'][] = basename($file);
-                }
+        $referenceFiles = $this->getResolvedReferenceFiles();
+        foreach ($referenceFiles as $filename => $path) {
+            $hash = $this->vectorStore->getFileHash($path);
+            if (!$this->vectorStore->isFileLoaded($path, $hash)) {
+                $changes['reference'][] = $filename;
             }
         }
 
@@ -334,24 +410,10 @@ class MemoryLoader {
     }
 
     /**
-     * Get list of reference file names from memories/ folder
+     * Get list of reference file names from all memories directories.
      */
     private function getReferenceFileNames(): array {
-        $memoriesDir = LEVI_AGENT_PLUGIN_DIR . 'memories/';
-        if (!is_dir($memoriesDir)) {
-            return [];
-        }
-        $files = array_merge(
-            glob($memoriesDir . '*.md') ?: [],
-            glob($memoriesDir . '*.txt') ?: []
-        );
-        $names = [];
-        foreach ($files as $file) {
-            $name = basename($file);
-            if ($name !== 'README.md') {
-                $names[] = $name;
-            }
-        }
+        $names = array_keys($this->getResolvedReferenceFiles());
         sort($names);
         return $names;
     }

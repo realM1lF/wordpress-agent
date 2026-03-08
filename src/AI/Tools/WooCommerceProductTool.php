@@ -36,6 +36,10 @@ class WooCommerceProductTool implements ToolInterface {
                 'type' => 'integer',
                 'description' => 'Max results for search_products (default 20, max 100)',
             ],
+            'status' => [
+                'type' => 'string',
+                'description' => 'Product status filter for search_products. Use "any" (default) to include publish, draft, pending, private. Or pass one status / comma-separated statuses, e.g. "publish,draft".',
+            ],
         ];
     }
 
@@ -130,10 +134,11 @@ class WooCommerceProductTool implements ToolInterface {
         $search = (string) ($params['search'] ?? '');
         $category = (string) ($params['category'] ?? '');
         $limit = min(100, max(1, (int) ($params['limit'] ?? 20)));
+        $statuses = $this->parseSearchStatuses((string) ($params['status'] ?? 'any'));
 
         $args = [
             'limit' => $limit,
-            'status' => 'publish',
+            'status' => $statuses,
             'orderby' => 'title',
             'order' => 'ASC',
         ];
@@ -157,8 +162,30 @@ class WooCommerceProductTool implements ToolInterface {
             'total' => count($results),
             'search' => $search ?: null,
             'category' => $category ?: null,
+            'status_filter' => $statuses,
             'products' => $results,
         ];
+    }
+
+    private function parseSearchStatuses(string $rawStatus): array {
+        $allowed = ['publish', 'draft', 'pending', 'private', 'future'];
+        $raw = trim(strtolower($rawStatus));
+
+        if ($raw === '' || $raw === 'any') {
+            return ['publish', 'draft', 'pending', 'private'];
+        }
+
+        $parts = array_filter(array_map(
+            static fn($v) => trim(strtolower((string) $v)),
+            explode(',', $raw)
+        ));
+
+        $statuses = array_values(array_intersect($parts, $allowed));
+        if (empty($statuses)) {
+            return ['publish', 'draft', 'pending', 'private'];
+        }
+
+        return array_values(array_unique($statuses));
     }
 
     private function getCategories(): array {

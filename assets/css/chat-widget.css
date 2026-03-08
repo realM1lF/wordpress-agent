@@ -574,6 +574,42 @@
     box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.25);
 }
 
+.levi-chat-input:disabled {
+    background: #0d1525;
+    color: #475569;
+    border-color: #1e293b;
+    cursor: not-allowed;
+    opacity: 1;
+    -webkit-text-fill-color: #475569;
+}
+
+.levi-chat-input:disabled::placeholder {
+    color: #334155;
+}
+
+.levi-chat-send:disabled {
+    background: #1e293b;
+    color: #334155;
+    cursor: not-allowed;
+    opacity: 1;
+}
+
+.levi-chat-upload-btn:disabled {
+    background: #0d1525;
+    color: #334155;
+    border-color: #1e293b;
+    cursor: not-allowed;
+    opacity: 1;
+}
+
+.levi-chat-web-search-btn:disabled {
+    background: #0d1525;
+    color: #334155;
+    border-color: #1e293b;
+    cursor: not-allowed;
+    opacity: 1;
+}
+
 .levi-chat-send {
     margin: auto 0;
     width: 44px;

@@ -3,6 +3,18 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.6.5] – 2026-03-08
+- QueryExpander: Deutsche Nutzeranfragen werden automatisch in englische Such-Queries übersetzt für bessere Treffer in der Referenz-Doku (Vector-DB)
+- Multi-Query-Retrieval: Vektor-Suche läuft parallel über Original- und expandierte Queries, Ergebnisse werden nach Similarity gemergt
+- QueryClassifier: Fehlende deutsche Action-Verben (baue, programmier, implementier) ergänzt, ACTION-Queries erhalten jetzt Referenz-Dokumente
+- http_fetch ins Standard-Profil verschoben (vorher nur im Entwickler-Profil)
+- Automatische CSS-Verifikation: Nach CSS/JS-Writes wird die Shop-Seite automatisch per http_fetch geholt und dem LLM als DOM-Kontext injiziert
+- Versionskompatibilität: WordPress- und WooCommerce-Version des Kunden werden im System-Prompt angezeigt, neue Regel zur Versionsprüfung bei Hooks/Filtern
+- Frontend-Verifikationsregel: Levi muss nach CSS-Änderungen die echte HTML-Struktur prüfen statt zu raten
+- DocsFetcher (PHP): Ersetzt die alten Python-Scripts, holt Referenz-Docs direkt im Plugin und speichert sie in wp-content/uploads/
+- Memory-System: Inkrementelle Updates (nur geänderte Dateien), täglicher Docs-Fetch-Cron um 04:00 Uhr
+- VectorStore: Bucket-Hash-Optimierung nur noch bei >3000 Vektoren, Brute-Force bei kleineren Datensätzen für bessere Trefferquote
+
 ## [0.6.4] – 2026-03-08
 - Plugin-Erstellung funktioniert jetzt bei allen Aufgabentypen (WooCommerce, Elementor, Theme, etc.)
 - Fake-Confirmation-Schutz: Backend erkennt wenn Levi eine Bestätigung nur als Text schreibt und erzwingt den echten Tool-Call

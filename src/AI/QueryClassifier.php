@@ -87,7 +87,7 @@ class QueryClassifier {
             self::TYPE_SIMPLE   => ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => false],
             self::TYPE_KNOWLEDGE => ['identity' => true, 'reference' => true,  'snapshot' => true,  'full_tools' => false],
             self::TYPE_DATA     => ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => true],
-            self::TYPE_ACTION   => ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => true],
+            self::TYPE_ACTION   => ['identity' => true, 'reference' => true,  'snapshot' => false, 'full_tools' => true],
             self::TYPE_COMPLEX  => ['identity' => true, 'reference' => true,  'snapshot' => true,  'full_tools' => true],
             default             => ['identity' => true, 'reference' => true,  'snapshot' => true,  'full_tools' => true],
         };
@@ -129,13 +129,13 @@ class QueryClassifier {
         $actionPatterns = [
             '/\b(erstell|anleg|schreib|änder|bearbeit|update|install|aktivier|deaktivier|lösch|entfern|switch|veröffentl|publish|setz|füg|mach|mache)\b/u',
             '/\b(erstelle|ändere|lösche|installiere|aktiviere|deaktiviere|publiziere)\b/u',
-            '/\b(create|update|delete|install|activate|deactivate|publish|change|modify|add|remove)\b/u',
+            '/\b(bau|baue|bauen|programmier|implementier|entwickl|code|coden)\b/u',
+            '/\b(create|update|delete|install|activate|deactivate|publish|change|modify|add|remove|build|implement|develop)\b/u',
         ];
         
         foreach ($actionPatterns as $pattern) {
             if (preg_match($pattern, $lower)) {
-                // Check if it's about WordPress objects
-                if (preg_match('/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung|page|menu|widget|shortcode)\b/u', $lower)) {
+                if (preg_match('/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung|page|menu|widget|shortcode|produkt|product|block|formular|form|newsletter|badge|modul|feature|funktion)\b/u', $lower)) {
                     return true;
                 }
             }

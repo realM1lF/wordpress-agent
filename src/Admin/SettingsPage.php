@@ -70,12 +70,9 @@ class SettingsPage {
                 'notConnected' => $this->tr('Not Connected', 'Nicht verbunden'),
                 'connectionError' => $this->tr('Connection error', 'Verbindungsfehler'),
                 'failed' => $this->tr('Failed', 'Fehlgeschlagen'),
-                'reloadConfirm' => $this->tr('Reload all memories? This may take a moment.', 'Alle Memories neu laden? Das kann einen Moment dauern.'),
-                'reloading' => $this->tr('Reloading…', 'Lade neu...'),
-                'reloaded' => $this->tr('Reloaded:', 'Neu geladen:'),
-                'identity' => $this->tr('identity', 'Identität'),
-                'reference' => $this->tr('reference', 'Referenz'),
-                'files' => $this->tr('files', 'Dateien'),
+                'reloading' => $this->tr('Syncing…', 'Synchronisiere...'),
+                'fetchDocsConfirm' => $this->tr('Fetch latest docs from WooCommerce, WordPress & Elementor and sync? This may take several minutes.', 'Aktuelle Docs von WooCommerce, WordPress & Elementor abrufen und synchronisieren? Das kann einige Minuten dauern.'),
+                'fetchingDocs' => $this->tr('Fetching docs & syncing…', 'Docs werden abgerufen & synchronisiert...'),
                 'error' => $this->tr('Error', 'Fehler'),
                 'done' => $this->tr('Done', 'Fertig'),
                 'repairing' => $this->tr('Repairing…', 'Repariere...'),
@@ -213,6 +210,10 @@ class SettingsPage {
             $sanitized['web_search_enabled'] = !empty($input['web_search_enabled']) ? 1 : 0;
         }
 
+        if (array_key_exists('summary_model', $input)) {
+            $sanitized['summary_model'] = sanitize_text_field((string) ($input['summary_model'] ?? ''));
+        }
+
         // --- Numeric settings (safety / advanced tabs) ---
         if (array_key_exists('rate_limit', $input)) {
             $sanitized['rate_limit'] = max(1, min(1000, absint($input['rate_limit'])));
@@ -273,6 +274,18 @@ class SettingsPage {
             $sanitized['tool_profile'] = in_array($profileCandidate, \Levi\Agent\AI\Tools\Registry::VALID_PROFILES, true)
                 ? $profileCandidate
                 : 'standard';
+        }
+        if (array_key_exists('allowed_plugin_slugs_manual', $input)) {
+            $raw = sanitize_textarea_field((string) $input['allowed_plugin_slugs_manual']);
+            $parts = preg_split('/[\s,;]+/u', $raw) ?: [];
+            $clean = [];
+            foreach ($parts as $part) {
+                $slug = sanitize_title((string) $part);
+                if ($slug !== '') {
+                    $clean[] = $slug;
+                }
+            }
+            $sanitized['allowed_plugin_slugs_manual'] = implode("\n", array_values(array_unique($clean)));
         }
 
         // --- Memory settings (memory tab) ---
@@ -832,44 +845,65 @@ class SettingsPage {
 
                 <!-- Memory Actions -->
                 <div class="levi-form-card">
-                    <h3><?php echo esc_html($this->tr('Identity Files', 'Identity-Dateien')); ?></h3>
+                    <h3><?php echo esc_html($this->tr('Memory Files', 'Memory-Dateien')); ?></h3>
                     
                     <?php 
                     $loader = new \Levi\Agent\Memory\MemoryLoader();
                     $changes = $loader->checkForChanges();
                     $hasIdentityChanges = !empty($changes['identity']);
                     $hasReferenceChanges = !empty($changes['reference']);
+                    $syncMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMemorySyncMeta();
+                    $fetchMeta = \Levi\Agent\Memory\DocsFetcher::getLastFetchMeta();
                     ?>
 
-                    <?php if ($hasIdentityChanges): ?>
+                    <?php if ($hasIdentityChanges || $hasReferenceChanges): ?>
                         <div class="levi-notice levi-notice-warning">
-                            <p><strong><?php echo esc_html($this->tr('Identity files have changed!', 'Identity-Dateien haben sich geaendert!')); ?></strong></p>
-                            <p><?php echo esc_html(implode(', ', $changes['identity'])); ?></p>
+                            <p><strong><?php echo esc_html($this->tr('Files have changed and need syncing:', 'Dateien haben sich geaendert und muessen synchronisiert werden:')); ?></strong></p>
+                            <?php if ($hasIdentityChanges): ?>
+                                <p><?php echo esc_html($this->tr('Identity:', 'Identity:')); ?> <?php echo esc_html(implode(', ', $changes['identity'])); ?></p>
+                            <?php endif; ?>
+                            <?php if ($hasReferenceChanges): ?>
+                                <p><?php echo esc_html($this->tr('Reference:', 'Referenz:')); ?> <?php echo esc_html(implode(', ', $changes['reference'])); ?></p>
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
 
-                    <?php if ($hasReferenceChanges): ?>
-                        <div class="levi-notice levi-notice-info">
-                            <p><strong><?php echo esc_html($this->tr('Reference files syncing in background', 'Reference-Dateien werden im Hintergrund synchronisiert')); ?></strong></p>
-                            <p><?php echo esc_html($this->tr('Files:', 'Dateien:')); ?> <?php echo esc_html(implode(', ', $changes['reference'])); ?></p>
-                            <p class="levi-hint"><?php echo esc_html($this->tr('Large documentation files are synced automatically via WordPress cron.', 'Grosse Dokumentationsdateien werden automatisch via WordPress-Cron synchronisiert.')); ?></p>
+                    <?php if (!empty($syncMeta)): ?>
+                        <div class="levi-notice levi-notice-<?php echo ($syncMeta['status'] ?? '') === 'synced' ? 'success' : (($syncMeta['status'] ?? '') === 'unchanged' ? 'info' : 'warning'); ?>" style="margin-bottom: 1rem;">
+                            <p><strong><?php echo esc_html($this->tr('Last sync:', 'Letzter Sync:')); ?></strong> <?php echo esc_html($syncMeta['synced_at'] ?? '—'); ?> — <?php echo esc_html($syncMeta['status'] ?? 'unknown'); ?></p>
+                            <?php if (!empty($syncMeta['errors'])): ?>
+                                <p class="levi-hint"><?php echo esc_html(implode(', ', $syncMeta['errors'])); ?></p>
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
 
-                    <div class="levi-form-actions-inline">
+                    <div class="levi-form-actions-inline" style="gap: 0.5rem; flex-wrap: wrap;">
                         <button type="button" id="levi-reload-memories" class="levi-btn levi-btn-secondary">
                             <span class="dashicons dashicons-update"></span>
-                            <?php echo esc_html($this->tr('Reload Identity Files', 'Identity-Dateien neu laden')); ?>
+                            <?php echo esc_html($this->tr('Sync Changed Files', 'Geaenderte Dateien syncen')); ?>
+                        </button>
+                        <button type="button" id="levi-fetch-docs" class="levi-btn levi-btn-secondary">
+                            <span class="dashicons dashicons-download"></span>
+                            <?php echo esc_html($this->tr('Fetch Docs & Sync All', 'Docs abrufen & alles syncen')); ?>
                         </button>
                         <span id="levi-reload-result"></span>
                     </div>
 
                     <p class="levi-form-help">
-                        <?php echo esc_html($this->tr('Reloads identity files (soul.md, rules.md, knowledge.md) into the vector database. These define Levi\'s personality and behavior.', 'Laedt Identity-Dateien (soul.md, rules.md, knowledge.md) in die Vector-Datenbank. Diese definieren Levis Persoenlichkeit und Verhalten.')); ?>
+                        <?php echo esc_html($this->tr(
+                            'Sync: Re-embeds changed identity & reference files. Fetch: Downloads latest docs from WooCommerce, WordPress & Elementor, then syncs.',
+                            'Sync: Bettet geaenderte Identity- & Referenz-Dateien ein. Fetch: Laedt aktuelle Docs von WooCommerce, WordPress & Elementor herunter und synchronisiert.'
+                        )); ?>
                     </p>
-                    <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr('Hint: Large reference files from the memories/ folder are synced automatically in the background.', 'Hinweis: Grosse Reference-Dateien aus dem memories/-Ordner werden automatisch im Hintergrund synchronisiert.')); ?>
-                    </p>
+                    <?php if (!empty($fetchMeta['fetched_at'])): ?>
+                        <p class="levi-form-help levi-hint">
+                            <?php echo esc_html($this->tr('Last docs fetch:', 'Letzter Docs-Abruf:')); ?> <?php echo esc_html($fetchMeta['fetched_at']); ?> (<?php echo esc_html($fetchMeta['status'] ?? 'unknown'); ?>)
+                        </p>
+                    <?php else: ?>
+                        <p class="levi-form-help levi-hint">
+                            <?php echo esc_html($this->tr('Docs are fetched automatically daily at 04:00. Click "Fetch Docs" to trigger manually.', 'Docs werden taeglich um 04:00 Uhr automatisch abgerufen. Klicke "Docs abrufen" fuer manuellen Abruf.')); ?>
+                        </p>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -918,6 +952,36 @@ class SettingsPage {
                         'Hinweis: "Standard" wird fuer die meisten Nutzer empfohlen. Wechsle nur zu "Voll", wenn du PHP-Code-Ausfuehrung oder HTTP-Fetch brauchst.'
                     )); ?>
                 </p>
+            </div>
+
+            <!-- Plugin Ownership Allowlist -->
+            <div class="levi-form-card" style="margin-bottom: 1.5rem;">
+                <h3><?php echo esc_html($this->tr('Plugin Ownership Guard', 'Plugin-Ownership-Schutz')); ?></h3>
+                <p class="levi-form-description">
+                    <?php echo esc_html($this->tr(
+                        'Levi may only edit plugin files for plugins it created itself or that you explicitly allow here.',
+                        'Levi darf Plugin-Dateien nur bei Plugins bearbeiten, die es selbst erstellt hat oder die du hier explizit freigibst.'
+                    )); ?>
+                </p>
+                <div class="levi-form-group">
+                    <label class="levi-form-label"><?php echo esc_html($this->tr('Manual allowed plugin slugs', 'Manuell erlaubte Plugin-Slugs')); ?></label>
+                    <textarea name="<?php echo esc_attr($this->optionName); ?>[allowed_plugin_slugs_manual]"
+                              rows="3" class="levi-form-input" style="font-family:monospace; font-size:13px;"
+                              placeholder="figur-musik-rabatt&#10;mein-eigenes-plugin"
+                    ><?php echo esc_textarea($settings['allowed_plugin_slugs_manual'] ?? ''); ?></textarea>
+                    <p class="levi-form-help">
+                        <?php echo esc_html($this->tr(
+                            'One slug per line. Use this only for your own trusted plugins that were not created by Levi in this installation.',
+                            'Ein Slug pro Zeile. Nur fuer eigene vertrauenswuerdige Plugins nutzen, die Levi in dieser Installation nicht selbst erstellt hat.'
+                        )); ?>
+                    </p>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr(
+                            'Third-party plugins remain protected. Example: "woocommerce" should usually stay blocked.',
+                            'Drittanbieter-Plugins bleiben geschuetzt. Beispiel: "woocommerce" sollte normalerweise blockiert bleiben.'
+                        )); ?>
+                    </p>
+                </div>
             </div>
 
             <!-- Data Protection (full-width) -->
@@ -1140,7 +1204,19 @@ class SettingsPage {
                                value="<?php echo esc_attr($settings['max_context_tokens']); ?>"
                                min="1000" max="500000" step="1000" class="levi-form-input levi-input-small">
                         <p class="levi-form-help">
-                            <?php echo esc_html($this->tr('Maximum input tokens sent to the AI. Older messages are trimmed if exceeded. Prevents context overflow errors.', 'Maximale Input-Tokens an die KI. Aeltere Nachrichten werden gekuerzt wenn ueberschritten. Verhindert Context-Overflow-Fehler.')); ?>
+                            <?php echo esc_html($this->tr('Maximum input tokens sent to the AI. Older messages are trimmed if exceeded. Older messages are summarized automatically instead of being lost.', 'Maximale Input-Tokens an die KI. Aeltere Nachrichten werden gekuerzt wenn ueberschritten. Aeltere Nachrichten werden dabei automatisch zusammengefasst statt verworfen.')); ?>
+                        </p>
+                    </div>
+
+                    <div class="levi-form-group">
+                        <label class="levi-form-label"><?php echo esc_html($this->tr('Summary Model (optional)', 'Summary-Modell (optional)')); ?></label>
+                        <input type="text"
+                               name="<?php echo esc_attr($this->optionName); ?>[summary_model]"
+                               value="<?php echo esc_attr($settings['summary_model'] ?? ''); ?>"
+                               placeholder="google/gemini-2.0-flash-001"
+                               class="levi-form-input">
+                        <p class="levi-form-help">
+                            <?php echo esc_html($this->tr('Fast/cheap model used to summarize older messages when context limit is exceeded. Leave empty for default (Gemini 2.0 Flash).', 'Schnelles/guenstiges Modell fuer die Zusammenfassung aelterer Nachrichten bei Kontext-Ueberschreitung. Leer lassen fuer Standard (Gemini 2.0 Flash).')); ?>
                         </p>
                     </div>
                 </div>
@@ -1413,6 +1489,7 @@ class SettingsPage {
             'max_context_tokens' => 100000,
             'history_context_limit' => 50,
             'tool_profile' => 'standard',
+            'allowed_plugin_slugs_manual' => '',
             'require_confirmation_destructive' => 1,
             'memory_identity_k' => 5,
             'memory_reference_k' => 5,
@@ -1420,6 +1497,7 @@ class SettingsPage {
             'pii_redaction' => 1,
             'blocked_post_types' => '',
             'web_search_enabled' => 0,
+            'summary_model' => '',
         ];
     }
 

@@ -38249,9 +38249,9 @@ Additional tools to help you with vendor information are available in **[Setting
 
 ### Google Analytics
 
-Add your own Google Analytics tag to your vendor dashboard to get insights on the pages for your products and profile. [Follow these steps](https://wordpress.com/support/google-analytics/#step-1-sign-up-to-google-analytics) for information on how to sign up and get your Tag ID.
+Add your own Google Analytics tag to the Vendor Dashboard to get insights on the pages for your products, documentation and profile.
 
-![Screenshot of field to add Google Analytics in the vendor dashboard.](./_media/vendor-tools-analytics.png)
+![Screenshot of field to add Google Analytics in the vendor dashboard.](./_media/vendor-tools-google-analytics.png)
 
 ### Customer subscription details
 
@@ -38272,6 +38272,21 @@ Test your `changelog.txt` file to ensure that it meets [Woo Marketplace standard
 
 - We can add additional Vendor Admins to your profile at your request. Vendor Admins can assist with updating products and documentation as well as view sales reports, reviews, and feature requests.
 - To request another admin, [contact us via the link in your dashboard](https://woocommerce.com/wp-admin/admin.php?page=wcpv-vendor-support) or email [partners@woocommerce.com](mailto:partners@woocommerce.com) using your current partner account email. Please first ensure that they have [created a WooCommerce.com account](https://woocommerce.com/sso?new=1&next=%2Fwoocommerce%2F) with [two-step authentication enabled](https://wordpress.com/support/security/two-step-authentication/).
+
+</details>
+
+<details>
+<summary>Why does my QIT test result link show "Invalid URL" or say it has expired?</summary>
+
+- QIT test result links are temporary signed URLs. They expire after a short period of time. This is expected and not an error.
+- To get fresh results, re-run the test from your [Vendor Dashboard](https://woocommerce.com/wp-admin/). New links will be generated with the updated results.
+
+</details>
+
+<details>
+<summary>How do I resubmit after making changes?</summary>
+
+- When your submission is in **Changes required** status, you can upload a corrected zip file directly from your [Vendor Dashboard](https://woocommerce.com/wp-admin/) and resubmit.
 
 </details>
 
@@ -38327,6 +38342,8 @@ We strongly prefer that integration plugins are built and maintained by the comp
 - Merchants have a direct relationship with the company billing them
 - Technical support comes from the team with deepest product knowledge
 - Long-term maintenance aligns with the external system's roadmap
+
+In particular, payment extensions must be developed/maintained by Woo or the payment provider directly, and meet minimum quality standards.
 
 If you're a third-party developer building an integration for a system you don't operate, we encourage you to connect with that company directly or [contact our Marketplace team](#questions-about-your-billing-structure) to discuss your specific situation.
 
@@ -38947,13 +38964,6 @@ A review consists of the following steps:
 <summary>How long will it take for my product to be reviewed?</summary>
 
 Once the submission is in business review, you can expect a formal decision from a reviewer within 30 days. Throughout the review process, we may provide feedback and request changes before rejecting or approving a submission.
-
-</details>
-
-<details>
-<summary>Can I submit multiple products at once?</summary>
-
-Yes. If you are planning to submit multiple products, it's best to submit them all at once. This allows us to prioritize those that are most likely to be approved faster from those that might require additional work.
 
 </details>
 

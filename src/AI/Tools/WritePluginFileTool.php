@@ -9,7 +9,8 @@ class WritePluginFileTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Write or overwrite a file inside a plugin directory. Useful for creating plugin PHP, JS, CSS, and template files.';
+        return 'Write or overwrite a file inside a plugin directory. Useful for creating plugin PHP, JS, CSS, and template files. '
+            . 'For small changes (rename, bugfix, value tweak) prefer patch_plugin_file instead — it is much faster.';
     }
 
     public function getParameters(): array {

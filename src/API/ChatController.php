@@ -853,6 +853,11 @@ class ChatController extends WP_REST_Controller {
                 $messages[] = $nudge;
             }
 
+            $cssNudge = $this->injectPostCSSWriteNudge($toolCalls, $toolResults);
+            foreach ($cssNudge as $nudge) {
+                $messages[] = $nudge;
+            }
+
             if (connection_aborted()) {
                 error_log('Levi: client disconnected during tool loop');
                 return;
@@ -1412,6 +1417,11 @@ class ChatController extends WP_REST_Controller {
 
             $scaffoldNudge = $this->injectPostCreatePluginNudge($toolCalls, $toolResults, $planContext);
             foreach ($scaffoldNudge as $nudge) {
+                $messages[] = $nudge;
+            }
+
+            $cssNudge = $this->injectPostCSSWriteNudge($toolCalls, $toolResults);
+            foreach ($cssNudge as $nudge) {
                 $messages[] = $nudge;
             }
 
@@ -2112,6 +2122,95 @@ PROMPT;
     }
 
     /**
+     * After CSS/JS file writes, nudge the LLM to verify frontend output.
+     * If http_fetch is available: auto-fetch the shop page and inject the HTML.
+     * If not: inject a system message reminding Levi to ask the user to check.
+     */
+    private function injectPostCSSWriteNudge(array $toolCalls, array $toolResults): array {
+        $cssWritten = false;
+        foreach ($toolResults as $tr) {
+            if (!($tr['result']['success'] ?? false)) {
+                continue;
+            }
+            $tool = $tr['tool'] ?? '';
+            if (!in_array($tool, ['write_plugin_file', 'patch_plugin_file', 'write_theme_file'], true)) {
+                continue;
+            }
+            $path = $tr['result']['path'] ?? $tr['result']['relative_path'] ?? '';
+            if ($path === '') {
+                $args = [];
+                foreach ($toolCalls as $tc) {
+                    if (($tc['function']['name'] ?? '') === $tool) {
+                        $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                        break;
+                    }
+                }
+                $path = $args['relative_path'] ?? '';
+            }
+            if (preg_match('/\.(css|js|scss|less)$/i', $path)) {
+                $cssWritten = true;
+                break;
+            }
+        }
+
+        if (!$cssWritten) {
+            return [];
+        }
+
+        $httpFetchTool = $this->toolRegistry->get('http_fetch');
+
+        if ($httpFetchTool && $httpFetchTool->checkPermission()) {
+            $shopUrl = '/shop/';
+            if (function_exists('wc_get_page_id')) {
+                $shopPageId = wc_get_page_id('shop');
+                if ($shopPageId > 0) {
+                    $shopUrl = get_permalink($shopPageId) ?: '/shop/';
+                }
+            }
+
+            $fetchResult = $httpFetchTool->execute([
+                'url' => $shopUrl,
+                'extract' => 'body',
+            ]);
+
+            $fakeToolCallId = 'auto_css_verify_' . bin2hex(random_bytes(8));
+
+            return [
+                [
+                    'role' => 'assistant',
+                    'content' => null,
+                    'tool_calls' => [[
+                        'id' => $fakeToolCallId,
+                        'type' => 'function',
+                        'function' => [
+                            'name' => 'http_fetch',
+                            'arguments' => json_encode(['url' => $shopUrl, 'extract' => 'body']),
+                        ],
+                    ]],
+                ],
+                [
+                    'role' => 'tool',
+                    'tool_call_id' => $fakeToolCallId,
+                    'content' => $this->compactToolResultForModel($fetchResult)
+                        . "\n\n[SYSTEM] Du hast gerade eine CSS/JS-Datei geschrieben. Oben siehst du den HTML-Quelltext der Shop-Seite. "
+                        . "Pruefe die tatsaechliche DOM-Struktur: Stimmen deine CSS-Selektoren mit den echten Klassen ueberein? "
+                        . "Hat das Parent-Element von absolut positionierten Elementen ein position:relative? "
+                        . "Falls nicht, korrigiere dein CSS sofort.",
+                ],
+            ];
+        }
+
+        return [
+            [
+                'role' => 'system',
+                'content' => '[SYSTEM] Du hast eine CSS/JS-Datei geschrieben, aber http_fetch ist nicht verfuegbar. '
+                    . 'Weise den Kunden darauf hin, dass er die Aenderung im Frontend pruefen soll. '
+                    . 'Nenne ihm die relevante Seite (z.B. /shop/) und worauf er achten soll (Badge-Positionierung, Farben, etc.).',
+            ],
+        ];
+    }
+
+    /**
      * After create_plugin, inject a system nudge forcing the LLM to write actual code.
      * create_plugin only generates a scaffold stub — without this nudge the LLM often
      * claims "done" without ever calling write_plugin_file.
@@ -2166,15 +2265,24 @@ PROMPT;
         }
 
         $cache = new EmbeddingCache();
-        $queryEmbedding = $cache->get($query);
+        $expander = new \Levi\Agent\AI\QueryExpander();
+        $searchQueries = $expander->expand($query);
 
-        if ($queryEmbedding === null) {
-            $queryEmbedding = $vectorStore->generateEmbedding($query);
-            if (!is_wp_error($queryEmbedding) && !empty($queryEmbedding)) {
-                $cache->set($query, $queryEmbedding);
+        $embeddings = [];
+        foreach ($searchQueries as $q) {
+            $emb = $cache->get($q);
+            if ($emb === null) {
+                $emb = $vectorStore->generateEmbedding($q);
+                if (!is_wp_error($emb) && !empty($emb)) {
+                    $cache->set($q, $emb);
+                }
+            }
+            if (!is_wp_error($emb) && !empty($emb)) {
+                $embeddings[] = $emb;
             }
         }
-        if (is_wp_error($queryEmbedding) || empty($queryEmbedding)) {
+
+        if (empty($embeddings)) {
             return '';
         }
 
@@ -2185,27 +2293,27 @@ PROMPT;
             $similarity = (float) ($runtimeSettings['memory_min_similarity'] ?? 0.6);
 
             if (!empty($strategy['reference'])) {
-                $referenceResults = $vectorStore->searchSimilar($queryEmbedding, 'reference', $referenceK, $similarity);
-                if (!empty($referenceResults)) {
-                    $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $referenceResults));
+                $mergedResults = $this->multiQuerySearch(
+                    $vectorStore, $embeddings, 'reference', $referenceK, $similarity
+                );
+                if (!empty($mergedResults)) {
+                    $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $mergedResults));
                 }
             }
 
             if (!empty($strategy['snapshot'])) {
-                $stateSnapshotResults = $vectorStore->searchSimilar(
-                    $queryEmbedding,
-                    'state_snapshot',
-                    2,
-                    max(0.5, $similarity - 0.1)
+                $snapshotSimilarity = max(0.5, $similarity - 0.1);
+                $mergedSnapshots = $this->multiQuerySearch(
+                    $vectorStore, $embeddings, 'state_snapshot', 2, $snapshotSimilarity
                 );
-                if (!empty($stateSnapshotResults)) {
+                if (!empty($mergedSnapshots)) {
                     $snapshotTexts = array_map(function ($r) {
                         $content = (string) ($r['content'] ?? '');
                         if (mb_strlen($content) > 1500) {
                             $content = mb_substr($content, 0, 1500) . "\n...[truncated]";
                         }
                         return $content;
-                    }, $stateSnapshotResults);
+                    }, $mergedSnapshots);
                     $memories[] = "## Historical System Snapshots\n" . implode("\n\n", $snapshotTexts);
                 }
             }
@@ -2214,6 +2322,34 @@ PROMPT;
         }
 
         return implode("\n\n", $memories);
+    }
+
+    /**
+     * Search with multiple embeddings and merge results, keeping the highest similarity per chunk.
+     *
+     * @param VectorStore $store
+     * @param array[]     $embeddings  Array of embedding vectors
+     * @param string      $memoryType  'reference' | 'state_snapshot'
+     * @param int         $limit       Max results to return
+     * @param float       $minSimilarity
+     * @return array  Merged results sorted by similarity desc
+     */
+    private function multiQuerySearch(VectorStore $store, array $embeddings, string $memoryType, int $limit, float $minSimilarity): array {
+        $merged = [];
+
+        foreach ($embeddings as $emb) {
+            $results = $store->searchSimilar($emb, $memoryType, $limit, $minSimilarity);
+            foreach ($results as $r) {
+                $key = $r['id'] ?? md5($r['content'] ?? '');
+                if (!isset($merged[$key]) || ($r['similarity'] ?? 0) > ($merged[$key]['similarity'] ?? 0)) {
+                    $merged[$key] = $r;
+                }
+            }
+        }
+
+        usort($merged, fn($a, $b) => ($b['similarity'] ?? 0) <=> ($a['similarity'] ?? 0));
+
+        return array_slice($merged, 0, $limit);
     }
 
     private function isActionIntent(string $text): bool {

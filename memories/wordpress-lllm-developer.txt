@@ -1066,7 +1066,7 @@ url: https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?
 
 Title: Core Blocks Reference
 Published: December 20, 2021
-Last modified: February 28, 2026
+Last modified: March 4, 2026
 
 ---
 
@@ -1713,7 +1713,7 @@ Add custom HTML code and preview it as you edit. ([Source](https://github.com/Wo
  * **Name:** core/html
  * **Category:** widgets
  * **Supports:** interactivity (clientNavigation), ~className~, ~customCSS~, ~customClassName
-   ~, ~html~
+   ~, ~html~, ~visibility~
  * **Attributes:** content
 
 ## 󠀁[Icon](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#icon)󠁿
@@ -2151,7 +2151,7 @@ Displays the title of a post, page, or any other content-type. ([Source](https:/
  * **Supports:** align (full, wide), anchor, color (background, gradients, link,
    text), interactivity (clientNavigation), spacing (margin, padding), typography(
    fontSize, lineHeight, textAlign), ~html~
- * **Attributes:** isLink, level, levelOptions, linkTarget, rel
+ * **Attributes:** isLink, level, levelOptions, linkTarget, placeholder, rel
 
 ## 󠀁[Preformatted](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#preformatted)󠁿
 
@@ -2331,7 +2331,8 @@ Insert additional custom elements with a WordPress shortcode. ([Source](https://
 
  * **Name:** core/shortcode
  * **Category:** widgets
- * **Supports:** ~className~, ~customCSS~, ~customClassName~, ~html~
+ * **Supports:** ~className~, ~customCSS~, ~customClassName~, ~html~, ~visibility
+   ~
  * **Attributes:** text
 
 ## 󠀁[Site Logo](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#site-logo)󠁿
@@ -2609,7 +2610,7 @@ December 20, 2021
 
 Last updated
 
-February 28, 2026
+March 4, 2026
 
 Edit article
 
@@ -10757,7 +10758,7 @@ url: https://developer.wordpress.org/cli/commands/core/?output_format=md
 
 Title: wp core
 Published: February 5, 2018
-Last modified: March 1, 2026
+Last modified: March 8, 2026
 
 ---
 
@@ -10774,7 +10775,7 @@ Downloads, installs, updates, and manages a WordPress installation.
  [ ⌊GitHub⌉ ](https://github.com/wp-cli/core-command)
 
  [ View Open Issues (10) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore+sort%3Aupdated-desc+org%3Awp-cli+is%3Aopen)
-[ View Closed Issues (157) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
+[ View Closed Issues (158) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
 [Create New Issue](https://github.com/wp-cli/core-command/issues/new)
 
 ### 󠀁[Examples](https://developer.wordpress.org/cli/commands/core/?output_format=md#examples)󠁿
@@ -10868,7 +10869,7 @@ url: https://developer.wordpress.org/cli/commands/core/download/?output_format=m
 
 Title: wp core download
 Published: February 5, 2018
-Last modified: March 1, 2026
+Last modified: March 8, 2026
 
 ---
 
@@ -10886,7 +10887,7 @@ Downloads core WordPress files.
  [ ⌊GitHub⌉ ](https://github.com/wp-cli/core-command)
 
  [ View Open Issues (1) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore-download+sort%3Aupdated-desc+org%3Awp-cli+is%3Aopen)
-[ View Closed Issues (45) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore-download+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
+[ View Closed Issues (46) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore-download+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
 [Create New Issue](https://github.com/wp-cli/core-command/issues/new)
 
 This command runs on the `before_wp_load` hook, just before the WP load process 
@@ -10949,7 +10950,7 @@ url: https://developer.wordpress.org/cli/commands/db/?output_format=md
 
 Title: wp db
 Published: February 5, 2018
-Last modified: March 1, 2026
+Last modified: March 8, 2026
 
 ---
 

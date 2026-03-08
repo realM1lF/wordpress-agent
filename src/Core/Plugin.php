@@ -45,6 +45,9 @@ class Plugin {
         
         // Memory reload AJAX handler
         add_action('wp_ajax_levi_reload_memories', [$this, 'ajaxReloadMemories']);
+        
+        // Docs fetch + sync AJAX handler
+        add_action('wp_ajax_levi_fetch_and_sync_docs', [$this, 'ajaxFetchAndSyncDocs']);
     }
     
     public function ajaxTestConnection(): void {
@@ -72,16 +75,35 @@ class Plugin {
             wp_send_json_error('Unauthorized');
         }
         
-        // Only reload identity files (fast) - reference files are synced automatically via cron
         $loader = new \Levi\Agent\Memory\MemoryLoader();
-        $results = $loader->loadIdentityFiles();
+        $results = $loader->reloadChangedFiles();
         
+        $hasChanges = !empty($results['changed_identity']) || !empty($results['changed_reference']);
+
         wp_send_json_success([
-            'message' => 'Identity files reloaded successfully',
-            'results' => [
-                'identity' => $results,
-                'reference' => ['loaded' => [], 'errors' => []], // Reference files handled by background sync
-            ],
+            'message' => $hasChanges
+                ? 'Memory files reloaded: ' . count($results['loaded']) . ' files'
+                : 'All memory files already up to date',
+            'results' => $results,
+        ]);
+    }
+
+    public function ajaxFetchAndSyncDocs(): void {
+        check_ajax_referer('levi_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        \Levi\Agent\Memory\StateSnapshotService::runDocsFetchAndSync();
+        
+        $fetchMeta = \Levi\Agent\Memory\DocsFetcher::getLastFetchMeta();
+        $syncMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMemorySyncMeta();
+
+        wp_send_json_success([
+            'message' => 'Docs fetched and synced',
+            'fetch' => $fetchMeta,
+            'sync' => $syncMeta,
         ]);
     }
 

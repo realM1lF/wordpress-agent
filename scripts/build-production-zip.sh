@@ -55,10 +55,24 @@ rsync -a \
   --exclude 'docs/' \
   --exclude 'scripts/' \
   --exclude 'node_modules/' \
+  --exclude 'vendor/' \
   --exclude 'tmp/' \
+  --exclude 'STYLING_FILES_FLAT/' \
+  --exclude 'plugin-files/' \
+  --exclude 'memories/' \
+  --exclude 'data/*.sqlite' \
+  --exclude 'data/vector-memory.sqlite' \
+  --exclude 'screenshot-*' \
   --exclude '*.zip' \
   --exclude '*.log' \
+  --exclude '*.bak' \
+  --exclude '*.bak2' \
+  --exclude '*.old' \
+  --exclude '*.orig' \
+  --exclude '*.tmp' \
+  --exclude '_fix_*.py' \
   --exclude '.DS_Store' \
+  --exclude '._*' \
   --exclude '.env' \
   --exclude '.env.*' \
   --exclude 'phpunit.xml*' \
@@ -90,6 +104,35 @@ if [[ -f "$ROOT_DIR/composer.json" && ! -d "$PKG_DIR/vendor" ]]; then
   echo "WARNING: composer.json exists but vendor/ is missing."
   echo "If runtime depends on Composer packages, run composer install before build."
 fi
+
+# --- Secret leak detection ---
+SECRET_PATTERNS='(sk-or-v1-[a-zA-Z0-9]+|sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{22,}|OPEN_ROUTER_API_KEY=.+|OPENAI_API_KEY=.+|ANTHROPIC_API_KEY=.+|GITHUB_TOKEN=.+|KIMI_API_KEY=.+)'
+LEAKS="$(grep -rPn "$SECRET_PATTERNS" "$PKG_DIR" 2>/dev/null || true)"
+
+if [[ -n "$LEAKS" ]]; then
+  echo ""
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "  ABORTED: Potential secrets/API keys found in package!"
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo ""
+  echo "$LEAKS"
+  echo ""
+  echo "Fix: Remove the files above or add them to the exclude list."
+  rm -rf "$PKG_DIR"
+  exit 1
+fi
+
+# Check for .env files that slipped through
+ENV_FILES="$(find "$PKG_DIR" -name '.env' -o -name '.env.*' 2>/dev/null || true)"
+if [[ -n "$ENV_FILES" ]]; then
+  echo ""
+  echo "ABORTED: .env file(s) found in package:"
+  echo "$ENV_FILES"
+  rm -rf "$PKG_DIR"
+  exit 1
+fi
+
+echo "Security check passed: No secrets or .env files detected."
 
 (
   cd "$BUILD_DIR"

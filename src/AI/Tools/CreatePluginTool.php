@@ -11,7 +11,7 @@ class CreatePluginTool implements ToolInterface {
     public function getDescription(): string {
         return 'Create a NEW WordPress plugin scaffold (directory + main plugin file), optionally activate it. '
             . 'This tool ONLY creates new plugins — it will refuse if a plugin with the same slug already exists. '
-            . 'To modify an existing plugin, use write_plugin_file instead. '
+            . 'To modify an existing plugin, use patch_plugin_file (small changes) or write_plugin_file (full rewrite). '
             . 'Always choose a unique slug that does not collide with existing plugins.';
     }
 
