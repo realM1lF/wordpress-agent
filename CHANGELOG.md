@@ -3,6 +3,11 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.6.6] – 2026-03-08
+- Plugin-Smoke-Test: Nach dem Schreiben von PHP-Dateien wird das Plugin automatisch aktiviert und eine Frontend-Seite geladen, um Runtime-Fehler (Fatal, ArgumentCountError, TypeError) zu erkennen
+- Bei Fehler wird das Plugin sofort deaktiviert und der Fehler wird Levi als Pflicht-Fix injiziert
+- Auch Error-Log wird nach dem Seitenaufruf geprüft (plugin-spezifisch gefiltert)
+
 ## [0.6.5] – 2026-03-08
 - QueryExpander: Deutsche Nutzeranfragen werden automatisch in englische Such-Queries übersetzt für bessere Treffer in der Referenz-Doku (Vector-DB)
 - Multi-Query-Retrieval: Vektor-Suche läuft parallel über Original- und expandierte Queries, Ergebnisse werden nach Similarity gemergt

@@ -858,6 +858,18 @@ class ChatController extends WP_REST_Controller {
                 $messages[] = $nudge;
             }
 
+            $smokeTest = $this->injectPostPluginSmokeTest($toolCalls, $toolResults);
+            if (!empty($smokeTest)) {
+                $this->emitSSE('progress', [
+                    'message' => 'Smoke-Test: Plugin wird aktiviert und getestet...',
+                    'tool' => 'http_fetch',
+                    'iteration' => $iteration,
+                ]);
+                foreach ($smokeTest as $st) {
+                    $messages[] = $st;
+                }
+            }
+
             if (connection_aborted()) {
                 error_log('Levi: client disconnected during tool loop');
                 return;
@@ -1423,6 +1435,11 @@ class ChatController extends WP_REST_Controller {
             $cssNudge = $this->injectPostCSSWriteNudge($toolCalls, $toolResults);
             foreach ($cssNudge as $nudge) {
                 $messages[] = $nudge;
+            }
+
+            $smokeTest = $this->injectPostPluginSmokeTest($toolCalls, $toolResults);
+            foreach ($smokeTest as $st) {
+                $messages[] = $st;
             }
 
             $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), null, $webSearch);
@@ -2206,6 +2223,236 @@ PROMPT;
                 'content' => '[SYSTEM] Du hast eine CSS/JS-Datei geschrieben, aber http_fetch ist nicht verfuegbar. '
                     . 'Weise den Kunden darauf hin, dass er die Aenderung im Frontend pruefen soll. '
                     . 'Nenne ihm die relevante Seite (z.B. /shop/) und worauf er achten soll (Badge-Positionierung, Farben, etc.).',
+            ],
+        ];
+    }
+
+    /**
+     * After writing a PHP file for a plugin, activate it and fetch a frontend page
+     * to detect runtime errors (ArgumentCountError, Fatal, etc.) that php -l cannot catch.
+     * If errors are found, deactivate the plugin and inject the error for the LLM to fix.
+     */
+    private function injectPostPluginSmokeTest(array $toolCalls, array $toolResults): array {
+        $pluginSlug = null;
+
+        foreach ($toolResults as $tr) {
+            if (!($tr['result']['success'] ?? false)) {
+                continue;
+            }
+            $tool = $tr['tool'] ?? '';
+            if (!in_array($tool, ['write_plugin_file', 'patch_plugin_file'], true)) {
+                continue;
+            }
+            $path = $tr['result']['relative_path'] ?? '';
+            if ($path === '') {
+                foreach ($toolCalls as $tc) {
+                    if (($tc['function']['name'] ?? '') === $tool) {
+                        $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                        $path = $args['relative_path'] ?? '';
+                        break;
+                    }
+                }
+            }
+            if (preg_match('/\.php$/i', $path)) {
+                $pluginSlug = $tr['result']['plugin_slug']
+                    ?? $tr['result']['slug']
+                    ?? null;
+                if ($pluginSlug === null) {
+                    foreach ($toolCalls as $tc) {
+                        if (($tc['function']['name'] ?? '') === $tool) {
+                            $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                            $pluginSlug = $args['plugin_slug'] ?? null;
+                            break;
+                        }
+                    }
+                }
+                if ($pluginSlug !== null) {
+                    break;
+                }
+            }
+        }
+
+        if ($pluginSlug === null) {
+            return [];
+        }
+
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+
+        $pluginBasename = null;
+        $allPlugins = get_plugins();
+        foreach ($allPlugins as $file => $data) {
+            if (str_starts_with($file, $pluginSlug . '/')) {
+                $pluginBasename = $file;
+                break;
+            }
+        }
+
+        if ($pluginBasename === null) {
+            return [];
+        }
+
+        $wasAlreadyActive = is_plugin_active($pluginBasename);
+
+        if (!$wasAlreadyActive) {
+            $activation = activate_plugin($pluginBasename);
+            if (is_wp_error($activation)) {
+                $fakeId = 'smoke_activate_' . bin2hex(random_bytes(8));
+                return [
+                    [
+                        'role' => 'assistant',
+                        'content' => null,
+                        'tool_calls' => [[
+                            'id' => $fakeId,
+                            'type' => 'function',
+                            'function' => [
+                                'name' => 'get_plugins',
+                                'arguments' => json_encode(['status' => 'all']),
+                            ],
+                        ]],
+                    ],
+                    [
+                        'role' => 'tool',
+                        'tool_call_id' => $fakeId,
+                        'content' => "[SMOKE-TEST] Plugin '$pluginSlug' konnte nicht aktiviert werden: "
+                            . $activation->get_error_message()
+                            . "\n\n[SYSTEM] PFLICHT: Das Plugin hat einen Aktivierungsfehler. "
+                            . "Analysiere den Fehler und behebe ihn sofort mit patch_plugin_file oder write_plugin_file.",
+                    ],
+                ];
+            }
+        }
+
+        $testUrl = home_url('/');
+        if (function_exists('wc_get_page_id')) {
+            $shopPageId = wc_get_page_id('shop');
+            if ($shopPageId > 0) {
+                $testUrl = get_permalink($shopPageId) ?: $testUrl;
+            }
+        }
+
+        $fetchResponse = wp_remote_get($testUrl, [
+            'timeout' => 15,
+            'sslverify' => false,
+            'user-agent' => 'Levi-SmokeTest/1.0',
+        ]);
+
+        $statusCode = 0;
+        $body = '';
+        $hasFatalError = false;
+        $errorDetail = '';
+
+        if (is_wp_error($fetchResponse)) {
+            $hasFatalError = true;
+            $errorDetail = 'HTTP-Fehler: ' . $fetchResponse->get_error_message();
+        } else {
+            $statusCode = wp_remote_retrieve_response_code($fetchResponse);
+            $body = wp_remote_retrieve_body($fetchResponse);
+
+            if ($statusCode >= 500) {
+                $hasFatalError = true;
+                $errorDetail = "HTTP $statusCode";
+            }
+
+            if (preg_match('/Fatal\s+error:.*?in\s+.*?on\s+line\s+\d+/is', $body, $m)) {
+                $hasFatalError = true;
+                $errorDetail = trim($m[0]);
+            } elseif (preg_match('/(?:Uncaught\s+(?:Error|Exception|TypeError|ArgumentCountError)[^<]*)/is', $body, $m)) {
+                $hasFatalError = true;
+                $errorDetail = trim($m[0]);
+            } elseif (stripos($body, 'critical error on your website') !== false || stripos($body, 'kritischer Fehler') !== false) {
+                $hasFatalError = true;
+                $errorDetail = 'WordPress Critical Error Screen detected';
+            }
+        }
+
+        $errorLogResult = $this->toolRegistry->execute('read_error_log', [
+            'lines' => 20,
+            'filter' => 'Fatal|ArgumentCountError|TypeError|Uncaught',
+        ]);
+        $recentLogErrors = '';
+        if (!empty($errorLogResult['lines'])) {
+            $pluginPattern = preg_quote($pluginSlug, '/');
+            foreach ($errorLogResult['lines'] as $line) {
+                if (preg_match("/$pluginPattern/i", $line)) {
+                    $recentLogErrors .= $line . "\n";
+                }
+            }
+        }
+
+        if (!$hasFatalError && $recentLogErrors !== '') {
+            $hasFatalError = true;
+            $errorDetail = "Error-Log Eintraege fuer $pluginSlug gefunden";
+        }
+
+        if ($hasFatalError) {
+            if (!$wasAlreadyActive) {
+                deactivate_plugins($pluginBasename);
+            }
+
+            $fakeId = 'smoke_test_' . bin2hex(random_bytes(8));
+            $errorContent = "[SMOKE-TEST FEHLGESCHLAGEN] Plugin '$pluginSlug' verursacht einen Runtime-Fehler!\n\n"
+                . "Getestete URL: $testUrl\n"
+                . "HTTP-Status: $statusCode\n"
+                . "Fehler: $errorDetail\n";
+
+            if ($recentLogErrors !== '') {
+                $errorContent .= "\nError-Log:\n$recentLogErrors\n";
+            }
+
+            $errorContent .= "\n[SYSTEM] PFLICHT: Das Plugin wurde wegen eines Laufzeitfehlers wieder deaktiviert. "
+                . "Der Fehler tritt auf wenn eine Seite geladen wird, die Plugin-Code ausfuehrt. "
+                . "Typische Ursachen: falsche Argument-Anzahl bei add_filter/add_action (pruefe accepted_args!), "
+                . "fehlende Klassen/Funktionen, falsche Hook-Signaturen. "
+                . "Lies den Fehler genau, korrigiere den Code mit patch_plugin_file, und nenne dem Nutzer NICHT 'fertig' bis der Fehler behoben ist.";
+
+            return [
+                [
+                    'role' => 'assistant',
+                    'content' => null,
+                    'tool_calls' => [[
+                        'id' => $fakeId,
+                        'type' => 'function',
+                        'function' => [
+                            'name' => 'http_fetch',
+                            'arguments' => json_encode(['url' => $testUrl, 'extract' => 'body']),
+                        ],
+                    ]],
+                ],
+                [
+                    'role' => 'tool',
+                    'tool_call_id' => $fakeId,
+                    'content' => $errorContent,
+                ],
+            ];
+        }
+
+        $fakeId = 'smoke_ok_' . bin2hex(random_bytes(8));
+        $okContent = "[SMOKE-TEST BESTANDEN] Plugin '$pluginSlug' wurde aktiviert und die Seite $testUrl "
+            . "laesst sich fehlerfrei laden (HTTP $statusCode).\n";
+
+        if (!$wasAlreadyActive) {
+            $okContent .= "Das Plugin ist jetzt aktiv.";
+        }
+
+        return [
+            [
+                'role' => 'assistant',
+                'content' => null,
+                'tool_calls' => [[
+                    'id' => $fakeId,
+                    'type' => 'function',
+                    'function' => [
+                        'name' => 'http_fetch',
+                        'arguments' => json_encode(['url' => $testUrl, 'extract' => 'body']),
+                    ],
+                ]],
+            ],
+            [
+                'role' => 'tool',
+                'tool_call_id' => $fakeId,
+                'content' => $okContent,
             ],
         ];
     }
