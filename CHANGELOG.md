@@ -14,6 +14,10 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 - DocsFetcher (PHP): Ersetzt die alten Python-Scripts, holt Referenz-Docs direkt im Plugin und speichert sie in wp-content/uploads/
 - Memory-System: Inkrementelle Updates (nur geänderte Dateien), täglicher Docs-Fetch-Cron um 04:00 Uhr
 - VectorStore: Bucket-Hash-Optimierung nur noch bei >3000 Vektoren, Brute-Force bei kleineren Datensätzen für bessere Trefferquote
+- PatchPluginFileTool: Neues Tool für gezielte Search-and-Replace-Patches in Plugin-Dateien (schneller als write_plugin_file bei kleinen Änderungen)
+- SessionSummarizer: Eigener Service für LLM-basierte Session-Zusammenfassungen (extrahiert aus ChatController)
+- Settings: Neues Feld für manuell erlaubte Plugin-Slugs, Summary-Modell-Konfiguration, Docs-Fetch-Button im Admin
+- Build-Script für Produktions-ZIP (build-production-zip.sh)
 
 ## [0.6.4] – 2026-03-08
 - Plugin-Erstellung funktioniert jetzt bei allen Aufgabentypen (WooCommerce, Elementor, Theme, etc.)
