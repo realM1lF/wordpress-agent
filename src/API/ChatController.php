@@ -626,6 +626,28 @@ class ChatController extends WP_REST_Controller {
             (string) ($messageData['content'] ?? '')
         );
 
+        if ($this->looksLikeFakeConfirmation($assistantMessage)) {
+            $messages[] = ['role' => 'assistant', 'content' => $assistantMessage];
+            $messages[] = [
+                'role' => 'system',
+                'content' => '[SYSTEM] Du hast eine Bestaetigungsanfrage als TEXT geschrieben. Das ist FALSCH. '
+                    . 'Der Nutzer sieht keinen Button und haengt fest. '
+                    . 'Fuehre den destruktiven Tool-Call (delete_post, switch_theme, install_plugin, etc.) JETZT aus. '
+                    . 'Das Backend zeigt dem Nutzer automatisch einen Bestaetigungs-Button.',
+            ];
+            $retryResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat, $webSearch);
+            if (!is_wp_error($retryResponse)) {
+                $retryData = $retryResponse['choices'][0]['message'] ?? [];
+                if (!empty($retryData['tool_calls'])) {
+                    $this->handleToolCallsStreaming($retryData, $messages, $sessionId, $userId, (string) $message, $heartbeat, $webSearch, null);
+                    if ($hasUploadedContext) {
+                        $this->clearSessionUploads($sessionId, $userId);
+                    }
+                    return;
+                }
+            }
+        }
+
         if ($assistantMessage === '') {
             $assistantMessage = $this->getEmptyResponseFallback();
         }
@@ -882,6 +904,25 @@ class ChatController extends WP_REST_Controller {
                 $finalMessage = $this->sanitizeAssistantMessageContent(
                     (string) ($messageData['content'] ?? '')
                 );
+
+                if ($pendingConfirmation === null && $this->looksLikeFakeConfirmation($finalMessage)) {
+                    $messages[] = ['role' => 'assistant', 'content' => $finalMessage];
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => '[SYSTEM] Du hast eine Bestaetigungsanfrage als TEXT geschrieben. Das ist FALSCH. '
+                            . 'Der Nutzer sieht keinen Button und haengt fest. '
+                            . 'Fuehre den destruktiven Tool-Call (delete_post, switch_theme, install_plugin, etc.) JETZT aus. '
+                            . 'Das Backend zeigt dem Nutzer automatisch einen Bestaetigungs-Button.',
+                    ];
+                    $retryResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat, $webSearch);
+                    if (!is_wp_error($retryResponse)) {
+                        $retryData = $retryResponse['choices'][0]['message'] ?? [];
+                        if (!empty($retryData['tool_calls'])) {
+                            $messageData = $retryData;
+                            continue;
+                        }
+                    }
+                }
 
                 if ($finalMessage === '') {
                     error_log('Levi: empty AI response after tool loop, original: ' . mb_substr((string) ($messageData['content'] ?? ''), 0, 500));
@@ -2676,6 +2717,21 @@ PROMPT;
 
     private function isPluginMutationTool(string $toolName): bool {
         return in_array($toolName, ['write_plugin_file', 'patch_plugin_file', 'delete_plugin_file'], true);
+    }
+
+    private function looksLikeFakeConfirmation(string $message): bool {
+        if ($message === '') {
+            return false;
+        }
+        $lower = mb_strtolower($message);
+        $hasConfirmPhrase = str_contains($lower, 'bestaetige')
+            || str_contains($lower, 'bestätige')
+            || str_contains($lower, 'bitte bestätigen')
+            || str_contains($lower, 'bitte bestätigen');
+        $hasActionPhrase = str_contains($lower, 'ich moechte')
+            || str_contains($lower, 'ich möchte')
+            || str_contains($lower, 'soll ich');
+        return $hasConfirmPhrase && $hasActionPhrase;
     }
 
     private function extractPluginSlug(array $args): string {
