@@ -6,6 +6,7 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 ## [0.6.3] – 2026-03-01
 - Warnung beim Seitenwechsel/Neuladen wenn Levi gerade arbeitet (beforeunload-Dialog)
 - Bestätigungsdialog zeigt jetzt korrekten Post-Typ (Seite/Produkt statt immer „Beitrag")
+- Plugin-Erstellung funktioniert jetzt bei allen Aufgabentypen (WooCommerce, Elementor, Theme, etc.)
 
 ## [0.6.2] – 2026-03-01
 - Session-Zusammenfassung via LLM statt Messages droppen (Summary-Injection bei Token-Budget-Überschreitung)

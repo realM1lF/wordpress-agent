@@ -2076,11 +2076,6 @@ PROMPT;
      * claims "done" without ever calling write_plugin_file.
      */
     private function injectPostCreatePluginNudge(array $toolCalls, array $toolResults, ?array $planContext = null): array {
-        $planDomain = (string) ($planContext['domain'] ?? 'unknown');
-        if ($planDomain !== 'unknown' && $planDomain !== 'plugin') {
-            return [];
-        }
-
         $createdSlug = null;
         foreach ($toolCalls as $tc) {
             if (($tc['function']['name'] ?? '') !== 'create_plugin') {
@@ -2657,8 +2652,7 @@ PROMPT;
         if ($toolDomain !== $planDomain) {
             if (
                 $toolDomain === 'plugin'
-                && $this->isPluginMutationTool($toolName)
-                && in_array($planDomain, ['woocommerce', 'plugin'], true)
+                && ($this->isPluginMutationTool($toolName) || $toolName === 'create_plugin')
             ) {
                 return ['allow' => true];
             }
