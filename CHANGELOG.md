@@ -3,11 +3,13 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.6.4] – 2026-03-08
+- Plugin-Erstellung funktioniert jetzt bei allen Aufgabentypen (WooCommerce, Elementor, Theme, etc.)
+- Fake-Confirmation-Schutz: Backend erkennt wenn Levi eine Bestätigung nur als Text schreibt und erzwingt den echten Tool-Call
+
 ## [0.6.3] – 2026-03-01
 - Warnung beim Seitenwechsel/Neuladen wenn Levi gerade arbeitet (beforeunload-Dialog)
 - Bestätigungsdialog zeigt jetzt korrekten Post-Typ (Seite/Produkt statt immer „Beitrag")
-- Plugin-Erstellung funktioniert jetzt bei allen Aufgabentypen (WooCommerce, Elementor, Theme, etc.)
-- Fake-Confirmation-Schutz: Backend erkennt wenn Levi eine Bestätigung nur als Text schreibt und erzwingt den echten Tool-Call
 
 ## [0.6.2] – 2026-03-01
 - Session-Zusammenfassung via LLM statt Messages droppen (Summary-Injection bei Token-Budget-Überschreitung)
