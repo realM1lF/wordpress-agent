@@ -17,7 +17,7 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 - PatchPluginFileTool: Neues Tool für gezielte Search-and-Replace-Patches in Plugin-Dateien (schneller als write_plugin_file bei kleinen Änderungen)
 - SessionSummarizer: Eigener Service für LLM-basierte Session-Zusammenfassungen (extrahiert aus ChatController)
 - Settings: Neues Feld für manuell erlaubte Plugin-Slugs, Summary-Modell-Konfiguration, Docs-Fetch-Button im Admin
-- Build-Script für Produktions-ZIP (build-production-zip.sh)
+- Build-Script: Secret-Leak-Erkennung vor ZIP-Erstellung, zusätzliche Exclude-Patterns
 
 ## [0.6.4] – 2026-03-08
 - Plugin-Erstellung funktioniert jetzt bei allen Aufgabentypen (WooCommerce, Elementor, Theme, etc.)
