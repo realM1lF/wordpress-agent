@@ -8,6 +8,8 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 - **Einrichtung erst fertig, wenn Levi wirklich bereit ist:** Der Einrichtungsassistent wartet jetzt, bis die Wissensdatenbank vollständig heruntergeladen und aufgebaut ist. Du siehst den Fortschritt (Dokumentation laden → Wissensdatenbank aufbauen → Snapshot erstellen) und Levi ist erst „fertig", wenn alles durch ist. Das kann 2–5 Minuten dauern.
 - **Sync setzt sich von selbst fort:** Wenn der Aufbau der Wissensdatenbank wegen eines Timeouts oder Verbindungsabbruchs nicht abgeschlossen wird, setzt Levi ihn beim nächsten Admin-Besuch automatisch fort – ohne dass du etwas tun musst.
 - **Keine falschen „Dateien geändert"-Meldungen mehr:** Das Problem, dass nach einem Sync weiterhin angezeigt wurde, es gäbe noch offene Änderungen, ist behoben.
+- **Levi kann jetzt laengere Aufgaben durchfuehren:** Die Standardwerte fuer Arbeitsschritte und PHP-Zeitlimit wurden angehoben (25 Schritte / 300 Sekunden). Aufgaben wie "Pruefe alle Seiten auf Rechtschreibfehler" laufen jetzt zuverlaessig durch, ohne vorzeitig abzubrechen.
+- **Weniger Serverlast im Admin:** Die Pruefung auf geaenderte Memory-Dateien lief vorher bei jedem Admin-Seitenaufruf. Jetzt wird nur noch alle 15 Minuten geprueft — der Rest bleibt gleich schnell.
 
 ## [0.6.7] – 2026-03-09
 - **Levi findet JavaScript-Fehler sofort:** Wenn Levi Code schreibt, der im Browser ausgeführt wird (z. B. bei Elementor-Widgets), prüft das System jetzt automatisch die Syntax. Fehlende Klammern oder Tippfehler werden erkannt – bevor du sie im Frontend siehst. Levi bekommt die Meldung direkt und kann den Fehler direkt beheben.

@@ -119,16 +119,16 @@ class SettingsPage {
     private function deriveSpeed(int $maxIterations, array $tuningMode): string {
         if (isset($tuningMode['speed']) && in_array($tuningMode['speed'], ['fast', 'balanced', 'careful'], true)) {
             $expected = match ($tuningMode['speed']) {
-                'fast' => 8, 'careful' => 18, default => 12,
+                'fast' => 15, 'careful' => 30, default => 25,
             };
             if ($maxIterations === $expected) {
                 return $tuningMode['speed'];
             }
         }
         return match (true) {
-            $maxIterations === 8 => 'fast',
-            $maxIterations === 12 => 'balanced',
-            $maxIterations === 18 => 'careful',
+            $maxIterations <= 15 => 'fast',
+            $maxIterations <= 25 => 'balanced',
+            $maxIterations <= 30 => 'careful',
             default => 'custom',
         };
     }
@@ -252,9 +252,9 @@ class SettingsPage {
 
         if (in_array($speedMode, ['fast', 'balanced', 'careful'], true)) {
             $sanitized['max_tool_iterations'] = match ($speedMode) {
-                'fast' => 8,
-                'careful' => 18,
-                default => 12,
+                'fast' => 15,
+                'careful' => 30,
+                default => 25,
             };
         } elseif (array_key_exists('max_tool_iterations', $input)) {
             $sanitized['max_tool_iterations'] = max(4, min(30, absint($input['max_tool_iterations'])));
@@ -1057,7 +1057,7 @@ class SettingsPage {
                     $curHistoryLimit = (int) ($settings['history_context_limit'] ?? 50);
                     $curThoroughness = $this->deriveThoroughness($curHistoryLimit, $tuningMode);
                     $curSafety = !empty($settings['require_confirmation_destructive']) ? 'strict' : 'standard';
-                    $curMaxIterations = (int) ($settings['max_tool_iterations'] ?? 12);
+                    $curMaxIterations = (int) ($settings['max_tool_iterations'] ?? 25);
                     $curSpeed = $this->deriveSpeed($curMaxIterations, $tuningMode);
                     ?>
 
@@ -1097,9 +1097,9 @@ class SettingsPage {
                         <label class="levi-form-label" for="levi_speed_mode"><?php echo esc_html($this->tr('How many work steps per request?', 'Wie viele Arbeitsschritte pro Anfrage?')); ?></label>
                         <div style="display: flex; gap: 0.75rem; align-items: center;">
                             <select id="levi_speed_mode" name="<?php echo esc_attr($this->optionName); ?>[levi_speed_mode]" class="levi-form-select" style="flex: 1;">
-                                <option value="fast" <?php selected($curSpeed, 'fast'); ?>><?php echo esc_html($this->tr('Few (8 steps)', 'Wenig (8 Schritte)')); ?></option>
-                                <option value="balanced" <?php selected($curSpeed, 'balanced'); ?>><?php echo esc_html($this->tr('Standard (12 steps, recommended)', 'Standard (12 Schritte, empfohlen)')); ?></option>
-                                <option value="careful" <?php selected($curSpeed, 'careful'); ?>><?php echo esc_html($this->tr('Many (18 steps)', 'Viel (18 Schritte)')); ?></option>
+                                <option value="fast" <?php selected($curSpeed, 'fast'); ?>><?php echo esc_html($this->tr('Few (15 steps)', 'Wenig (15 Schritte)')); ?></option>
+                                <option value="balanced" <?php selected($curSpeed, 'balanced'); ?>><?php echo esc_html($this->tr('Standard (25 steps, recommended)', 'Standard (25 Schritte, empfohlen)')); ?></option>
+                                <option value="careful" <?php selected($curSpeed, 'careful'); ?>><?php echo esc_html($this->tr('Many (30 steps)', 'Viel (30 Schritte)')); ?></option>
                                 <option value="custom" <?php selected($curSpeed, 'custom'); ?>><?php echo esc_html($this->tr('Custom', 'Benutzerdefiniert')); ?></option>
                             </select>
                             <input type="number" id="levi_iterations_value"
@@ -1116,7 +1116,7 @@ class SettingsPage {
                     <script>
                     (function() {
                         var thoroughnessMap = {low: 30, balanced: 50, high: 80};
-                        var speedMap = {fast: 8, balanced: 12, careful: 18};
+                        var speedMap = {fast: 15, balanced: 25, careful: 30};
 
                         var tSelect = document.getElementById('levi_thoroughness');
                         var tInput = document.getElementById('levi_history_value');
@@ -1482,10 +1482,10 @@ class SettingsPage {
             'openai_model' => 'gpt-4o-mini',
             'anthropic_model' => 'claude-3-5-sonnet-20241022',
             'rate_limit' => 100,
-            'max_tool_iterations' => 18,
+            'max_tool_iterations' => 25,
             'max_tokens' => 131072,
             'ai_timeout' => 120,
-            'php_time_limit' => 180,
+            'php_time_limit' => 300,
             'max_context_tokens' => 100000,
             'history_context_limit' => 50,
             'tool_profile' => 'standard',

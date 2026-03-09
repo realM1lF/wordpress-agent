@@ -29,14 +29,14 @@ class ChatController extends WP_REST_Controller {
     private SettingsPage $settings;
     private Registry $toolRegistry;
     private static bool $initialized = false;
+    private static ?self $instance = null;
 
     public function __construct() {
-        // Prevent multiple initializations
         if (self::$initialized) {
             return;
         }
         self::$initialized = true;
-        
+
         $this->settings = new SettingsPage();
         $this->aiClient = AIClientFactory::create($this->settings->getProvider());
         $this->conversationRepo = new ConversationRepository();
@@ -44,8 +44,17 @@ class ChatController extends WP_REST_Controller {
         $this->toolRegistry = new Registry($toolProfile);
 
         PIIRedactor::init($this->settings->getSettings());
-        
+
         add_action('rest_api_init', [$this, 'register_routes']);
+        self::$instance = $this;
+    }
+
+    public static function getInstance(): ?self {
+        return self::$instance;
+    }
+
+    public function getToolRegistry(): Registry {
+        return $this->toolRegistry;
     }
 
     /**
@@ -183,6 +192,21 @@ class ChatController extends WP_REST_Controller {
                 ],
             ],
         ]);
+
+        register_rest_route($this->namespace, '/' . $this->rest_base . '/confirm-action-sync', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [$this, 'confirmActionNonStreaming'],
+                'permission_callback' => [$this, 'checkPermission'],
+                'args' => [
+                    'action_id' => [
+                        'required' => true,
+                        'type' => 'string',
+                        'sanitize_callback' => 'sanitize_text_field',
+                    ],
+                ],
+            ],
+        ]);
     }
 
     public function getStatus(WP_REST_Request $request): WP_REST_Response {
@@ -197,7 +221,7 @@ class ChatController extends WP_REST_Controller {
     }
 
     public function confirmActionStream(WP_REST_Request $request): void {
-        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 180);
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 300);
         if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
             @set_time_limit($phpTimeLimit);
         }
@@ -222,6 +246,103 @@ class ChatController extends WP_REST_Controller {
         }
 
         die();
+    }
+
+    public function confirmActionNonStreaming(WP_REST_Request $request): WP_REST_Response {
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 300);
+        if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
+            @set_time_limit($phpTimeLimit);
+        }
+
+        $actionId = (string) $request->get_param('action_id');
+        $userId = get_current_user_id();
+
+        $transientKey = 'levi_pending_' . $actionId;
+        $pending = get_transient($transientKey);
+
+        if (!is_array($pending) || empty($pending['tool_name'])) {
+            return new WP_REST_Response(['error' => 'Aktion nicht gefunden oder abgelaufen.'], 404);
+        }
+
+        if ((int) ($pending['user_id'] ?? 0) !== $userId) {
+            return new WP_REST_Response(['error' => 'Keine Berechtigung fuer diese Aktion.'], 403);
+        }
+
+        $toolName = (string) $pending['tool_name'];
+        $toolArgs = is_array($pending['tool_args']) ? $pending['tool_args'] : [];
+        $sessionId = (string) ($pending['session_id'] ?? '');
+        $planContext = $pending['plan_context'] ?? null;
+
+        $result = $this->toolRegistry->execute($toolName, $toolArgs);
+        $this->trackOwnedPluginFromToolResult($toolName, $toolArgs, $result);
+        $this->logToolExecution($sessionId, $userId, $toolName, $toolArgs, $result);
+        delete_transient($transientKey);
+
+        $ok = !empty($result['success']);
+        $compactResult = $this->compactToolResultForModel($result);
+
+        if (!$ok || !$this->aiClient->isConfigured() || $sessionId === '') {
+            $summary = $this->describeToolAction($toolName, $toolArgs);
+            $statusLine = $ok
+                ? "✅ {$summary} – erfolgreich ausgefuehrt."
+                : "❌ {$summary} – fehlgeschlagen.";
+            $finalMessage = $statusLine . "\n\n" . mb_substr($compactResult, 0, 500);
+            if ($sessionId !== '') {
+                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+            }
+            return new WP_REST_Response([
+                'session_id' => $sessionId,
+                'message' => $finalMessage,
+                'tool_executed' => $toolName,
+                'success' => $ok,
+            ], 200);
+        }
+
+        $messages = $this->buildMessagesForConfirmation($sessionId, $toolName, $toolArgs, $compactResult);
+        $response = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions());
+        if (is_wp_error($response)) {
+            $errMsgLower = mb_strtolower($response->get_error_message());
+            if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
+                $response = $this->aiClient->chat($messages, []);
+            }
+        }
+        if (is_wp_error($response)) {
+            $summary = $this->describeToolAction($toolName, $toolArgs);
+            $finalMessage = "✅ {$summary} – erfolgreich ausgefuehrt.";
+            $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
+            return new WP_REST_Response([
+                'session_id' => $sessionId,
+                'message' => $finalMessage,
+                'tool_executed' => $toolName,
+                'success' => true,
+            ], 200);
+        }
+
+        $messageData = $response['choices'][0]['message'] ?? [];
+        if (!empty($messageData['tool_calls'])) {
+            $latestUserMessage = $this->getLatestUserMessage($sessionId);
+            return $this->handleToolCalls(
+                $messageData, $messages, $sessionId, $userId,
+                $latestUserMessage, false, $planContext
+            );
+        }
+
+        $assistantMessage = $this->sanitizeAssistantMessageContent(
+            (string) ($messageData['content'] ?? '')
+        );
+        if ($assistantMessage === '') {
+            $summary = $this->describeToolAction($toolName, $toolArgs);
+            $assistantMessage = "✅ {$summary} – erfolgreich ausgefuehrt.";
+        }
+
+        $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+        return new WP_REST_Response([
+            'session_id' => $sessionId,
+            'message' => $assistantMessage,
+            'model' => $response['model'] ?? null,
+            'tool_executed' => $toolName,
+            'success' => true,
+        ], 200);
     }
 
     private function processConfirmationStreaming(WP_REST_Request $request): void {
@@ -424,7 +545,7 @@ class ChatController extends WP_REST_Controller {
     }
 
     public function sendMessage(WP_REST_Request $request): WP_REST_Response {
-        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 180);
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 300);
         if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
             @set_time_limit($phpTimeLimit);
         }
@@ -446,7 +567,7 @@ class ChatController extends WP_REST_Controller {
     }
     
     public function sendMessageStream(WP_REST_Request $request): void {
-        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 180);
+        $phpTimeLimit = (int) ($this->settings->getSettings()['php_time_limit'] ?? 300);
         if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
             @set_time_limit($phpTimeLimit);
         }
@@ -687,7 +808,7 @@ class ChatController extends WP_REST_Controller {
         $toolResults = [];
         $pendingConfirmation = null;
         $runtimeSettings = $this->settings->getSettings();
-        $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 12));
+        $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 25));
         $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
@@ -1246,7 +1367,7 @@ class ChatController extends WP_REST_Controller {
         $executionTrace = [];
         $pendingConfirmation = null;
         $runtimeSettings = $this->settings->getSettings();
-        $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 12));
+        $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 25));
         $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;

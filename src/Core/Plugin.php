@@ -80,7 +80,7 @@ class Plugin {
 
         $settings = new \Levi\Agent\Admin\SettingsPage();
         $runtimeSettings = $settings->getSettings();
-        $phpTimeLimit = (int) ($runtimeSettings['php_time_limit'] ?? 180);
+        $phpTimeLimit = (int) ($runtimeSettings['php_time_limit'] ?? 300);
         if ($phpTimeLimit > 0 && function_exists('set_time_limit')) {
             @set_time_limit($phpTimeLimit);
         }

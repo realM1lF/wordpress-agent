@@ -115,7 +115,7 @@ class SetupWizardPage {
         $settings['openrouter_model'] = 'moonshotai/kimi-k2.5';
         $settings['tool_profile'] = 'standard';
         $settings['require_confirmation_destructive'] = 1;
-        $settings['max_tool_iterations'] = 12;
+        $settings['max_tool_iterations'] = 25;
         $settings['history_context_limit'] = 50;
 
         $this->saveSettings($settings);
@@ -155,11 +155,11 @@ class SetupWizardPage {
         }
 
         if ($speed === 'fast') {
-            $settings['max_tool_iterations'] = 8;
+            $settings['max_tool_iterations'] = 15;
         } elseif ($speed === 'careful') {
-            $settings['max_tool_iterations'] = 18;
+            $settings['max_tool_iterations'] = 30;
         } else {
-            $settings['max_tool_iterations'] = 12;
+            $settings['max_tool_iterations'] = 25;
         }
 
         $this->saveSettings($settings);
@@ -390,9 +390,9 @@ class SetupWizardPage {
                             <div class="levi-form-group">
                                 <label class="levi-form-label" for="levi_speed_mode"><?php _e('Wie viele Arbeitsschritte pro Anfrage?', 'levi-agent'); ?></label>
                                 <select id="levi_speed_mode" name="levi_speed_mode" class="levi-form-select">
-                                    <option value="fast" <?php selected($tuning['speed'], 'fast'); ?>><?php _e('Wenig (8 Schritte)', 'levi-agent'); ?></option>
-                                    <option value="balanced" <?php selected($tuning['speed'], 'balanced'); ?>><?php _e('Standard (12 Schritte, empfohlen)', 'levi-agent'); ?></option>
-                                    <option value="careful" <?php selected($tuning['speed'], 'careful'); ?>><?php _e('Viel (18 Schritte)', 'levi-agent'); ?></option>
+                                    <option value="fast" <?php selected($tuning['speed'], 'fast'); ?>><?php _e('Wenig (15 Schritte)', 'levi-agent'); ?></option>
+                                    <option value="balanced" <?php selected($tuning['speed'], 'balanced'); ?>><?php _e('Standard (25 Schritte, empfohlen)', 'levi-agent'); ?></option>
+                                    <option value="careful" <?php selected($tuning['speed'], 'careful'); ?>><?php _e('Viel (30 Schritte)', 'levi-agent'); ?></option>
                                 </select>
                                 <p class="levi-form-help"><?php _e('Jede Tool-Aktion (Seite lesen, Plugin schreiben, etc.) zählt als ein Schritt. Komplexe Aufgaben brauchen mehr Schritte.', 'levi-agent'); ?></p>
                             </div>

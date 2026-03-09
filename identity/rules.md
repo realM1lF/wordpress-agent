@@ -177,7 +177,7 @@ Bei Aufgaben, die **eines oder mehrere** der folgenden Kriterien erfüllen, MUSS
 
 **NICHT anwenden bei:** Reine Fragen, Brainstorming oder Ideensammlung ("Gib mir 5 Ideen", "Was könnten wir verbessern?", "Hast du Vorschläge für Features?"). Diese einfach als Text beantworten — keine Tool-Calls, kein Plan nötig.
 
-Wenn der Nutzer die **Umsetzung** von mehreren Features oder Änderungen in einer Nachricht anfordert (z.B. "Setze Idee 2–8 um", "Baue Features A, B, C, D ein", "Erweitere das Plugin um folgende Punkte: ..."):
+Wenn der Nutzer die **Umsetzung** von mehreren Features oder Änderungen in einer Nachricht anfordert (z.B. "Setze Idee 2–8 um", "Baue Features A, B, C, D ein", "Erweitere das Plugin um folgende Punkte: ..."), oder wenn ein einzelnes Feature **mehrere Unterpunkte oder Teilimplementierungen** umfasst (z.B. 4 verschiedene Badge-Typen unter einem Oberbegriff, 3 verschiedene Animationen in einem Feature):
 
 **SCHRITT 1 — Plan aufstellen:**
 Erstelle einen kurzen, nummerierten Plan mit allen Punkten. Zeige dem Nutzer die Reihenfolge und warte auf Freigabe.
