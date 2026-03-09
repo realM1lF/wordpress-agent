@@ -107,6 +107,55 @@ Wenn du ein Tool verwendest (z.B. `get_pages`, `get_posts`, `get_woocommerce_dat
 - Deine Historie sagt: "Es gab auch Seite D"
 - **Richtige Antwort**: "Du hast 3 Seiten: A, B, C" (D ignorieren!)
 
+## Eigene Datenbank-Tabellen in Plugins (KRITISCH)
+
+Wenn ein Plugin eine eigene DB-Tabelle braucht, verwende **NIEMALS** nur `register_activation_hook` für die Tabellenerstellung. Der Grund: `create_plugin` aktiviert das Plugin bevor der volle Code geschrieben ist — der Activation-Hook feuert also mit dem leeren Scaffold und nie wieder.
+
+**Korrektes Pattern — immer so verwenden:**
+
+```php
+add_action('admin_init', function () {
+    $installed = get_option('myplugin_db_version', '0');
+    if ($installed === '1.0') {
+        return; // Tabelle existiert bereits
+    }
+    global $wpdb;
+    $table = $wpdb->prefix . 'myplugin_items';
+    $charset = $wpdb->get_charset_collate();
+    $sql = "CREATE TABLE $table (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        -- weitere Spalten --
+        PRIMARY KEY  (id)
+    ) $charset;";
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    dbDelta($sql);
+    update_option('myplugin_db_version', '1.0');
+}, 5);
+```
+
+**Häufige `dbDelta`-Fallen:**
+- `require_once ABSPATH . 'wp-admin/includes/upgrade.php'` **muss** vor `dbDelta()` stehen
+- Nach `PRIMARY KEY` müssen **zwei Leerzeichen** stehen: `PRIMARY KEY  (id)`
+- Kein Trailing-Comma nach der letzten Spalte
+- Jede Spalte auf eigener Zeile
+
+**Cleanup bei Deinstallation — immer mitliefern:**
+
+Wenn ein Plugin eigene Tabellen oder Optionen anlegt, erstelle **immer** eine `uninstall.php` im Plugin-Root:
+
+```php
+<?php
+// uninstall.php
+if (!defined('WP_UNINSTALL_PLUGIN')) {
+    exit;
+}
+global $wpdb;
+$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}myplugin_items");
+delete_option('myplugin_db_version');
+```
+
+Ohne diese Datei bleiben Tabellen und Optionen **für immer** in der Datenbank, auch nach dem Löschen des Plugins.
+
 ## Debugging-Workflow
 
 Wenn etwas nicht funktioniert:
@@ -114,3 +163,27 @@ Wenn etwas nicht funktioniert:
 2. `read_plugin_file` nutzen um den eigenen Code zu prüfen
 3. `http_fetch` nutzen um den Frontend-Output zu sehen (falls verfügbar)
 4. `execute_wp_code` nutzen um WP-Funktionen direkt zu testen (falls verfügbar)
+
+### Dateien lesen vor dem Patchen
+
+- **Immer die gesamte Datei lesen** – `read_plugin_file` OHNE kleines `max_bytes` (Default 250 KB). Nie mit 200–500 Bytes stückweise durch die Datei tasten.
+- **Such-String exakt kopieren** – Bei `patch_plugin_file` muss der Such-String **1:1** aus dem `read_plugin_file`-Output stammen. Nie aus dem Gedächtnis rekonstruieren – ein Leerzeichen oder Zeilenumbruch Unterschied führt zu "No replacements could be applied".
+- **Wenn Patch fehlschlägt** – Datei an der betroffenen Stelle lesen, exakten Text aus dem Output kopieren und erneut patchen. Nicht raten oder aus der Chat-Historie übernehmen.
+
+### Typische Fehler bei KI-generiertem Code (selbst prüfen)
+
+Forschung und Praxis zeigen wiederkehrende Muster. Prüfe deinen Code gezielt darauf:
+
+| Fehlertyp | Beschreibung | Was prüfen |
+|-----------|--------------|------------|
+| **Fehlende Klammern** | In repetitiven Blöcken (z.B. `if` / `else if` / `else`) fehlt oft die öffnende `{` bei einem Block | Jeden Zweig in if/else-Ketten auf vollständige `{ }` prüfen |
+| **Variable inkonsistent** | Variable wird als `$userName` definiert, aber als `$username` oder `$user_name` verwendet | Alle Variablen-Namen in der Datei auf Einheitlichkeit prüfen |
+| **Off-by-one** | Schleifen enden eine Iteration zu früh oder zu spät; Array-Indizes falsch | Loop-Grenzen und Array-Zugriffe (0-basiert vs. 1-basiert) prüfen |
+| **Edge Cases fehlen** | Leere Eingaben, null, leere Arrays werden nicht abgefangen | Leere Werte, null, leere Strings/Arrays testen |
+| **Unvollständiger Code** | Bei langen Dateien werden Zeilen oder Funktionen übersprungen | Nach dem Schreiben mit `read_plugin_file` prüfen, ob der Code vollständig ist |
+| **Falsche API-Nutzung** | WordPress-/Plugin-Funktionen werden mit falschen Parametern oder falscher Reihenfolge aufgerufen | In der Referenz-Doku (memories/) die korrekte Signatur prüfen |
+
+### Nach dem Schreiben von Code
+
+- Mit `read_plugin_file` prüfen, ob der geschriebene Code vollständig und syntaktisch stimmig ist
+- Bei `js_error` oder `js_warning` im Tool-Result: Der JavaScript-Code hat einen Syntaxfehler – Fehlermeldung lesen und sofort beheben
