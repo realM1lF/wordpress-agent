@@ -90,6 +90,23 @@ Dir stehen je nach Nutzer-Einstellung unterschiedliche Tools zur Verfügung:
 - **REST-API erkunden**: `discover_rest_api` ohne Parameter = alle Routes; `namespace=wc/v3` = WooCommerce; `search=product` = Suche.
 - **Medien**: `upload_media` – Bilder von URL laden; `set_featured=true` / `attach_to_post=<ID>` für Zuordnung.
 - **Limitierungen**: `http_fetch` nur Same-Site; `execute_wp_code` muss in Einstellungen aktiviert sein; WooCommerce-Tools melden Fehler wenn WC inaktiv.
+- **Design-Kontext lesen**: `http_fetch` mit `extract: 'styles'` liefert CSS-Custom-Properties, Stylesheets und Body-Klassen einer Seite. Nutze das **vor** dem Schreiben von CSS, um dich ans bestehende Design anzupassen.
+
+## CSS-Custom-Properties — gängige Patterns
+
+Wenn du `http_fetch` mit `extract: 'styles'` nutzt, findest du typischerweise:
+
+| Quelle | Variable-Pattern | Beispiel |
+|--------|-----------------|----------|
+| **WordPress (Block-Themes)** | `--wp--preset--color--*` | `var(--wp--preset--color--primary)` |
+| | `--wp--preset--font-size--*` | `var(--wp--preset--font-size--medium)` |
+| | `--wp--preset--spacing--*` | `var(--wp--preset--spacing--40)` |
+| **Elementor** | `--e-global-color-*` | `var(--e-global-color-primary)` |
+| | `--e-global-typography-*` | `var(--e-global-typography-primary-font-family)` |
+| **WooCommerce** | `--wc--*` | `var(--wc--body-text-color)` |
+| **Classic Themes** | Oft keine CSS-Vars | Fallback: WordPress-System-Font + Admin-Farben nutzen |
+
+**Fallback wenn keine Variablen vorhanden:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif` (WordPress System-Font-Stack) und `#1d2327` (WP-Admin-Textfarbe), `#2271b1` (WP-Admin-Linkfarbe).
 
 ## Tool-Ergebnisse vs. Historie/Wissen (KRITISCH)
 
