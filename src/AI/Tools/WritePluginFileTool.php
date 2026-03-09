@@ -136,6 +136,21 @@ class WritePluginFileTool implements ToolInterface {
                 'error' => 'Write reverted: PHP syntax check failed. ' . ($lint['error'] ?? 'Unknown lint error.'),
             ];
         }
+
+        $jsLint = $this->validateInlineJavaScript($targetPath);
+        $fileExt = strtolower((string) pathinfo($relativePath, PATHINFO_EXTENSION));
+        if (($jsLint['valid'] ?? true) === false && $fileExt === 'js') {
+            if ($hadExistingFile && is_string($previousContent)) {
+                $filesystem->put_contents($targetPath, $previousContent, FS_CHMOD_FILE);
+            } else {
+                $filesystem->delete($targetPath, false, 'f');
+            }
+            return [
+                'success' => false,
+                'error' => 'Write reverted: ' . ($jsLint['error'] ?? 'JavaScript syntax check failed.'),
+            ];
+        }
+
         $bytes = strlen($content);
 
         $result = [
@@ -147,6 +162,13 @@ class WritePluginFileTool implements ToolInterface {
         ];
         if (!empty($lint['warning'])) {
             $result['warning'] = $lint['warning'];
+        }
+        if (($jsLint['valid'] ?? true) === false) {
+            $result['js_error'] = $jsLint['error']
+                . ' The file was saved but likely contains broken frontend JavaScript. Please fix the syntax error.';
+        }
+        if (!empty($jsLint['warning'] ?? '')) {
+            $result['js_warning'] = $jsLint['warning'];
         }
         return $result;
     }
@@ -193,6 +215,99 @@ class WritePluginFileTool implements ToolInterface {
 
     private function normalizeSlug(string $slug): string {
         return strtolower(str_replace(['-', '_'], '', $slug));
+    }
+
+    private function validateInlineJavaScript(string $path): array {
+        if (!function_exists('exec')) {
+            return ['valid' => true, 'warning' => 'JS validation skipped (exec unavailable).'];
+        }
+
+        $exitCode = 0;
+        @exec('which node 2>/dev/null', $whichOut, $exitCode);
+        if ($exitCode !== 0) {
+            return ['valid' => true, 'warning' => 'JS validation skipped (node not found).'];
+        }
+
+        $ext = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
+
+        if ($ext === 'js') {
+            $output = [];
+            @exec('node --check ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
+            if ($exitCode !== 0) {
+                return [
+                    'valid' => false,
+                    'error' => 'JavaScript syntax error: ' . $this->extractNodeError($output),
+                ];
+            }
+            return ['valid' => true];
+        }
+
+        if ($ext !== 'php') {
+            return ['valid' => true];
+        }
+
+        $content = file_get_contents($path);
+        if ($content === false || !str_contains($content, '<script')) {
+            return ['valid' => true];
+        }
+
+        if (!preg_match_all('/<script(\s[^>]*)?>(.+?)<\/script>/si', $content, $matches)) {
+            return ['valid' => true];
+        }
+
+        $errors = [];
+        foreach ($matches[2] as $i => $jsBlock) {
+            $attrs = $matches[1][$i] ?? '';
+            if ($attrs !== '' && preg_match('/type\s*=\s*["\'](.*?)["\']/i', $attrs, $typeMatch)) {
+                $type = strtolower(trim($typeMatch[1]));
+                if ($type !== '' && $type !== 'text/javascript' && $type !== 'module') {
+                    continue;
+                }
+            }
+
+            $js = trim($jsBlock);
+            if (strlen($js) < 20) {
+                continue;
+            }
+
+            $cleaned = preg_replace('/<\?(?:php|=)\s.*?\?>/s', '0', $js);
+            if (substr_count($cleaned, '0') - substr_count($js, '0') > 8) {
+                continue;
+            }
+
+            $tmpFile = tempnam(sys_get_temp_dir(), 'levi_js_');
+            if ($tmpFile === false) {
+                continue;
+            }
+            file_put_contents($tmpFile, $cleaned);
+            $output = [];
+            $exitCode = 0;
+            @exec('node --check ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+            @unlink($tmpFile);
+
+            if ($exitCode !== 0) {
+                $errors[] = 'Script block #' . ($i + 1) . ': ' . $this->extractNodeError($output);
+            }
+        }
+
+        if (!empty($errors)) {
+            return [
+                'valid' => false,
+                'error' => 'JavaScript syntax error(s): ' . implode(' | ', $errors),
+            ];
+        }
+
+        return ['valid' => true];
+    }
+
+    private function extractNodeError(array $output): string {
+        foreach ($output as $line) {
+            if (str_contains($line, 'SyntaxError')) {
+                return trim($line);
+            }
+        }
+        $filtered = array_filter($output, fn($l) => trim($l) !== '' && !str_starts_with(trim($l), 'at ') && !str_starts_with(trim($l), 'Node.js'));
+        return implode(' — ', array_slice($filtered, 0, 3)) ?: 'Unknown JS error.';
     }
 
     private function validatePhpSyntax(string $path): array {
