@@ -99,6 +99,11 @@ class StateSnapshotService {
         }
 
         if (!$needsRetry) {
+            if (get_transient('levi_changes_check_cooldown')) {
+                return;
+            }
+            set_transient('levi_changes_check_cooldown', '1', 15 * MINUTE_IN_SECONDS);
+
             $loader = new MemoryLoader();
             $changes = $loader->checkForChanges();
             if (!empty($changes['identity']) || !empty($changes['reference'])) {
