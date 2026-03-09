@@ -82,17 +82,31 @@ class StateSnapshotService {
     }
 
     private function maybeRetryPartialSync(): void {
-        $syncMeta = get_option(self::MEMORY_SYNC_OPTION, []);
-        if (empty($syncMeta['has_partials'])) {
-            return;
-        }
-
         if (get_transient('levi_partial_retry_lock')) {
             return;
         }
 
         $retries = (int) get_option('levi_partial_sync_retries', 0);
         if ($retries >= 6) {
+            return;
+        }
+
+        $needsRetry = false;
+        $syncMeta = get_option(self::MEMORY_SYNC_OPTION, []);
+
+        if (!empty($syncMeta['has_partials'])) {
+            $needsRetry = true;
+        }
+
+        if (!$needsRetry) {
+            $loader = new MemoryLoader();
+            $changes = $loader->checkForChanges();
+            if (!empty($changes['identity']) || !empty($changes['reference'])) {
+                $needsRetry = true;
+            }
+        }
+
+        if (!$needsRetry) {
             return;
         }
 

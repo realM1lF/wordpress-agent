@@ -570,7 +570,7 @@ class SetupWizardPage {
                                     } catch(err) {
                                         showError(typeof err === 'string' ? err : 'Ein Fehler ist aufgetreten. Bitte versuche es erneut.');
                                         startBtn.disabled = false;
-                                        startBtn.textContent = <?php echo wp_json_encode(__('Erneut versuchen', 'levi-agent')); ?>;
+                                        startBtn.textContent = <?php echo wp_json_encode(__('Sync fortsetzen', 'levi-agent')); ?>;
                                         backBtn.style.display = '';
                                     }
                                 }
