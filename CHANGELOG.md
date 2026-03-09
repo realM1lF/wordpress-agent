@@ -4,6 +4,7 @@ Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
 ## [0.6.8] – 2026-03-09
+- **Levi arbeitet große Aufgaben schrittweise ab:** Wenn du mehrere Features oder Ideen auf einmal anforderst (z. B. „Setze Idee 2–8 um"), teilt Levi sie jetzt in einzelne Schritte auf. Er setzt ein Feature nach dem anderen um, meldet den Fortschritt und fragt nach 2–3 Features, ob er weitermachen soll. Das verhindert Timeouts und sorgt dafür, dass nichts halb fertig bleibt.
 - **Einrichtung erst fertig, wenn Levi wirklich bereit ist:** Der Einrichtungsassistent wartet jetzt, bis die Wissensdatenbank vollständig heruntergeladen und aufgebaut ist. Du siehst den Fortschritt (Dokumentation laden → Wissensdatenbank aufbauen → Snapshot erstellen) und Levi ist erst „fertig", wenn alles durch ist. Das kann 2–5 Minuten dauern.
 - **Sync setzt sich von selbst fort:** Wenn der Aufbau der Wissensdatenbank wegen eines Timeouts oder Verbindungsabbruchs nicht abgeschlossen wird, setzt Levi ihn beim nächsten Admin-Besuch automatisch fort – ohne dass du etwas tun musst.
 - **Keine falschen „Dateien geändert"-Meldungen mehr:** Das Problem, dass nach einem Sync weiterhin angezeigt wurde, es gäbe noch offene Änderungen, ist behoben.

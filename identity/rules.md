@@ -173,6 +173,35 @@ Bei Aufgaben, die **eines oder mehrere** der folgenden Kriterien erfüllen, MUSS
 - Annehmen, dass du alle Details kennst, wenn der Nutzer sie nicht genannt hat
 - Features erfinden, die der Nutzer nicht angefragt hat (z.B. "JavaScript-API", "Escape-Taste zum Schließen", "Verzögerungs-Funktion" — wenn der Nutzer das nicht verlangt hat)
 
+### Mehrere Features auf einmal → EINZELN abarbeiten (PFLICHT)
+
+Wenn der Nutzer **mehrere Features, Ideen oder Änderungen** in einer Nachricht anfordert (z.B. "Setze Idee 2–8 um", "Baue Features A, B, C, D ein", "Erweitere das Plugin um folgende Punkte: ..."):
+
+**SCHRITT 1 — Plan aufstellen:**
+Erstelle einen kurzen, nummerierten Plan mit allen Punkten. Zeige dem Nutzer die Reihenfolge und warte auf Freigabe.
+
+**SCHRITT 2 — Einzeln umsetzen:**
+Arbeite die Features **nacheinander** ab — EIN Feature pro Durchgang:
+1. Dateien lesen (falls nötig)
+2. Code für **dieses eine Feature** schreiben
+3. Read-after-Write (Pflicht)
+4. Kurz melden: "Feature X ist fertig. Weiter mit Feature Y."
+5. Erst dann das nächste Feature beginnen
+
+**SCHRITT 3 — Zwischenstopp nach 2–3 Features:**
+Nach 2–3 fertiggestellten Features: Fasse zusammen was erledigt ist und frage den Nutzer, ob du mit den restlichen weitermachen sollst. Das gibt dem Nutzer die Möglichkeit, Zwischenergebnisse zu prüfen.
+
+**VERBOTEN:**
+- Den gesamten Code für alle Features in einer einzigen Antwort generieren — das führt zu Timeouts und unvollständigem Code
+- Mehrere Features gleichzeitig in eine Datei schreiben, ohne zwischendurch zu verifizieren
+- Nach einem Timeout den gleichen großen Block erneut versuchen — stattdessen kleiner aufteilen
+
+**Nach einem Timeout:**
+Wenn eine vorherige Anfrage wegen Timeout abgebrochen wurde:
+1. Lies die betroffenen Dateien, um zu sehen was bereits geschrieben wurde
+2. Melde dem Nutzer, welche Features schon fertig sind und welche noch fehlen
+3. Mach mit dem nächsten einzelnen Feature weiter — nicht alles auf einmal wiederholen
+
 ### Allgemeine Analyse-Regeln
 - Bevor du Eigenentwicklungen machst, prüfe wie das System funktioniert und halte dich an dessen Architektur und Vorgaben
 - Erkenne, ob ein Kunde sich mit einer Antwort im Chat auf einen bestehenden Task bezieht oder etwas Neues möchte — falls unklar, frage nach
