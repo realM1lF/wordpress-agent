@@ -7,7 +7,12 @@ use WP_Error;
 class MemoryLoader {
     private VectorStore $vectorStore;
     private int $chunkSize = 500;
-    private int $chunkOverlap = 50;
+
+    /**
+     * Bump this when the chunking algorithm changes to force re-indexing
+     * of all files on the next sync (cron or manual).
+     */
+    private const CHUNK_VERSION = 'v2-markdown';
 
     public function __construct() {
         $this->vectorStore = new VectorStore();
@@ -266,8 +271,8 @@ class MemoryLoader {
         $totalVectorsNow = $highestStoredIndex + 1 + $vectorsCreated;
         $isComplete = ($totalVectorsNow >= $totalChunks);
         
-        // Mark file as loaded
-        $fileHash = $this->vectorStore->getFileHash($filePath);
+        // Mark file as loaded (include CHUNK_VERSION so algorithm changes trigger re-index)
+        $fileHash = $this->vectorStore->getFileHash($filePath) . ':' . self::CHUNK_VERSION;
         if (!$isComplete) {
             $fileHash .= '_partial_' . $totalVectorsNow . '_' . $totalChunks;
         }
@@ -284,65 +289,249 @@ class MemoryLoader {
     }
 
     /**
-     * Split text into chunks with overlap
-     * 
-     * Uses a robust approach that works with various line ending formats.
-     * Splits by sentences first, then groups into word-count-based chunks.
+     * Split text into chunks using markdown-aware splitting.
+     *
+     * Strategy:
+     * 1. Parse markdown structure (headers, code blocks)
+     * 2. Each section = header + content until next same/higher-level header
+     * 3. Prepend header hierarchy path to each chunk for semantic context
+     * 4. Pack small consecutive sections into one chunk
+     * 5. Sub-split oversized sections at paragraph/code-block boundaries
+     *    (code blocks are never split mid-block)
      */
     private function splitIntoChunks(string $text): array {
-        // Normalize line endings and clean up whitespace
         $text = str_replace(["\r\n", "\r"], "\n", $text);
-        $text = preg_replace('/[ \t]+/', ' ', $text);
-        
-        // Split text into sentences (handles various sentence endings)
-        // This regex splits on . ! ? followed by space or newline, but keeps the punctuation
-        $sentences = preg_split('/(?<=[.!?])\s+/', $text, -1, PREG_SPLIT_NO_EMPTY);
-        
-        $chunks = [];
-        $currentChunk = '';
-        $currentWordCount = 0;
 
-        foreach ($sentences as $sentence) {
-            $sentence = trim($sentence);
-            if (empty($sentence)) {
+        $sections = $this->parseMarkdownSections($text);
+
+        if (empty($sections)) {
+            $trimmed = trim($text);
+            return $trimmed !== '' ? [$trimmed] : [];
+        }
+
+        return $this->packSectionsIntoChunks($sections);
+    }
+
+    /**
+     * Parse markdown text into sections delimited by headers.
+     * Correctly handles code blocks (# inside ``` is not a header).
+     *
+     * @return array<array{header_path: string, content: string}>
+     */
+    private function parseMarkdownSections(string $text): array {
+        $lines = explode("\n", $text);
+        $sections = [];
+        $headerStack = [];
+        $currentContent = '';
+        $inCodeBlock = false;
+
+        foreach ($lines as $line) {
+            if (preg_match('/^```/', $line)) {
+                $inCodeBlock = !$inCodeBlock;
+                $currentContent .= $line . "\n";
                 continue;
             }
 
-            $wordCount = str_word_count($sentence);
-
-            // If adding this sentence would exceed chunk size, save current chunk
-            if ($currentWordCount + $wordCount > $this->chunkSize && $currentWordCount > 0) {
-                $chunks[] = trim($currentChunk);
-                
-                // Keep last sentences for overlap (up to chunkOverlap words)
-                $currentChunkSentences = preg_split('/(?<=[.!?])\s+/', $currentChunk, -1, PREG_SPLIT_NO_EMPTY);
-                $overlapText = '';
-                $overlapWords = 0;
-                
-                for ($i = count($currentChunkSentences) - 1; $i >= 0; $i--) {
-                    $sentenceWords = str_word_count($currentChunkSentences[$i]);
-                    if ($overlapWords + $sentenceWords <= $this->chunkOverlap) {
-                        $overlapText = $currentChunkSentences[$i] . ' ' . $overlapText;
-                        $overlapWords += $sentenceWords;
-                    } else {
-                        break;
-                    }
-                }
-                
-                $currentChunk = trim($overlapText);
-                $currentWordCount = $overlapWords;
+            if ($inCodeBlock) {
+                $currentContent .= $line . "\n";
+                continue;
             }
 
-            $currentChunk .= ($currentChunk ? ' ' : '') . $sentence;
-            $currentWordCount += $wordCount;
+            if (preg_match('/^(#{1,6})\s+(.+)$/', $line, $matches)) {
+                $trimmed = trim($currentContent);
+                if ($trimmed !== '') {
+                    $sections[] = [
+                        'header_path' => $this->buildHeaderPath($headerStack),
+                        'content' => $trimmed,
+                    ];
+                }
+
+                $level = strlen($matches[1]);
+                $title = trim($matches[2]);
+
+                $headerStack = array_values(array_filter(
+                    $headerStack,
+                    fn($h) => $h['level'] < $level
+                ));
+                $headerStack[] = ['level' => $level, 'title' => $title];
+
+                $currentContent = '';
+            } else {
+                $currentContent .= $line . "\n";
+            }
         }
 
-        // Don't forget the last chunk
-        if (!empty($currentChunk)) {
-            $chunks[] = trim($currentChunk);
+        $trimmed = trim($currentContent);
+        if ($trimmed !== '') {
+            $sections[] = [
+                'header_path' => $this->buildHeaderPath($headerStack),
+                'content' => $trimmed,
+            ];
         }
 
-        return $chunks;
+        return $sections;
+    }
+
+    private function buildHeaderPath(array $headerStack): string {
+        if (empty($headerStack)) {
+            return '';
+        }
+        return implode(' > ', array_map(fn($h) => $h['title'], $headerStack));
+    }
+
+    /**
+     * Greedily pack sections into chunks up to chunkSize words.
+     * Sections that exceed chunkSize on their own are sub-split.
+     */
+    private function packSectionsIntoChunks(array $sections): array {
+        $chunks = [];
+        $currentParts = [];
+        $currentWords = 0;
+
+        foreach ($sections as $section) {
+            $formatted = $this->formatSectionText($section);
+            $words = str_word_count($formatted);
+
+            if ($words === 0) {
+                continue;
+            }
+
+            if ($words > $this->chunkSize && empty($currentParts)) {
+                $subChunks = $this->splitLargeSection($section['content'], $section['header_path']);
+                array_push($chunks, ...$subChunks);
+                continue;
+            }
+
+            if ($currentWords + $words > $this->chunkSize && !empty($currentParts)) {
+                $chunks[] = implode("\n\n", $currentParts);
+
+                if ($words > $this->chunkSize) {
+                    $subChunks = $this->splitLargeSection($section['content'], $section['header_path']);
+                    array_push($chunks, ...$subChunks);
+                    $currentParts = [];
+                    $currentWords = 0;
+                    continue;
+                }
+
+                $currentParts = [];
+                $currentWords = 0;
+            }
+
+            $currentParts[] = $formatted;
+            $currentWords += $words;
+        }
+
+        if (!empty($currentParts)) {
+            $chunks[] = implode("\n\n", $currentParts);
+        }
+
+        return array_filter($chunks, fn($c) => trim($c) !== '');
+    }
+
+    private function formatSectionText(array $section): string {
+        $content = trim($section['content']);
+        if ($content === '') {
+            return '';
+        }
+        $path = $section['header_path'];
+        return $path !== '' ? "[{$path}]\n\n{$content}" : $content;
+    }
+
+    /**
+     * Sub-split a section that exceeds chunkSize at paragraph / code-block
+     * boundaries. Code blocks are never split mid-block.
+     */
+    private function splitLargeSection(string $content, string $headerPath): array {
+        $prefix = $headerPath !== '' ? "[{$headerPath}]\n\n" : '';
+        $prefixWords = str_word_count($prefix);
+
+        $segments = $this->parseContentSegments($content);
+
+        $chunks = [];
+        $currentText = $prefix;
+        $currentWords = $prefixWords;
+
+        foreach ($segments as $segment) {
+            $segWords = str_word_count($segment);
+
+            if ($segWords > $this->chunkSize && $currentWords <= $prefixWords) {
+                $chunks[] = trim($prefix . $segment);
+                $currentText = $prefix;
+                $currentWords = $prefixWords;
+                continue;
+            }
+
+            if ($currentWords + $segWords > $this->chunkSize && $currentWords > $prefixWords) {
+                $chunks[] = trim($currentText);
+                $currentText = $prefix;
+                $currentWords = $prefixWords;
+            }
+
+            $currentText .= $segment . "\n\n";
+            $currentWords += $segWords;
+        }
+
+        if ($currentWords > $prefixWords) {
+            $chunks[] = trim($currentText);
+        }
+
+        return array_filter($chunks, fn($c) => trim($c) !== '');
+    }
+
+    /**
+     * Parse section content into atomic segments: text paragraphs and
+     * complete fenced code blocks. Code blocks stay intact.
+     *
+     * @return string[]
+     */
+    private function parseContentSegments(string $content): array {
+        $lines = explode("\n", $content);
+        $segments = [];
+        $currentText = '';
+        $inCodeBlock = false;
+        $codeBlock = '';
+
+        foreach ($lines as $line) {
+            if (preg_match('/^```/', $line)) {
+                if (!$inCodeBlock) {
+                    $this->flushTextAsSegments($currentText, $segments);
+                    $currentText = '';
+                    $inCodeBlock = true;
+                    $codeBlock = $line . "\n";
+                } else {
+                    $codeBlock .= $line;
+                    $segments[] = trim($codeBlock);
+                    $codeBlock = '';
+                    $inCodeBlock = false;
+                }
+            } elseif ($inCodeBlock) {
+                $codeBlock .= $line . "\n";
+            } else {
+                $currentText .= $line . "\n";
+            }
+        }
+
+        $this->flushTextAsSegments($currentText, $segments);
+
+        if ($codeBlock !== '') {
+            $segments[] = trim($codeBlock);
+        }
+
+        return $segments;
+    }
+
+    /**
+     * Split a block of plain text at double-newline paragraph boundaries
+     * and append each non-empty paragraph to $segments.
+     */
+    private function flushTextAsSegments(string $text, array &$segments): void {
+        $paragraphs = preg_split('/\n{2,}/', $text, -1, PREG_SPLIT_NO_EMPTY);
+        foreach ($paragraphs as $p) {
+            $trimmed = trim($p);
+            if ($trimmed !== '') {
+                $segments[] = $trimmed;
+            }
+        }
     }
 
     /**
@@ -359,7 +548,7 @@ class MemoryLoader {
         foreach (['soul.md', 'rules.md', 'knowledge.md'] as $file) {
             $path = $identityDir . $file;
             if (file_exists($path)) {
-                $hash = $this->vectorStore->getFileHash($path);
+                $hash = $this->vectorStore->getFileHash($path) . ':' . self::CHUNK_VERSION;
                 if (!$this->vectorStore->isFileLoaded($path, $hash)) {
                     $changes['identity'][] = $file;
                 }
@@ -368,7 +557,7 @@ class MemoryLoader {
 
         $referenceFiles = $this->getResolvedReferenceFiles();
         foreach ($referenceFiles as $filename => $path) {
-            $hash = $this->vectorStore->getFileHash($path);
+            $hash = $this->vectorStore->getFileHash($path) . ':' . self::CHUNK_VERSION;
             if (!$this->vectorStore->isFileLoaded($path, $hash)) {
                 $changes['reference'][] = $filename;
             }
