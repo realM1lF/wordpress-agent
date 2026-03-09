@@ -813,6 +813,7 @@ class ChatController extends WP_REST_Controller {
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
         $mutationNudgeCount = 0;
+        $completionGateCount = 0;
         $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
 
         while ($iteration < $maxIterations) {
@@ -991,6 +992,18 @@ class ChatController extends WP_REST_Controller {
                 }
             }
 
+            $integrationCheck = $this->injectPostWriteIntegrationCheck($toolCalls, $toolResults);
+            if (!empty($integrationCheck)) {
+                $this->emitSSE('progress', [
+                    'message' => 'Prüfe Datei-Integration...',
+                    'tool' => 'integration_check',
+                    'iteration' => $iteration,
+                ]);
+                foreach ($integrationCheck as $ic) {
+                    $messages[] = $ic;
+                }
+            }
+
             if (connection_aborted()) {
                 error_log('Levi: client disconnected during tool loop');
                 return;
@@ -1016,6 +1029,30 @@ class ChatController extends WP_REST_Controller {
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
+                $completionIssues = $this->checkWriteCompleteness($toolResults);
+                if ($completionIssues !== null && $completionGateCount < 2) {
+                    $completionGateCount++;
+                    $this->emitSSE('progress', [
+                        'message' => 'Completion-Check: Prüfe Datei-Vollständigkeit...',
+                        'tool' => 'completion_gate',
+                        'iteration' => $iteration,
+                    ]);
+                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => "[SYSTEM – COMPLETION CHECK FAILED]\n" . $completionIssues
+                            . "\n\nDu darfst dem Nutzer NICHT 'fertig' melden bevor diese Probleme behoben sind. "
+                            . "Fuehre die noetige(n) write_plugin_file / patch_plugin_file Aktion(en) jetzt aus.",
+                    ];
+                    $gateResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat, $webSearch);
+                    if (!is_wp_error($gateResponse)) {
+                        $messageData = $gateResponse['choices'][0]['message'] ?? [];
+                        if (!empty($messageData['tool_calls'])) {
+                            continue;
+                        }
+                    }
+                }
+
                 if ($pendingConfirmation === null && $this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
                     $mutationNudgeCount++;
                     $messages[] = [
@@ -1372,6 +1409,7 @@ class ChatController extends WP_REST_Controller {
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
         $mutationNudgeCount = 0;
+        $completionGateCount = 0;
         $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
 
         while ($iteration < $maxIterations) {
@@ -1563,6 +1601,11 @@ class ChatController extends WP_REST_Controller {
                 $messages[] = $st;
             }
 
+            $integrationCheck = $this->injectPostWriteIntegrationCheck($toolCalls, $toolResults);
+            foreach ($integrationCheck as $ic) {
+                $messages[] = $ic;
+            }
+
             $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), null, $webSearch);
             if (is_wp_error($nextResponse)) {
                 $errMsg = $nextResponse->get_error_message();
@@ -1595,6 +1638,25 @@ class ChatController extends WP_REST_Controller {
 
             $messageData = $nextResponse['choices'][0]['message'] ?? [];
             if (empty($messageData['tool_calls'])) {
+                $completionIssues = $this->checkWriteCompleteness($toolResults);
+                if ($completionIssues !== null && $completionGateCount < 2) {
+                    $completionGateCount++;
+                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => "[SYSTEM – COMPLETION CHECK FAILED]\n" . $completionIssues
+                            . "\n\nDu darfst dem Nutzer NICHT 'fertig' melden bevor diese Probleme behoben sind. "
+                            . "Fuehre die noetige(n) write_plugin_file / patch_plugin_file Aktion(en) jetzt aus.",
+                    ];
+                    $gateResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), null, $webSearch);
+                    if (!is_wp_error($gateResponse)) {
+                        $messageData = $gateResponse['choices'][0]['message'] ?? [];
+                        if (!empty($messageData['tool_calls'])) {
+                            continue;
+                        }
+                    }
+                }
+
                 if ($pendingConfirmation === null && $this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
                     $mutationNudgeCount++;
                     $messages[] = [
@@ -2610,6 +2672,293 @@ PROMPT;
                 . "Antworte dem Nutzer NICHT mit 'fertig' oder 'erstellt' bevor du write_plugin_file oder patch_plugin_file aufgerufen hast. "
                 . "Falls das Plugin mehrere Dateien braucht (CSS, JS, Admin-Seite), schreibe ALLE benoetigten Dateien.",
         ]];
+    }
+
+    /**
+     * Find the main PHP file of a plugin (the one with the "Plugin Name:" header).
+     * Returns the absolute path or null if not found.
+     */
+    private function findMainPluginFile(string $pluginSlug): ?string {
+        $pluginRoot = trailingslashit(WP_PLUGIN_DIR) . $pluginSlug;
+        if (!is_dir($pluginRoot)) {
+            return null;
+        }
+
+        $candidate = $pluginRoot . '/' . $pluginSlug . '.php';
+        if (is_file($candidate)) {
+            return $candidate;
+        }
+
+        $entries = scandir($pluginRoot);
+        if ($entries === false) {
+            return null;
+        }
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            $path = $pluginRoot . '/' . $entry;
+            if (!is_file($path) || strtolower(pathinfo($entry, PATHINFO_EXTENSION)) !== 'php') {
+                continue;
+            }
+            $header = file_get_contents($path, false, null, 0, 8192);
+            if ($header !== false && preg_match('/Plugin\s+Name\s*:/i', $header)) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * After writing a sub-file inside a plugin, check whether the main plugin file
+     * actually loads it (require/include for PHP, wp_enqueue for CSS/JS).
+     * If not, inject a warning so the AI knows the file is "dead".
+     */
+    private function injectPostWriteIntegrationCheck(array $toolCalls, array $toolResults): array {
+        $writtenSubFiles = [];
+
+        foreach ($toolResults as $tr) {
+            if (!($tr['result']['success'] ?? false)) {
+                continue;
+            }
+            $tool = $tr['tool'] ?? '';
+            if (!in_array($tool, ['write_plugin_file', 'patch_plugin_file'], true)) {
+                continue;
+            }
+
+            $slug = $tr['result']['plugin_slug'] ?? null;
+            $relPath = $tr['result']['relative_path'] ?? '';
+            if ($slug === null || $relPath === '') {
+                foreach ($toolCalls as $tc) {
+                    if (($tc['function']['name'] ?? '') === $tool) {
+                        $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                        $slug = $slug ?? ($args['plugin_slug'] ?? null);
+                        $relPath = $relPath ?: ($args['relative_path'] ?? '');
+                        break;
+                    }
+                }
+            }
+            if ($slug === null || $relPath === '') {
+                continue;
+            }
+
+            if (str_contains($relPath, '/') || str_contains($relPath, '\\')) {
+                $writtenSubFiles[] = ['slug' => $slug, 'path' => $relPath];
+            }
+        }
+
+        if (empty($writtenSubFiles)) {
+            return [];
+        }
+
+        $warnings = [];
+        $checkedSlugs = [];
+
+        foreach ($writtenSubFiles as $sub) {
+            $slug = $sub['slug'];
+            $relPath = $sub['path'];
+
+            $cacheKey = $slug . '::' . $relPath;
+            if (isset($checkedSlugs[$cacheKey])) {
+                continue;
+            }
+            $checkedSlugs[$cacheKey] = true;
+
+            $mainFile = $this->findMainPluginFile($slug);
+            if ($mainFile === null) {
+                continue;
+            }
+
+            $mainRelPath = basename($mainFile);
+            if ($relPath === $mainRelPath) {
+                continue;
+            }
+
+            $mainContent = @file_get_contents($mainFile);
+            if ($mainContent === false) {
+                continue;
+            }
+
+            $basename = basename($relPath);
+            $ext = strtolower(pathinfo($basename, PATHINFO_EXTENSION));
+            $found = false;
+
+            if ($ext === 'php') {
+                $escaped = preg_quote($basename, '/');
+                $escapedPath = preg_quote($relPath, '/');
+                if (preg_match('/(?:require|include)(?:_once)?\s*[\(]?\s*[\'"].*?' . $escaped . '/i', $mainContent)
+                    || preg_match('/(?:require|include)(?:_once)?\s*[\(]?\s*.*?' . $escapedPath . '/i', $mainContent)) {
+                    $found = true;
+                }
+
+                if (!$found) {
+                    $allPhpFiles = glob(dirname($mainFile) . '/**/*.php');
+                    if ($allPhpFiles) {
+                        foreach ($allPhpFiles as $phpFile) {
+                            if ($phpFile === $mainFile) {
+                                continue;
+                            }
+                            $otherContent = @file_get_contents($phpFile);
+                            if ($otherContent !== false && preg_match('/(?:require|include)(?:_once)?\s*[\(]?\s*[\'"].*?' . $escaped . '/i', $otherContent)) {
+                                $found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } elseif ($ext === 'css' || $ext === 'js') {
+                $escaped = preg_quote($basename, '/');
+                $enqueuePattern = '/wp_(?:enqueue|register)_(?:style|script)\s*\(.*?' . $escaped . '/is';
+                if (preg_match($enqueuePattern, $mainContent)) {
+                    $found = true;
+                }
+
+                if (!$found) {
+                    $allPhpFiles = glob(dirname($mainFile) . '/{,*/,*/*/}*.php', GLOB_BRACE);
+                    if ($allPhpFiles) {
+                        foreach ($allPhpFiles as $phpFile) {
+                            if ($phpFile === $mainFile) {
+                                continue;
+                            }
+                            $otherContent = @file_get_contents($phpFile);
+                            if ($otherContent !== false && preg_match($enqueuePattern, $otherContent)) {
+                                $found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                continue;
+            }
+
+            if (!$found) {
+                $typeHint = ($ext === 'php')
+                    ? 'require_once oder include_once'
+                    : (($ext === 'css') ? 'wp_enqueue_style' : 'wp_enqueue_script');
+                $warnings[] = "'{$relPath}' in Plugin '{$slug}' wird von keiner PHP-Datei eingebunden "
+                    . "(kein {$typeHint} gefunden). Die Datei wird nie geladen!";
+            }
+        }
+
+        if (empty($warnings)) {
+            return [];
+        }
+
+        return [[
+            'role' => 'system',
+            'content' => "[SYSTEM – INTEGRATION CHECK]\n"
+                . implode("\n", $warnings)
+                . "\n\nDu MUSST die Hauptdatei oder eine passende PHP-Datei des Plugins aktualisieren, "
+                . "damit die oben genannten Dateien eingebunden werden. "
+                . "Bei PHP: require_once. Bei CSS: wp_enqueue_style. Bei JS: wp_enqueue_script. "
+                . "Antworte dem Nutzer NICHT mit 'fertig' bevor die Integration sichergestellt ist.",
+        ]];
+    }
+
+    /**
+     * Completion gate: before the AI says "done", verify that all sub-files written
+     * during this session are properly integrated into their plugin's main file,
+     * and that the main file doesn't reference files that don't exist on disk.
+     *
+     * Returns null if everything looks OK, or a description of the issues found.
+     */
+    private function checkWriteCompleteness(array $toolResults): ?string {
+        $pluginWrites = [];
+
+        foreach ($toolResults as $tr) {
+            if (!($tr['result']['success'] ?? false)) {
+                continue;
+            }
+            $tool = $tr['tool'] ?? '';
+            if (!in_array($tool, ['write_plugin_file', 'patch_plugin_file'], true)) {
+                continue;
+            }
+            $slug = $tr['result']['plugin_slug'] ?? null;
+            $relPath = $tr['result']['relative_path'] ?? '';
+            if ($slug === null || $relPath === '') {
+                continue;
+            }
+            $pluginWrites[$slug][] = $relPath;
+        }
+
+        if (empty($pluginWrites)) {
+            return null;
+        }
+
+        $issues = [];
+
+        foreach ($pluginWrites as $slug => $writtenPaths) {
+            $mainFile = $this->findMainPluginFile($slug);
+            if ($mainFile === null) {
+                continue;
+            }
+
+            $mainContent = @file_get_contents($mainFile);
+            if ($mainContent === false) {
+                continue;
+            }
+
+            $mainRelPath = basename($mainFile);
+            $pluginRoot = trailingslashit(WP_PLUGIN_DIR) . $slug;
+
+            foreach ($writtenPaths as $relPath) {
+                if ($relPath === $mainRelPath) {
+                    continue;
+                }
+                if (!str_contains($relPath, '/') && !str_contains($relPath, '\\')) {
+                    continue;
+                }
+
+                $basename = basename($relPath);
+                $ext = strtolower(pathinfo($basename, PATHINFO_EXTENSION));
+                $found = false;
+
+                if ($ext === 'php') {
+                    $escaped = preg_quote($basename, '/');
+                    $allPhpFiles = glob($pluginRoot . '/{,*/,*/*/}*.php', GLOB_BRACE) ?: [];
+                    foreach ($allPhpFiles as $phpFile) {
+                        $c = @file_get_contents($phpFile);
+                        if ($c !== false && preg_match('/(?:require|include)(?:_once)?\s*[\(]?\s*[\'"].*?' . $escaped . '/i', $c)) {
+                            $found = true;
+                            break;
+                        }
+                    }
+                } elseif (in_array($ext, ['css', 'js'], true)) {
+                    $escaped = preg_quote($basename, '/');
+                    $pattern = '/wp_(?:enqueue|register)_(?:style|script)\s*\(.*?' . $escaped . '/is';
+                    $allPhpFiles = glob($pluginRoot . '/{,*/,*/*/}*.php', GLOB_BRACE) ?: [];
+                    foreach ($allPhpFiles as $phpFile) {
+                        $c = @file_get_contents($phpFile);
+                        if ($c !== false && preg_match($pattern, $c)) {
+                            $found = true;
+                            break;
+                        }
+                    }
+                } else {
+                    continue;
+                }
+
+                if (!$found) {
+                    $issues[] = "Plugin '{$slug}': Datei '{$relPath}' wurde geschrieben, "
+                        . "ist aber in keiner PHP-Datei des Plugins eingebunden.";
+                }
+            }
+
+            if (preg_match_all('/(?:require|include)(?:_once)?\s*[\(]?\s*(?:__DIR__|dirname\s*\(\s*__FILE__\s*\))\s*\.\s*[\'"]([^"\']+)[\'"]/i', $mainContent, $matches)) {
+                foreach ($matches[1] as $referenced) {
+                    $referenced = ltrim($referenced, '/\\');
+                    $fullPath = $pluginRoot . '/' . $referenced;
+                    if (!is_file($fullPath)) {
+                        $issues[] = "Plugin '{$slug}': Die Hauptdatei referenziert '{$referenced}', "
+                            . "aber diese Datei existiert nicht. Das verursacht einen Fatal Error!";
+                    }
+                }
+            }
+        }
+
+        return empty($issues) ? null : implode("\n", $issues);
     }
 
     private function hasUserConfirmationSignal(string $text): bool {

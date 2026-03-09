@@ -170,6 +170,12 @@ class WritePluginFileTool implements ToolInterface {
         if (!empty($jsLint['warning'] ?? '')) {
             $result['js_warning'] = $jsLint['warning'];
         }
+
+        $codeTagCheck = $this->detectCodeTagsInOutput($content, $relativePath);
+        if ($codeTagCheck !== null) {
+            $result['code_tag_warning'] = $codeTagCheck;
+        }
+
         return $result;
     }
 
@@ -333,5 +339,56 @@ class WritePluginFileTool implements ToolInterface {
         }
 
         return ['valid' => true];
+    }
+
+    /**
+     * Detect <code>/<pre> tags inside PHP string output (return, echo, heredoc).
+     * These tags break frontend styling by rendering HTML as monospace text.
+     * Only flags PHP files; only flags tags inside string contexts, not in comments.
+     */
+    private function detectCodeTagsInOutput(string $content, string $relativePath): ?string {
+        $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
+        if ($ext !== 'php') {
+            return null;
+        }
+
+        if (stripos($content, '<code') === false && stripos($content, '</code>') === false) {
+            return null;
+        }
+
+        $found = [];
+
+        if (preg_match_all(
+            '/(?:return|echo|print)\s+[\'"].*?<\/?code[\s>]/is',
+            $content,
+            $matches
+        )) {
+            $found = array_merge($found, $matches[0]);
+        }
+
+        if (preg_match_all(
+            '/[\'"].*?<\/?code[\s>].*?[\'"]\s*[;.]/is',
+            $content,
+            $matches
+        )) {
+            $found = array_merge($found, $matches[0]);
+        }
+
+        if (preg_match_all(
+            '/<<<[\'"]?(?:HTML|EOT|HEREDOC|EOF)[\'"]?\s*\n.*?<\/?code[\s>].*?\n\w+;/is',
+            $content,
+            $matches
+        )) {
+            $found = array_merge($found, $matches[0]);
+        }
+
+        if (empty($found)) {
+            return null;
+        }
+
+        return 'ACHTUNG: Die Datei enthaelt <code>-Tags in HTML-Output-Strings. '
+            . '<code>-Tags verhindern, dass CSS-Styles greifen und zeigen Inhalte als Monospace-Text an. '
+            . 'Entferne alle <code> und </code> Tags aus dem HTML-Output sofort mit patch_plugin_file. '
+            . 'HTML-Elemente wie <div>, <h3>, <span> sind Render-Output, kein "Code zum Anzeigen".';
     }
 }

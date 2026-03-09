@@ -204,6 +204,11 @@ class PatchPluginFileTool implements ToolInterface {
             $result['js_warning'] = $jsLint['warning'];
         }
 
+        $codeTagCheck = $this->detectCodeTagsInOutput($newContent, $relativePath);
+        if ($codeTagCheck !== null) {
+            $result['code_tag_warning'] = $codeTagCheck;
+        }
+
         return $result;
     }
 
@@ -355,5 +360,39 @@ class PatchPluginFileTool implements ToolInterface {
             return ['valid' => false, 'error' => trim(implode("\n", $output)) ?: 'PHP lint failed.'];
         }
         return ['valid' => true];
+    }
+
+    private function detectCodeTagsInOutput(string $content, string $relativePath): ?string {
+        $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
+        if ($ext !== 'php') {
+            return null;
+        }
+
+        if (stripos($content, '<code') === false && stripos($content, '</code>') === false) {
+            return null;
+        }
+
+        $found = false;
+
+        if (preg_match('/(?:return|echo|print)\s+[\'"].*?<\/?code[\s>]/is', $content)) {
+            $found = true;
+        }
+
+        if (!$found && preg_match('/[\'"].*?<\/?code[\s>].*?[\'"]\s*[;.]/is', $content)) {
+            $found = true;
+        }
+
+        if (!$found && preg_match('/<<<[\'"]?(?:HTML|EOT|HEREDOC|EOF)[\'"]?\s*\n.*?<\/?code[\s>].*?\n\w+;/is', $content)) {
+            $found = true;
+        }
+
+        if (!$found) {
+            return null;
+        }
+
+        return 'ACHTUNG: Die Datei enthaelt <code>-Tags in HTML-Output-Strings. '
+            . '<code>-Tags verhindern, dass CSS-Styles greifen und zeigen Inhalte als Monospace-Text an. '
+            . 'Entferne alle <code> und </code> Tags aus dem HTML-Output sofort mit patch_plugin_file. '
+            . 'HTML-Elemente wie <div>, <h3>, <span> sind Render-Output, kein "Code zum Anzeigen".';
     }
 }

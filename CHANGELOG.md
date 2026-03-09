@@ -3,6 +3,12 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.7.0] – 2026-03-09
+- **Levi erkennt vergessene Dateien automatisch:** Wenn Levi eine Datei schreibt (z.B. eine Settings-Seite), prüft das System jetzt automatisch, ob sie auch in der Hauptdatei eingebunden wird. Falls nicht, bekommt Levi sofort eine Warnung und muss die Einbindung nachholen — bevor er "fertig" meldet. Das verhindert "tote Dateien", die zwar existieren, aber nie geladen werden.
+- **Completion Gate verhindert voreilige "Fertig!"-Meldungen:** Bevor Levi seine Antwort an dich sendet, prüft das System ein letztes Mal, ob alle geschriebenen Dateien korrekt verknüpft sind. Wenn noch Probleme bestehen, muss Levi sie erst beheben. Das passiert automatisch im Hintergrund.
+- **Inventur-Pflicht bei Multi-File-Aufgaben:** Levi muss jetzt bei Aufgaben mit mehreren Dateien vor dem "Fertig!" alle betroffenen Dateien auflisten und für jede bestätigen: geschrieben, verifiziert und eingebunden. Vergessene Schritte werden so früh erkannt.
+- **Keine `<code>`-Tags mehr im HTML-Output:** Levi darf HTML-Elemente nicht mehr in `<code>`-Tags packen — das verhindert, dass CSS-Styles greifen. Eine neue Regel und ein Backend-Check erkennen das sofort beim Schreiben und Patchen: Levi bekommt eine Warnung und muss die Tags entfernen, bevor er "fertig" meldet.
+
 ## [0.6.9] – 2026-03-09
 - **Levi passt sich an dein Design an:** Wenn Levi ein Plugin mit Frontend-Ausgabe baut, analysiert er vorher automatisch die Farben, Schriften und Abstände deiner Seite. So sieht neuer Code nicht wie ein Fremdkörper aus, sondern passt optisch zum bestehenden Design.
 - **Plugins mit vielen Dateien laufen stabiler:** Levi schreibt jetzt eine Datei nach der anderen (statt alles auf einmal) und erstellt zuerst die Hilfsdateien, bevor die Hauptdatei kommt. Das verhindert Abstürze und "weiße Seiten" bei größeren Plugins.
