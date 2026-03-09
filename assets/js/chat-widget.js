@@ -1117,9 +1117,11 @@
                 .then(data => {
                     reloadBtn.disabled = false;
                     if (data.success) {
-                        const identityCount = Object.keys(data.data.results.identity.loaded || {}).length;
-                        const referenceCount = Object.keys(data.data.results.reference.loaded || {}).length;
-                        result.innerHTML = ' <span style="color: green;">✅ Reloaded! Identity: ' + identityCount + ', Reference: ' + referenceCount + ' files</span>';
+                        const r = data.data.results || {};
+                        const identityCount = (r.changed_identity || []).length;
+                        const referenceCount = (r.changed_reference || []).length;
+                        const loadedCount = Object.keys(r.loaded || {}).length;
+                        result.innerHTML = ' <span style="color: green;">✅ ' + data.data.message + ' (Identity: ' + identityCount + ', Reference: ' + referenceCount + ')</span>';
                         // Reload page after 2 seconds to show updated stats
                         setTimeout(() => location.reload(), 2000);
                     } else {
