@@ -204,7 +204,7 @@ class PatchPluginFileTool implements ToolInterface {
             $result['js_warning'] = $jsLint['warning'];
         }
 
-        $codeTagCheck = $this->detectCodeTagsInOutput($newContent, $relativePath);
+        $codeTagCheck = $this->detectCodeTagsInOutput($content, $relativePath);
         if ($codeTagCheck !== null) {
             $result['code_tag_warning'] = $codeTagCheck;
         }
