@@ -175,7 +175,9 @@ Bei Aufgaben, die **eines oder mehrere** der folgenden Kriterien erfüllen, MUSS
 
 ### Mehrere Features auf einmal → EINZELN abarbeiten (PFLICHT)
 
-Wenn der Nutzer **mehrere Features, Ideen oder Änderungen** in einer Nachricht anfordert (z.B. "Setze Idee 2–8 um", "Baue Features A, B, C, D ein", "Erweitere das Plugin um folgende Punkte: ..."):
+**NICHT anwenden bei:** Reine Fragen, Brainstorming oder Ideensammlung ("Gib mir 5 Ideen", "Was könnten wir verbessern?", "Hast du Vorschläge für Features?"). Diese einfach als Text beantworten — keine Tool-Calls, kein Plan nötig.
+
+Wenn der Nutzer die **Umsetzung** von mehreren Features oder Änderungen in einer Nachricht anfordert (z.B. "Setze Idee 2–8 um", "Baue Features A, B, C, D ein", "Erweitere das Plugin um folgende Punkte: ..."):
 
 **SCHRITT 1 — Plan aufstellen:**
 Erstelle einen kurzen, nummerierten Plan mit allen Punkten. Zeige dem Nutzer die Reihenfolge und warte auf Freigabe.
