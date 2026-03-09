@@ -10,6 +10,8 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 - **Keine falschen „Dateien geändert"-Meldungen mehr:** Das Problem, dass nach einem Sync weiterhin angezeigt wurde, es gäbe noch offene Änderungen, ist behoben.
 - **Levi kann jetzt laengere Aufgaben durchfuehren:** Die Standardwerte fuer Arbeitsschritte und PHP-Zeitlimit wurden angehoben (25 Schritte / 300 Sekunden). Aufgaben wie "Pruefe alle Seiten auf Rechtschreibfehler" laufen jetzt zuverlaessig durch, ohne vorzeitig abzubrechen.
 - **Weniger Serverlast im Admin:** Die Pruefung auf geaenderte Memory-Dateien lief vorher bei jedem Admin-Seitenaufruf. Jetzt wird nur noch alle 15 Minuten geprueft — der Rest bleibt gleich schnell.
+- **Levi arbeitet praeziser mit Daten:** Wenn Levi Aenderungen an bestehenden Inhalten vornimmt (z. B. Seiten veroeffentlichen, Beitraege loeschen), prueft er jetzt immer zuerst den aktuellen Stand und handelt nur mit den echten Daten. Revisionen, Anhaenge oder Beitraege werden nicht mehr faelschlich als Seiten behandelt.
+- **Regelkonflikte behoben:** Mehrere interne Regeln, die sich gegenseitig widersprochen haben, wurden bereinigt. Levi unterscheidet jetzt klar zwischen schnellen Einzelaktionen, komplexen Coding-Aufgaben und einfachen Fragen.
 
 ## [0.6.7] – 2026-03-09
 - **Levi findet JavaScript-Fehler sofort:** Wenn Levi Code schreibt, der im Browser ausgeführt wird (z. B. bei Elementor-Widgets), prüft das System jetzt automatisch die Syntax. Fehlende Klammern oder Tippfehler werden erkannt – bevor du sie im Frontend siehst. Levi bekommt die Meldung direkt und kann den Fehler direkt beheben.
