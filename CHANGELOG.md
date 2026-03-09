@@ -3,6 +3,16 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.6.9] – 2026-03-09
+- **Levi passt sich an dein Design an:** Wenn Levi ein Plugin mit Frontend-Ausgabe baut, analysiert er vorher automatisch die Farben, Schriften und Abstände deiner Seite. So sieht neuer Code nicht wie ein Fremdkörper aus, sondern passt optisch zum bestehenden Design.
+- **Plugins mit vielen Dateien laufen stabiler:** Levi schreibt jetzt eine Datei nach der anderen (statt alles auf einmal) und erstellt zuerst die Hilfsdateien, bevor die Hauptdatei kommt. Das verhindert Abstürze und "weiße Seiten" bei größeren Plugins.
+- **Levi prüft die Umgebung vor dem Coden:** Bei größeren Plugins analysiert Levi vor dem Schreiben automatisch die aktiven Plugins, das Theme, die WordPress-Version und seine Dokumentation — damit der Code auf Anhieb passt.
+- **Bessere Wiederaufnahme nach Abbrüchen:** Wenn ein Plugin-Bau unterbrochen wird (Timeout, Fehler), erkennt Levi beim Weitermachen was schon da ist und schreibt nur die fehlenden Dateien — statt alles von vorne zu beginnen.
+- **Plugins werden nach Fertigstellung getestet:** Nach dem Bau eines neuen Plugins ruft Levi die Zielseite auf und prüft, ob das Plugin dort wirklich sichtbar ist — bevor er "fertig" meldet.
+- **Eigene Datenbank-Tabellen funktionieren sofort:** Wenn ein Plugin eine eigene Tabelle braucht (z.B. für TODOs), wird sie jetzt beim ersten Aufruf automatisch erstellt — nicht nur bei der Aktivierung.
+- **Saubere Deinstallation:** Plugins, die eigene Datenbank-Tabellen anlegen, räumen diese beim Löschen jetzt automatisch auf.
+- **Slug-Konflikte löst Levi selbst:** Wenn ein Plugin-Name schon auf wordpress.org existiert, wählt Levi automatisch einen anderen Namen — statt den Fehler anzuzeigen.
+
 ## [0.6.8] – 2026-03-09
 - **Levi arbeitet große Aufgaben schrittweise ab:** Wenn du mehrere Features oder Ideen auf einmal anforderst (z. B. „Setze Idee 2–8 um"), teilt Levi sie jetzt in einzelne Schritte auf. Er setzt ein Feature nach dem anderen um, meldet den Fortschritt und fragt nach 2–3 Features, ob er weitermachen soll. Das verhindert Timeouts und sorgt dafür, dass nichts halb fertig bleibt.
 - **Einrichtung erst fertig, wenn Levi wirklich bereit ist:** Der Einrichtungsassistent wartet jetzt, bis die Wissensdatenbank vollständig heruntergeladen und aufgebaut ist. Du siehst den Fortschritt (Dokumentation laden → Wissensdatenbank aufbauen → Snapshot erstellen) und Levi ist erst „fertig", wenn alles durch ist. Das kann 2–5 Minuten dauern.
