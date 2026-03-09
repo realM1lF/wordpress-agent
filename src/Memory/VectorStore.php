@@ -566,21 +566,27 @@ class VectorStore {
 
     /**
      * Remove a file from the loaded_files tracking table.
+     * Tries both normalized and original path for compatibility.
      */
     public function unmarkFileLoaded(string $filePath): bool {
         if (!$this->db) {
             return false;
         }
 
-        try {
-            $stmt = $this->db->prepare('DELETE FROM loaded_files WHERE file_path = :file_path');
-            $stmt->bindValue(':file_path', $filePath, SQLITE3_TEXT);
-            $stmt->execute();
-            return true;
-        } catch (\Exception $e) {
-            error_log('VectorStore unmarkFileLoaded error: ' . $e->getMessage());
-            return false;
+        $pathsToTry = array_unique([$this->normalizePath($filePath), $filePath]);
+        foreach ($pathsToTry as $path) {
+            if ($path === '') {
+                continue;
+            }
+            try {
+                $stmt = $this->db->prepare('DELETE FROM loaded_files WHERE file_path = :file_path');
+                $stmt->bindValue(':file_path', $path, SQLITE3_TEXT);
+                $stmt->execute();
+            } catch (\Exception $e) {
+                error_log('VectorStore unmarkFileLoaded error: ' . $e->getMessage());
+            }
         }
+        return true;
     }
 
     public function pruneMemoryType(string $memoryType, int $keepLatest = 60): bool {
@@ -615,20 +621,34 @@ class VectorStore {
         }
     }
 
+    private function normalizePath(string $filePath): string {
+        $real = realpath($filePath);
+        return ($real !== false) ? $real : $filePath;
+    }
+
     public function isFileLoaded(string $filePath, string $fileHash): bool {
         if (!$this->db) {
             return false;
         }
 
-        try {
-            $stmt = $this->db->prepare('SELECT file_hash FROM loaded_files WHERE file_path = :file_path');
-            $stmt->bindValue(':file_path', $filePath, SQLITE3_TEXT);
-            $result = $stmt->execute();
-            $row = $result->fetchArray(SQLITE3_ASSOC);
-            return $row && $row['file_hash'] === $fileHash;
-        } catch (\Exception $e) {
-            return false;
+        $pathsToTry = array_unique([$this->normalizePath($filePath), $filePath]);
+        foreach ($pathsToTry as $path) {
+            if ($path === '') {
+                continue;
+            }
+            try {
+                $stmt = $this->db->prepare('SELECT file_hash FROM loaded_files WHERE file_path = :file_path');
+                $stmt->bindValue(':file_path', $path, SQLITE3_TEXT);
+                $result = $stmt->execute();
+                $row = $result->fetchArray(SQLITE3_ASSOC);
+                if ($row && $row['file_hash'] === $fileHash) {
+                    return true;
+                }
+            } catch (\Exception $e) {
+                continue;
+            }
         }
+        return false;
     }
 
     public function markFileLoaded(string $filePath, string $fileHash): bool {
@@ -636,12 +656,13 @@ class VectorStore {
             return false;
         }
 
+        $path = $this->normalizePath($filePath);
         try {
             $stmt = $this->db->prepare('
                 INSERT OR REPLACE INTO loaded_files (file_path, file_hash, loaded_at)
                 VALUES (:file_path, :file_hash, CURRENT_TIMESTAMP)
             ');
-            $stmt->bindValue(':file_path', $filePath, SQLITE3_TEXT);
+            $stmt->bindValue(':file_path', $path, SQLITE3_TEXT);
             $stmt->bindValue(':file_hash', $fileHash, SQLITE3_TEXT);
             $stmt->execute();
             return true;
@@ -653,6 +674,34 @@ class VectorStore {
 
     public function getFileHash(string $filePath): string {
         return hash_file('sha256', $filePath);
+    }
+
+    /**
+     * Get the stored hash for a file from loaded_files table.
+     * Returns null if the file is not in the database.
+     */
+    public function getStoredFileHash(string $filePath): ?string {
+        if (!$this->db) {
+            return null;
+        }
+
+        $pathsToTry = array_unique([$this->normalizePath($filePath), $filePath]);
+        foreach ($pathsToTry as $path) {
+            if ($path === '') {
+                continue;
+            }
+            try {
+                $stmt = $this->db->prepare('SELECT file_hash FROM loaded_files WHERE file_path = :file_path');
+                $stmt->bindValue(':file_path', $path, SQLITE3_TEXT);
+                $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+                if ($row) {
+                    return $row['file_hash'];
+                }
+            } catch (\Exception $e) {
+                continue;
+            }
+        }
+        return null;
     }
 
     /**

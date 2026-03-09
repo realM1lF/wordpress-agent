@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Levi AI Agent
  * Description: KI-Mitarbeiter für WordPress - inspiriert von Mohami
- * Version: 0.6.6
+ * Version: 0.6.8
  * Author: realM1lF
  * License: GPL v2
  * Text Domain: levi-agent
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LEVI_AGENT_VERSION', '0.6.6');
+define('LEVI_AGENT_VERSION', '0.6.8');
 define('LEVI_AGENT_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LEVI_AGENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -98,3 +98,8 @@ add_action('levi_cleanup_audit_log', function() {
     require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
     Tables::cleanupAuditLog(7);
 });
+
+// WP-CLI commands
+if (defined('WP_CLI') && WP_CLI) {
+    \WP_CLI::add_command('levi test', \Levi\Agent\Testing\TestCommand::class);
+}

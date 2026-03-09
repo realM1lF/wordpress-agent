@@ -75,7 +75,34 @@ class StateSnapshotService {
             update_option('levi_initial_memory_sync_done', 'pending', false);
             wp_schedule_single_event(time(), self::MEMORY_SYNC_HOOK . '_initial');
             spawn_cron();
+            return;
         }
+
+        $this->maybeRetryPartialSync();
+    }
+
+    private function maybeRetryPartialSync(): void {
+        $syncMeta = get_option(self::MEMORY_SYNC_OPTION, []);
+        if (empty($syncMeta['has_partials'])) {
+            return;
+        }
+
+        if (get_transient('levi_partial_retry_lock')) {
+            return;
+        }
+
+        $retries = (int) get_option('levi_partial_sync_retries', 0);
+        if ($retries >= 6) {
+            return;
+        }
+
+        update_option('levi_partial_sync_retries', $retries + 1, false);
+        set_transient('levi_partial_retry_lock', time(), 10 * MINUTE_IN_SECONDS);
+
+        if (!wp_next_scheduled(self::MEMORY_SYNC_HOOK)) {
+            wp_schedule_single_event(time(), self::MEMORY_SYNC_HOOK);
+        }
+        spawn_cron();
     }
 
     /**
@@ -234,6 +261,7 @@ class StateSnapshotService {
         }
 
         $results = $loader->reloadChangedFiles();
+        $hasPartials = self::detectPartials($results);
 
         update_option(self::MEMORY_SYNC_OPTION, [
             'synced_at' => current_time('mysql'),
@@ -242,7 +270,45 @@ class StateSnapshotService {
             'changed_reference' => $results['changed_reference'],
             'loaded' => count($results['loaded']),
             'errors' => $results['errors'],
+            'has_partials' => $hasPartials,
         ], false);
+
+        if (!$hasPartials) {
+            delete_option('levi_partial_sync_retries');
+        }
+    }
+
+    /**
+     * Update sync meta after a manual reload (AJAX). Ensures "Last sync" shows correctly.
+     */
+    public static function updateSyncMetaFromReload(array $results): void {
+        $hasPartials = self::detectPartials($results);
+
+        update_option(self::MEMORY_SYNC_OPTION, [
+            'synced_at' => current_time('mysql'),
+            'status' => empty($results['errors']) ? 'synced' : 'synced_with_errors',
+            'changed_identity' => $results['changed_identity'] ?? [],
+            'changed_reference' => $results['changed_reference'] ?? [],
+            'loaded' => count($results['loaded'] ?? []),
+            'errors' => $results['errors'] ?? [],
+            'has_partials' => $hasPartials,
+        ], false);
+
+        if (!$hasPartials) {
+            delete_option('levi_partial_sync_retries');
+        }
+    }
+
+    /**
+     * Check reload results for incomplete (partial) file syncs.
+     */
+    private static function detectPartials(array $results): bool {
+        foreach (($results['loaded'] ?? []) as $fileResult) {
+            if (is_array($fileResult) && empty($fileResult['complete'])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

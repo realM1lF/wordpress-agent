@@ -181,16 +181,7 @@ class SetupWizardPage {
         update_option('levi_setup_wizard_pending', 0);
         update_option('levi_setup_completed_at', current_time('mysql'));
 
-        $snapshotStatus = 'skipped';
-        try {
-            $service = new StateSnapshotService();
-            $meta = $service->runManualSync();
-            $snapshotStatus = (string) ($meta['status'] ?? 'done');
-        } catch (\Throwable $e) {
-            $snapshotStatus = 'error';
-        }
-
-        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=4&done=1&snapshot=' . urlencode($snapshotStatus)));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=4&done=1'));
         exit;
     }
 
@@ -427,38 +418,165 @@ class SetupWizardPage {
                         <?php if ($done): ?>
                             <div class="levi-setup-payment-state is-active">
                                 <strong><?php _e('Levi ist eingerichtet!', 'levi-agent'); ?></strong>
-                                <p><?php echo esc_html(sprintf('Snapshot-Status: %s', $this->translateSnapshotStatus($snapshot !== '' ? $snapshot : 'done'))); ?></p>
-                                <?php if ($planTier !== ''): ?>
-                                    <p><?php echo esc_html(sprintf('Aktiver Plan: %s', 'Pro')); ?></p>
-                                <?php endif; ?>
                             </div>
-
                             <div class="levi-form-actions">
                                 <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=levi-agent-settings')); ?>"><?php _e('Zu den Einstellungen', 'levi-agent'); ?></a>
                                 <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url()); ?>" onclick="setTimeout(function(){ var t = document.getElementById('levi-chat-toggle'); if(t) t.click(); }, 500); return true;"><?php _e('Chat öffnen', 'levi-agent'); ?></a>
                             </div>
                         <?php else: ?>
-                            <p><?php _e('Zum Abschluss erstellt Levi einen Snapshot deiner WordPress-Instanz. Damit kennt er deine Seite, Plugins und Einstellungen.', 'levi-agent'); ?></p>
-                            <p class="levi-form-help levi-hint"><?php _e('Das kann einige Sekunden dauern. Bitte die Seite nicht schließen.', 'levi-agent'); ?></p>
+                            <p><?php _e('Levi lädt jetzt seine Wissensdatenbank herunter und bereitet sie vor. Das kann je nach Server 2–5 Minuten dauern.', 'levi-agent'); ?></p>
+                            <p class="levi-form-help levi-hint"><?php _e('Bitte die Seite nicht schließen, bis alle Schritte abgeschlossen sind.', 'levi-agent'); ?></p>
 
-                            <form method="post" action="" id="levi-setup-complete-form">
+                            <div id="levi-wizard-sync" class="levi-wizard-sync">
+                                <div class="levi-wizard-sync-step" data-phase="fetch_docs">
+                                    <span class="levi-wizard-sync-icon" aria-hidden="true">⏳</span>
+                                    <span class="levi-wizard-sync-label"><?php _e('Dokumentation herunterladen (WordPress, WooCommerce, Elementor)', 'levi-agent'); ?></span>
+                                    <span class="levi-wizard-sync-status"></span>
+                                </div>
+                                <div class="levi-wizard-sync-step" data-phase="sync_memory">
+                                    <span class="levi-wizard-sync-icon" aria-hidden="true">⏳</span>
+                                    <span class="levi-wizard-sync-label"><?php _e('Wissensdatenbank aufbauen', 'levi-agent'); ?></span>
+                                    <span class="levi-wizard-sync-status"></span>
+                                </div>
+                                <div class="levi-wizard-sync-step" data-phase="snapshot">
+                                    <span class="levi-wizard-sync-icon" aria-hidden="true">⏳</span>
+                                    <span class="levi-wizard-sync-label"><?php _e('Website-Snapshot erstellen', 'levi-agent'); ?></span>
+                                    <span class="levi-wizard-sync-status"></span>
+                                </div>
+                            </div>
+
+                            <div id="levi-wizard-sync-error" class="levi-notice levi-notice-error" style="display:none;">
+                                <p id="levi-wizard-sync-error-msg"></p>
+                            </div>
+
+                            <div class="levi-form-actions">
+                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=3')); ?>" id="levi-wizard-back-btn"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                <button type="button" class="levi-btn levi-btn-primary" id="levi-wizard-start-btn"><?php _e('Levi jetzt starten', 'levi-agent'); ?></button>
+                            </div>
+
+                            <form method="post" action="" id="levi-wizard-complete-form" style="display:none;">
                                 <?php wp_nonce_field('levi_setup_wizard_step5'); ?>
                                 <input type="hidden" name="levi_setup_action" value="complete_setup">
-                                <div class="levi-form-actions">
-                                    <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=3')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
-                                    <button type="submit" class="levi-btn levi-btn-primary" id="levi-setup-complete-btn"><?php _e('Levi jetzt starten', 'levi-agent'); ?></button>
-                                </div>
                             </form>
+
                             <script>
-                            (function(){
-                                var form = document.getElementById('levi-setup-complete-form');
-                                if (!form) return;
-                                form.addEventListener('submit', function() {
-                                    var btn = document.getElementById('levi-setup-complete-btn');
-                                    if (btn) {
-                                        btn.disabled = true;
-                                        btn.textContent = '<?php echo esc_js('Levi wird initialisiert…'); ?>';
+                            (function() {
+                                var ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
+                                var nonce = <?php echo wp_json_encode(wp_create_nonce('levi_admin_nonce')); ?>;
+                                var startBtn = document.getElementById('levi-wizard-start-btn');
+                                var backBtn = document.getElementById('levi-wizard-back-btn');
+                                var syncContainer = document.getElementById('levi-wizard-sync');
+                                var errorBox = document.getElementById('levi-wizard-sync-error');
+                                var errorMsg = document.getElementById('levi-wizard-sync-error-msg');
+                                var completeForm = document.getElementById('levi-wizard-complete-form');
+
+                                if (!startBtn) return;
+
+                                function setStepState(phase, state, statusText) {
+                                    var el = syncContainer.querySelector('[data-phase="' + phase + '"]');
+                                    if (!el) return;
+                                    var icon = el.querySelector('.levi-wizard-sync-icon');
+                                    var status = el.querySelector('.levi-wizard-sync-status');
+                                    if (state === 'running') {
+                                        icon.textContent = '⏳';
+                                        el.classList.add('is-running');
+                                        el.classList.remove('is-done', 'is-error');
+                                    } else if (state === 'done') {
+                                        icon.textContent = '✅';
+                                        el.classList.add('is-done');
+                                        el.classList.remove('is-running', 'is-error');
+                                    } else if (state === 'error') {
+                                        icon.textContent = '❌';
+                                        el.classList.add('is-error');
+                                        el.classList.remove('is-running', 'is-done');
                                     }
+                                    if (statusText) status.textContent = statusText;
+                                }
+
+                                function showError(msg) {
+                                    errorMsg.textContent = msg;
+                                    errorBox.style.display = '';
+                                }
+
+                                function runPhase(phase) {
+                                    return new Promise(function(resolve, reject) {
+                                        setStepState(phase, 'running', '');
+                                        var fd = new FormData();
+                                        fd.append('action', 'levi_wizard_sync');
+                                        fd.append('nonce', nonce);
+                                        fd.append('phase', phase);
+
+                                        var xhr = new XMLHttpRequest();
+                                        xhr.open('POST', ajaxUrl, true);
+                                        xhr.timeout = 600000;
+                                        xhr.onload = function() {
+                                            try {
+                                                var resp = JSON.parse(xhr.responseText);
+                                                if (resp.success) {
+                                                    resolve(resp.data);
+                                                } else {
+                                                    reject(resp.data || 'Unbekannter Fehler');
+                                                }
+                                            } catch(e) {
+                                                reject('Ungültige Server-Antwort');
+                                            }
+                                        };
+                                        xhr.onerror = function() { reject('Netzwerkfehler'); };
+                                        xhr.ontimeout = function() { reject('Zeitüberschreitung — bitte erneut versuchen'); };
+                                        xhr.send(fd);
+                                    });
+                                }
+
+                                async function runAllPhases() {
+                                    startBtn.disabled = true;
+                                    startBtn.textContent = <?php echo wp_json_encode(__('Levi wird initialisiert…', 'levi-agent')); ?>;
+                                    backBtn.style.display = 'none';
+                                    errorBox.style.display = 'none';
+
+                                    try {
+                                        // Phase 1: Fetch docs
+                                        var fetchResult = await runPhase('fetch_docs');
+                                        var sources = fetchResult.result && fetchResult.result.sources ? fetchResult.result.sources : {};
+                                        var fetchInfo = Object.keys(sources).length + ' Quellen geladen';
+                                        setStepState('fetch_docs', 'done', fetchInfo);
+
+                                        // Phase 2: Sync memory (with retry for partials)
+                                        var maxRetries = 5;
+                                        var attempt = 0;
+                                        var totalVectors = 0;
+                                        while (attempt < maxRetries) {
+                                            var syncResult = await runPhase('sync_memory');
+                                            var loaded = syncResult.results && syncResult.results.loaded ? syncResult.results.loaded : {};
+                                            for (var f in loaded) {
+                                                if (loaded[f] && loaded[f].vectors) totalVectors += (loaded[f].new_vectors || 0);
+                                            }
+                                            if (!syncResult.has_partials) break;
+                                            attempt++;
+                                            setStepState('sync_memory', 'running', 'Fortsetzen… (Durchlauf ' + (attempt + 1) + ')');
+                                        }
+                                        var syncInfo = totalVectors + ' Vektoren erstellt';
+                                        if (syncResult.has_partials) {
+                                            syncInfo += ' (wird im Hintergrund fortgesetzt)';
+                                        }
+                                        setStepState('sync_memory', syncResult.has_partials ? 'error' : 'done', syncInfo);
+
+                                        // Phase 3: Snapshot
+                                        await runPhase('snapshot');
+                                        setStepState('snapshot', 'done', '');
+
+                                        // All done — submit the completion form
+                                        completeForm.submit();
+
+                                    } catch(err) {
+                                        showError(typeof err === 'string' ? err : 'Ein Fehler ist aufgetreten. Bitte versuche es erneut.');
+                                        startBtn.disabled = false;
+                                        startBtn.textContent = <?php echo wp_json_encode(__('Erneut versuchen', 'levi-agent')); ?>;
+                                        backBtn.style.display = '';
+                                    }
+                                }
+
+                                startBtn.addEventListener('click', function() {
+                                    runAllPhases();
                                 });
                             })();
                             </script>

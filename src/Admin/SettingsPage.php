@@ -857,7 +857,7 @@ class SettingsPage {
                     ?>
 
                     <?php if ($hasIdentityChanges || $hasReferenceChanges): ?>
-                        <div class="levi-notice levi-notice-warning">
+                        <div id="levi-memory-changes-warning" class="levi-notice levi-notice-warning">
                             <p><strong><?php echo esc_html($this->tr('Files have changed and need syncing:', 'Dateien haben sich geaendert und muessen synchronisiert werden:')); ?></strong></p>
                             <?php if ($hasIdentityChanges): ?>
                                 <p><?php echo esc_html($this->tr('Identity:', 'Identity:')); ?> <?php echo esc_html(implode(', ', $changes['identity'])); ?></p>

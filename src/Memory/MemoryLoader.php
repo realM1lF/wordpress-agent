@@ -45,8 +45,14 @@ class MemoryLoader {
                 $errors[] = "Identity file not found: $filename";
                 continue;
             }
-            $this->vectorStore->clearFileVectors($filename, 'identity');
-            $this->vectorStore->unmarkFileLoaded($path);
+
+            $hasPartialData = $this->vectorStore->getHighestChunkIndex($filename, 'identity') >= 0;
+            $fileHashChanged = $this->hasFileContentChanged($path, $filename, 'identity');
+
+            if ($fileHashChanged || !$hasPartialData) {
+                $this->vectorStore->clearFileVectors($filename, 'identity');
+                $this->vectorStore->unmarkFileLoaded($path);
+            }
 
             $result = $this->processFile($path, 'identity');
             if (is_wp_error($result)) {
@@ -63,8 +69,14 @@ class MemoryLoader {
                 $errors[] = "Reference file not found: $filename";
                 continue;
             }
-            $this->vectorStore->clearFileVectors($filename, 'reference');
-            $this->vectorStore->unmarkFileLoaded($path);
+
+            $hasPartialData = $this->vectorStore->getHighestChunkIndex($filename, 'reference') >= 0;
+            $fileHashChanged = $this->hasFileContentChanged($path, $filename, 'reference');
+
+            if ($fileHashChanged || !$hasPartialData) {
+                $this->vectorStore->clearFileVectors($filename, 'reference');
+                $this->vectorStore->unmarkFileLoaded($path);
+            }
 
             $result = $this->processFile($path, 'reference');
             if (is_wp_error($result)) {
@@ -197,6 +209,25 @@ class MemoryLoader {
         }
 
         return $dirs;
+    }
+
+    /**
+     * Check if the actual file content (sha256) changed compared to what was (partially) loaded.
+     * Returns true if the content hash differs, meaning the file was modified
+     * and a full re-index is needed (not just a resume of a partial sync).
+     */
+    private function hasFileContentChanged(string $path, string $filename, string $memoryType): bool {
+        $storedHash = $this->vectorStore->getStoredFileHash($path);
+        if ($storedHash === null) {
+            return true;
+        }
+
+        $currentContentHash = $this->vectorStore->getFileHash($path);
+
+        // Stored hash format: <sha256>:<chunk_version>[_partial_X_Y]
+        $storedContentHash = explode(':', $storedHash)[0] ?? '';
+
+        return $storedContentHash !== $currentContentHash;
     }
 
     /**

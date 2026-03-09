@@ -1118,12 +1118,17 @@
                     reloadBtn.disabled = false;
                     if (data.success) {
                         const r = data.data.results || {};
-                        const identityCount = (r.changed_identity || []).length;
-                        const referenceCount = (r.changed_reference || []).length;
+                        const errors = r.errors || [];
                         const loadedCount = Object.keys(r.loaded || {}).length;
-                        result.innerHTML = ' <span style="color: green;">✅ ' + data.data.message + ' (Identity: ' + identityCount + ', Reference: ' + referenceCount + ')</span>';
-                        // Reload page after 2 seconds to show updated stats
-                        setTimeout(() => location.reload(), 2000);
+                        const hadChanges = (r.changed_identity || []).length > 0 || (r.changed_reference || []).length > 0;
+                        result.innerHTML = ' <span style="color: ' + (errors.length ? 'orange' : 'green') + ';">✅ ' + data.data.message + '</span>';
+                        if (hadChanges && errors.length === 0 && loadedCount > 0) {
+                            const warningEl = document.getElementById('levi-memory-changes-warning');
+                            if (warningEl) {
+                                warningEl.style.display = 'none';
+                            }
+                        }
+                        setTimeout(() => location.reload(), 1500);
                     } else {
                         result.innerHTML = ' <span style="color: red;">❌ ' + (data.data || 'Failed') + '</span>';
                     }

@@ -3,49 +3,42 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.6.8] – 2026-03-09
+- **Einrichtung erst fertig, wenn Levi wirklich bereit ist:** Der Einrichtungsassistent wartet jetzt, bis die Wissensdatenbank vollständig heruntergeladen und aufgebaut ist. Du siehst den Fortschritt (Dokumentation laden → Wissensdatenbank aufbauen → Snapshot erstellen) und Levi ist erst „fertig“, wenn alles durch ist. Das kann 2–5 Minuten dauern.
+- **Sync setzt sich von selbst fort:** Wenn der Aufbau der Wissensdatenbank wegen eines Timeouts abbricht (z. B. bei großen Dokumenten), wird er beim nächsten Admin-Besuch automatisch fortgesetzt – ohne dass du etwas tun musst.
+- **Keine falschen „Dateien geändert“-Meldungen mehr:** Das Problem, dass nach einem Sync weiterhin angezeigt wurde, es gäbe noch offene Änderungen, ist behoben.
+
+## [0.6.7] – 2026-03-09
+- **Levi findet JavaScript-Fehler sofort:** Wenn Levi Code schreibt, der im Browser ausgeführt wird (z. B. bei Elementor-Widgets), prüft das System jetzt automatisch die Syntax. Fehlende Klammern oder Tippfehler werden erkannt – bevor du sie im Frontend siehst. Levi bekommt die Meldung direkt und kann den Fehler direkt beheben.
+- **Levi versteht Dokumentation besser:** Die Referenz-Dokumente (z. B. Elementor-Anleitung) werden jetzt sinnvoller in Abschnitte zerlegt. Levi findet dadurch die passenden Stellen schneller und erzeugt bessere Lösungen – besonders bei komplexen Aufgaben wie Widget-Entwicklung.
+- **Memory-Sync funktioniert wieder:** Der Button „Memories neu laden“ im Chat-Widget hat vorher manchmal einen Fehler angezeigt. Das ist behoben.
+- **Plugin-Installation und Theme-Wechsel:** Levi kann wieder Plugins installieren, Themes wechseln und Menüs bearbeiten, ohne dass der Domain-Guard fälschlich blockiert.
+
 ## [0.6.6] – 2026-03-08
-- Plugin-Smoke-Test: Nach dem Schreiben von PHP-Dateien wird das Plugin automatisch aktiviert und eine Frontend-Seite geladen, um Runtime-Fehler (Fatal, ArgumentCountError, TypeError) zu erkennen
-- Bei Fehler wird das Plugin sofort deaktiviert und der Fehler wird Levi als Pflicht-Fix injiziert
-- Auch Error-Log wird nach dem Seitenaufruf geprüft (plugin-spezifisch gefiltert)
+- **Levi testet Plugins automatisch:** Nach dem Erstellen oder Ändern eines Plugins wird es kurz aktiviert und eine Seite aufgerufen. Wenn dabei ein Fehler auftritt (z. B. weiße Seite, Absturz), bekommt Levi die Meldung sofort und muss den Fehler beheben – bevor du ihn siehst.
 
 ## [0.6.5] – 2026-03-08
-- QueryExpander: Deutsche Nutzeranfragen werden automatisch in englische Such-Queries übersetzt für bessere Treffer in der Referenz-Doku (Vector-DB)
-- Multi-Query-Retrieval: Vektor-Suche läuft parallel über Original- und expandierte Queries, Ergebnisse werden nach Similarity gemergt
-- QueryClassifier: Fehlende deutsche Action-Verben (baue, programmier, implementier) ergänzt, ACTION-Queries erhalten jetzt Referenz-Dokumente
-- http_fetch ins Standard-Profil verschoben (vorher nur im Entwickler-Profil)
-- Automatische CSS-Verifikation: Nach CSS/JS-Writes wird die Shop-Seite automatisch per http_fetch geholt und dem LLM als DOM-Kontext injiziert
-- Versionskompatibilität: WordPress- und WooCommerce-Version des Kunden werden im System-Prompt angezeigt, neue Regel zur Versionsprüfung bei Hooks/Filtern
-- Frontend-Verifikationsregel: Levi muss nach CSS-Änderungen die echte HTML-Struktur prüfen statt zu raten
-- DocsFetcher (PHP): Ersetzt die alten Python-Scripts, holt Referenz-Docs direkt im Plugin und speichert sie in wp-content/uploads/
-- Memory-System: Inkrementelle Updates (nur geänderte Dateien), täglicher Docs-Fetch-Cron um 04:00 Uhr
-- VectorStore: Bucket-Hash-Optimierung nur noch bei >3000 Vektoren, Brute-Force bei kleineren Datensätzen für bessere Trefferquote
-- PatchPluginFileTool: Neues Tool für gezielte Search-and-Replace-Patches in Plugin-Dateien (schneller als write_plugin_file bei kleinen Änderungen)
-- SessionSummarizer: Eigener Service für LLM-basierte Session-Zusammenfassungen (extrahiert aus ChatController)
-- Settings: Neues Feld für manuell erlaubte Plugin-Slugs, Summary-Modell-Konfiguration, Docs-Fetch-Button im Admin
-- Build-Script: Secret-Leak-Erkennung vor ZIP-Erstellung, zusätzliche Exclude-Patterns
+- **Levi versteht deutsche Anfragen besser:** Wenn du z. B. „Baue mir ein Widget“ sagst, sucht Levi jetzt auch in englischer Dokumentation nach der passenden Anleitung und findet sie zuverlässiger.
+- **Levi prüft Änderungen am Shop:** Nach Anpassungen an CSS oder JavaScript holt Levi die echte Shop-Seite und prüft, ob alles richtig aussieht – statt zu raten.
+- **Levi kennt deine WordPress- und WooCommerce-Version:** Er berücksichtigt sie beim Schreiben von Code und vermeidet damit Kompatibilitätsprobleme.
+- **Kleine Änderungen sind schneller:** Levi kann gezielte Textersetzungen in Dateien vornehmen (z. B. Versionsnummer ändern) – das geht schneller als die ganze Datei neu zu schreiben.
+- **Referenz-Dokumente werden automatisch aktualisiert:** Die Anleitungen (Elementor, WooCommerce etc.) werden täglich neu geladen. Im Admin gibt es einen Button, um sie manuell zu aktualisieren.
+- **Einstellungen:** Neues Feld für manuell erlaubte Plugins, Konfiguration für Zusammenfassungen, Button zum Neuladen der Dokumentation.
 
 ## [0.6.4] – 2026-03-08
-- Plugin-Erstellung funktioniert jetzt bei allen Aufgabentypen (WooCommerce, Elementor, Theme, etc.)
-- Fake-Confirmation-Schutz: Backend erkennt wenn Levi eine Bestätigung nur als Text schreibt und erzwingt den echten Tool-Call
+- **Plugin-Erstellung funktioniert überall:** Levi kann jetzt Plugins für WooCommerce, Elementor, Themes und andere Bereiche erstellen – nicht mehr nur für bestimmte Aufgabentypen.
+- **Bestätigungen müssen echt sein:** Levi kann keine gefährlichen Aktionen mehr „überspringen“, indem er nur „ja“ schreibt. Der Bestätigungs-Button muss wirklich geklickt werden.
 
 ## [0.6.3] – 2026-03-01
-- Warnung beim Seitenwechsel/Neuladen wenn Levi gerade arbeitet (beforeunload-Dialog)
-- Bestätigungsdialog zeigt jetzt korrekten Post-Typ (Seite/Produkt statt immer „Beitrag")
+- **Warnung beim Verlassen:** Wenn Levi gerade arbeitet und du die Seite wechselst oder neu lädst, wirst du gefragt, ob du wirklich weg willst – damit keine Arbeit verloren geht.
+- **Bestätigungsdialog zeigt den richtigen Typ:** Beim Löschen oder Ändern steht jetzt korrekt „Seite“ oder „Produkt“ – nicht mehr immer „Beitrag“.
 
 ## [0.6.2] – 2026-03-01
-- Session-Zusammenfassung via LLM statt Messages droppen (Summary-Injection bei Token-Budget-Überschreitung)
+- **Lange Chats bleiben verständlich:** Bei sehr langen Gesprächen fasst Levi ältere Nachrichten automatisch zusammen, statt sie einfach wegzulassen. So behält er den Überblick.
 
 ## [0.6.1] – 2026-02-28
-- WooCommerce Tools erweitern, Confirmation-Flow robuster, filemtime-Versionierung
-- Chat: Session-Gruß, Bestätigungs-Feedback, Safety-Texte, Vorname
-- Settings-Persistenz, Plugin-Scaffold-Nudge, Overwrite-Schutz, Bestätigungs-Flow
-- Fallback-Text verbessern, PHP-Zeitlimit Default auf 180s
-- Chat: Datum + Uhrzeit bei Nachrichten anzeigen
-- Confirmation Flow: Rules/Soul anpassen, Sofort-Abbruch, Safety Gates
-- Defaults: rate_limit 100, max_tool_iterations 18
-- Settings UX Overhaul: ehrliche Labels, Zahlenfelder, neue Wert-Mappings
-- Smart Memory Routing: Identity-Cache, Adaptive Query Router, Event-basierte Snapshots
-- Auto-Retry bei Bestätigung destruktiver Aktionen + GetOptionsTool Whitelist
-- Alternatives Modell (Turbo) für einfache Queries
-- Embedding Cache, Partial-Import & Resume-Logik
-- Performance-Optimierungen, Tool-Fehler-Handling und UI-Verbesserungen
+- **WooCommerce:** Levi kann mehr mit Produkten, Bestellungen und dem Shop anfangen.
+- **Bestätigungen:** Der Ablauf bei riskanten Aktionen (Löschen, Ändern) ist robuster. Levi bittet dich zuverlässig um Bestätigung.
+- **Chat:** Gruß beim Start, Feedback nach Bestätigungen, dein Vorname wird verwendet, Datum und Uhrzeit bei Nachrichten.
+- **Einstellungen:** Überarbeitete Oberfläche mit klaren Beschriftungen, Zahlenfelder wo nötig, Einstellungen werden zuverlässig gespeichert.
+- **Geschwindigkeit:** Levi nutzt für einfache Fragen ein schnelleres Modell, speichert Zwischenergebnisse und arbeitet insgesamt effizienter.
