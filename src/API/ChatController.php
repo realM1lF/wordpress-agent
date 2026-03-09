@@ -3007,16 +3007,16 @@ PROMPT;
             return 'content';
         }
 
-        if (in_array($toolName, ['create_plugin', 'write_plugin_file', 'patch_plugin_file', 'delete_plugin_file', 'read_plugin_file', 'list_plugin_files', 'install_plugin'], true)) {
+        if (in_array($toolName, ['create_plugin', 'write_plugin_file', 'patch_plugin_file', 'delete_plugin_file', 'read_plugin_file', 'list_plugin_files'], true)) {
             return 'plugin';
         }
-        if (in_array($toolName, ['create_theme', 'write_theme_file', 'delete_theme_file', 'read_theme_file', 'list_theme_files', 'switch_theme'], true)) {
+        if (in_array($toolName, ['create_theme', 'write_theme_file', 'delete_theme_file', 'read_theme_file', 'list_theme_files'], true)) {
             return 'theme';
         }
         if (in_array($toolName, ['elementor_build', 'manage_elementor', 'get_elementor_data'], true)) {
             return 'elementor';
         }
-        if (in_array($toolName, ['create_post', 'update_post', 'create_page', 'delete_post', 'manage_post_meta', 'manage_menu'], true)) {
+        if (in_array($toolName, ['create_post', 'update_post', 'create_page', 'delete_post', 'manage_post_meta'], true)) {
             return 'content';
         }
         return 'unknown';
@@ -3058,14 +3058,6 @@ PROMPT;
         $planDomain = (string) ($planContext['domain'] ?? 'unknown');
         if ($planDomain === 'unknown') {
             return ['allow' => true];
-        }
-
-        // Allow bootstrapping WooCommerce when task clearly targets WooCommerce.
-        if ($planDomain === 'woocommerce' && $toolName === 'install_plugin') {
-            $slug = sanitize_key((string) ($args['plugin_slug'] ?? ''));
-            if ($slug === 'woocommerce') {
-                return ['allow' => true];
-            }
         }
 
         $toolDomain = $this->classifyToolDomain($toolName, $args);
