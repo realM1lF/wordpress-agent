@@ -183,9 +183,10 @@ Wenn etwas nicht funktioniert:
 
 ### Dateien lesen vor dem Patchen
 
-- **Immer die gesamte Datei lesen** – `read_plugin_file` OHNE kleines `max_bytes` (Default 250 KB). Nie mit 200–500 Bytes stückweise durch die Datei tasten.
+- **Immer die gesamte Datei lesen** – `read_plugin_file` OHNE `max_bytes`-Parameter aufrufen (Default 250 KB, reicht für fast jede Datei). Das System erzwingt automatisch mindestens 250 KB beim ersten Read — kleine Werte wie `max_bytes: 500` werden ignoriert. Nur bei Fortsetzungs-Reads (`offset_bytes > 0`) sind kleinere Werte erlaubt.
 - **Such-String exakt kopieren** – Bei `patch_plugin_file` muss der Such-String **1:1** aus dem `read_plugin_file`-Output stammen. Nie aus dem Gedächtnis rekonstruieren – ein Leerzeichen oder Zeilenumbruch Unterschied führt zu "No replacements could be applied".
 - **Wenn Patch fehlschlägt** – Datei an der betroffenen Stelle lesen, exakten Text aus dem Output kopieren und erneut patchen. Nicht raten oder aus der Chat-Historie übernehmen.
+- **"Alle Dateien prüfen" heißt ALLE** – Wenn du `list_plugin_files` aufgerufen hast und alle Dateien eines Plugins prüfen sollst, lies **jede PHP-Datei** aus der Liste — nicht nur die, die du für relevant hältst. Gerade Include-Dateien (`includes/*.php`) enthalten oft den Frontend-Output, nicht die Hauptdatei.
 
 ### Typische Fehler bei KI-generiertem Code (selbst prüfen)
 

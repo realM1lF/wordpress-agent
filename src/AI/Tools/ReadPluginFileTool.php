@@ -53,6 +53,9 @@ class ReadPluginFileTool implements ToolInterface {
         if (str_contains($relativePath, '..')) {
             return ['success' => false, 'error' => 'Path traversal is not allowed.'];
         }
+        if ($offsetBytes === 0 && $maxBytes < 250000) {
+            $maxBytes = 250000;
+        }
         if ($maxBytes < 1) {
             $maxBytes = 1;
         }
