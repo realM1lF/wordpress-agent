@@ -3,6 +3,10 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.7.1] – 2026-03-01
+- **`<code>`- und `<pre>`-Tags werden automatisch entfernt:** Beim Schreiben und Patchen von Plugin- und Theme-Dateien entfernt Levi diese Tags jetzt automatisch aus dem HTML-Output, bevor die Datei gespeichert wird. So greifen CSS-Styles zuverlässig und Frontend-Inhalte werden nicht mehr als Monospace-Text angezeigt.
+- **Tab-Benachrichtigungen bei Hintergrund-Tab:** Wenn du in einem anderen Tab arbeitest, zeigt der Browser-Tab-Titel den Levi-Status an: „Levi arbeitet…“ (mit animierten Punkten) während Levi tüftelt, „Levi ist fertig!“ wenn er fertig ist, und „Levi braucht Hilfe“ bei Fehlern. Sobald du zurück zum Tab wechselst, wird der normale Titel wiederhergestellt.
+
 ## [0.7.0] – 2026-03-09
 - **Levi erkennt vergessene Dateien automatisch:** Wenn Levi eine Datei schreibt (z.B. eine Settings-Seite), prüft das System jetzt automatisch, ob sie auch in der Hauptdatei eingebunden wird. Falls nicht, bekommt Levi sofort eine Warnung und muss die Einbindung nachholen — bevor er "fertig" meldet. Das verhindert "tote Dateien", die zwar existieren, aber nie geladen werden.
 - **Completion Gate verhindert voreilige "Fertig!"-Meldungen:** Bevor Levi seine Antwort an dich sendet, prüft das System ein letztes Mal, ob alle geschriebenen Dateien korrekt verknüpft sind. Wenn noch Probleme bestehen, muss Levi sie erst beheben. Das passiert automatisch im Hintergrund.
@@ -21,7 +25,7 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
 ## [0.6.8] – 2026-03-09
 - **Levi arbeitet große Aufgaben schrittweise ab:** Wenn du mehrere Features oder Ideen auf einmal anforderst (z. B. „Setze Idee 2–8 um"), teilt Levi sie jetzt in einzelne Schritte auf. Er setzt ein Feature nach dem anderen um, meldet den Fortschritt und fragt nach 2–3 Features, ob er weitermachen soll. Das verhindert Timeouts und sorgt dafür, dass nichts halb fertig bleibt.
-- **Einrichtung erst fertig, wenn Levi wirklich bereit ist:** Der Einrichtungsassistent wartet jetzt, bis die Wissensdatenbank vollständig heruntergeladen und aufgebaut ist. Du siehst den Fortschritt (Dokumentation laden → Wissensdatenbank aufbauen → Snapshot erstellen) und Levi ist erst „fertig", wenn alles durch ist. Das kann 2–5 Minuten dauern.
+- **Einrichtung erst fertig, wenn Levi wirklich bereit ist:** Der Einrichtungsassistent wartet jetzt, bis die Wissensdatenbank vollständig heruntergeladen und aufgebaut ist. Du siehst den Fortschritt (Dokumentation laden → Wissensdatenbank aufbauen → Snapshot erstellen) und Levi ist erst „fertig", wenn alles durch ist. Das kann 4-8 Minuten dauern.
 - **Sync setzt sich von selbst fort:** Wenn der Aufbau der Wissensdatenbank wegen eines Timeouts oder Verbindungsabbruchs nicht abgeschlossen wird, setzt Levi ihn beim nächsten Admin-Besuch automatisch fort – ohne dass du etwas tun musst.
 - **Keine falschen „Dateien geändert"-Meldungen mehr:** Das Problem, dass nach einem Sync weiterhin angezeigt wurde, es gäbe noch offene Änderungen, ist behoben.
 - **Levi kann jetzt laengere Aufgaben durchfuehren:** Die Standardwerte fuer Arbeitsschritte und PHP-Zeitlimit wurden angehoben (25 Schritte / 300 Sekunden). Aufgaben wie "Pruefe alle Seiten auf Rechtschreibfehler" laufen jetzt zuverlaessig durch, ohne vorzeitig abzubrechen.
