@@ -3,9 +3,12 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [0.7.1] – 2026-03-01
+## [0.7.1] – 2026-03-10
 - **`<code>`- und `<pre>`-Tags werden automatisch entfernt:** Beim Schreiben und Patchen von Plugin- und Theme-Dateien entfernt Levi diese Tags jetzt automatisch aus dem HTML-Output, bevor die Datei gespeichert wird. So greifen CSS-Styles zuverlässig und Frontend-Inhalte werden nicht mehr als Monospace-Text angezeigt.
 - **Tab-Benachrichtigungen bei Hintergrund-Tab:** Wenn du in einem anderen Tab arbeitest, zeigt der Browser-Tab-Titel den Levi-Status an: „Levi arbeitet…“ (mit animierten Punkten) während Levi tüftelt, „Levi ist fertig!“ wenn er fertig ist, und „Levi braucht Hilfe“ bei Fehlern. Sobald du zurück zum Tab wechselst, wird der normale Titel wiederhergestellt.
+- **Beiträge vs. Seiten – keine Verwechslung mehr:** Levi hat manchmal Beiträge und Seiten verwechselt (z.B. `get_pages` statt `get_posts` aufgerufen). Das System erkennt das jetzt automatisch und korrigiert Levi, sodass er das richtige Tool nutzt. Zusätzlich sind die Tool-Beschreibungen und Regeln klarer formuliert.
+- **Setup-Wizard überarbeitet:** Der Einrichtungsassistent ist freundlicher, weniger technisch und leichter verständlich. Klare Schritte, bessere Erklärungen und eine realistische Zeitangabe (5–10 Minuten).
+- **Einstellungen neu sortiert:** Die Rubrik „Allgemein" heißt jetzt „Dashboard", der WordPress-Snapshot liegt unter „Memory", die Web-Suche unter „Erweitert". Sinnvollere Standardwerte für PHP-Zeitlimit, Chat-Verlauf und Arbeitsschritte.
 
 ## [0.7.0] – 2026-03-09
 - **Levi erkennt vergessene Dateien automatisch:** Wenn Levi eine Datei schreibt (z.B. eine Settings-Seite), prüft das System jetzt automatisch, ob sie auch in der Hauptdatei eingebunden wird. Falls nicht, bekommt Levi sofort eine Warnung und muss die Einbindung nachholen — bevor er "fertig" meldet. Das verhindert "tote Dateien", die zwar existieren, aber nie geladen werden.
