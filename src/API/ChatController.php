@@ -1045,6 +1045,131 @@ class ChatController extends WP_REST_Controller {
     }
 
     /**
+     * Stream a continuation response after tool execution, with graduated fallback.
+     *
+     * Strategy on transient failure (timeout / cURL / 5xx):
+     *  1. If partial content was already streamed → treat as success (no duplicate text).
+     *  2. Retry streaming WITHOUT tools (smaller payload → faster) but WITH an
+     *     honesty-guard system message that prevents hallucinated tool results.
+     *  3. Last resort: blocking chat() WITHOUT tools + same honesty guard.
+     *
+     * stream_end is emitted exactly once, right before every return path.
+     */
+    private function streamContinuation(array $messages, array $tools = [], bool $webSearch = false): array|WP_Error {
+        $this->emitSSE('stream_start', []);
+
+        $streamedContent = '';
+        $onChunk = function (string $chunk) use (&$streamedContent) {
+            $streamedContent .= $chunk;
+            $this->emitSSE('delta', ['content' => $chunk]);
+        };
+
+        $result = $this->aiClient->streamChat($messages, $onChunk, $tools);
+
+        if (!is_wp_error($result)) {
+            $this->emitSSE('stream_end', []);
+            $this->accumulateStreamUsage($result);
+            return $this->streamResultToResponse($result);
+        }
+
+        // --- Streaming failed ---
+
+        if ($streamedContent !== '') {
+            $this->emitSSE('stream_end', []);
+            error_log('Levi: stream partially completed (' . strlen($streamedContent) . ' chars shown before error)');
+            $this->usageAccumulator['api_calls']++;
+            return $this->streamResultToResponse([
+                'content' => $streamedContent,
+                'finish_reason' => 'stop',
+                'tool_calls' => [],
+            ]);
+        }
+
+        $errMsg = mb_strtolower($result->get_error_message());
+        $isTransient = str_contains($errMsg, 'timeout') || str_contains($errMsg, 'curl')
+            || str_contains($errMsg, '502') || str_contains($errMsg, '503');
+
+        if (!$isTransient) {
+            $this->emitSSE('stream_end', []);
+            return $result;
+        }
+
+        // --- Graduated retry: strip tools for speed, but guard against hallucination ---
+
+        error_log('Levi: stream continuation failed (' . $result->get_error_message() . '), retrying without tools + honesty guard');
+        $this->emitSSE('status', ['message' => 'Levi versucht es erneut...']);
+
+        $guardedMessages = $messages;
+        $guardedMessages[] = [
+            'role' => 'system',
+            'content' => '[SYSTEM] Tools sind voruebergehend nicht verfuegbar. '
+                . 'Fasse NUR zusammen, was tatsaechlich erledigt wurde – also nur Aktionen, '
+                . 'fuer die ein erfolgreiches Tool-Ergebnis in dieser Konversation vorliegt. '
+                . 'Falls noch Schritte offen sind, sage dem Nutzer ehrlich, welche Aktionen '
+                . 'du nicht ausfuehren konntest, und bitte ihn, es erneut zu versuchen. '
+                . 'Erfinde KEINE Ergebnisse, IDs oder Links.',
+        ];
+
+        $retryResult = $this->aiClient->streamChat($guardedMessages, $onChunk, []);
+
+        if (!is_wp_error($retryResult)) {
+            $this->emitSSE('stream_end', []);
+            $this->accumulateStreamUsage($retryResult);
+            return $this->streamResultToResponse($retryResult);
+        }
+
+        if ($streamedContent !== '') {
+            $this->emitSSE('stream_end', []);
+            error_log('Levi: stream retry partially completed (' . strlen($streamedContent) . ' chars shown)');
+            $this->usageAccumulator['api_calls']++;
+            return $this->streamResultToResponse([
+                'content' => $streamedContent,
+                'finish_reason' => 'stop',
+                'tool_calls' => [],
+            ]);
+        }
+
+        // --- Last resort: blocking call without tools + same honesty guard ---
+
+        error_log('Levi: stream retry also failed, blocking fallback without tools');
+        $heartbeat = fn() => $this->emitSSE('heartbeat', []);
+        $fallback = $this->aiClient->chat($guardedMessages, [], $heartbeat, $webSearch);
+        $this->emitSSE('stream_end', []);
+
+        if (!is_wp_error($fallback)) {
+            $this->accumulateUsage($fallback);
+        }
+        return $fallback;
+    }
+
+    private function accumulateStreamUsage(array $streamResult): void {
+        if (!empty($streamResult['usage'])) {
+            $usage = $streamResult['usage'];
+            $this->usageAccumulator['prompt_tokens'] += (int) ($usage['prompt_tokens'] ?? 0);
+            $this->usageAccumulator['completion_tokens'] += (int) ($usage['completion_tokens'] ?? 0);
+            $this->usageAccumulator['cached_tokens'] += (int) ($usage['prompt_tokens_details']['cached_tokens'] ?? $usage['cache_read_input_tokens'] ?? 0);
+            if ($this->usageAccumulator['model'] === null) {
+                $this->usageAccumulator['model'] = $streamResult['model'] ?? null;
+            }
+        }
+        $this->usageAccumulator['api_calls']++;
+    }
+
+    private function streamResultToResponse(array $streamResult): array {
+        return [
+            'choices' => [[
+                'message' => [
+                    'content' => $streamResult['content'] ?? '',
+                    'tool_calls' => $streamResult['tool_calls'] ?? [],
+                ],
+                'finish_reason' => $streamResult['finish_reason'] ?? 'stop',
+            ]],
+            'model' => $streamResult['model'] ?? null,
+            'usage' => $streamResult['usage'] ?? [],
+        ];
+    }
+
+    /**
      * Stream a chat response, emitting SSE delta events for each text chunk.
      * Returns the full stream result for post-processing (tool_calls detection, usage).
      */

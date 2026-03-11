@@ -705,6 +705,11 @@
 .levi-stream-content ~ .levi-chat-progress-track {
     margin-top: 8px;
 }
+.levi-stream-content + .levi-stream-content {
+    margin-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    padding-top: 12px;
+}
 .levi-stream-content p:first-child {
     margin-top: 0;
 }

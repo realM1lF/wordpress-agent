@@ -329,6 +329,10 @@
                     }
                     return false;
 
+                case 'stream_start':
+                    typing.setLabel('Levi antwortet...');
+                    return false;
+
                 case 'stream_end':
                     typing.clearStream();
                     return false;

@@ -280,16 +280,10 @@ trait ExecutesToolLoop
                 return;
             }
 
-            $this->emitSSE('status', ['message' => 'Levi arbeitet...']);
+            $this->emitSSE('status', ['message' => 'Levi antwortet...']);
 
             $loopMessages = $this->compactMessagesForToolLoop($messages, $iteration);
-            $nextResponse = $this->chatWithTracking($loopMessages, $this->getToolDefs(), $heartbeat, $webSearch);
-            if (is_wp_error($nextResponse)) {
-                $errMsgLower = mb_strtolower($nextResponse->get_error_message());
-                if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
-                    $nextResponse = $this->chatWithTracking($loopMessages, [], $heartbeat, $webSearch);
-                }
-            }
+            $nextResponse = $this->streamContinuation($loopMessages, $this->getToolDefs(), $webSearch);
             if (is_wp_error($nextResponse)) {
                 $this->emitSSE('error', [
                     'message' => $nextResponse->get_error_message(),
@@ -379,10 +373,9 @@ trait ExecutesToolLoop
                         'content' => '[SYSTEM] Deine letzte Antwort war leer. Fasse jetzt kurz und freundlich zusammen, '
                             . 'was du fuer den Nutzer erledigt hast. Nenne konkrete Ergebnisse (Dateinamen, IDs, etc.).',
                     ];
-                    $summaryResponse = $this->chatWithTracking(
+                    $summaryResponse = $this->streamContinuation(
                         $this->compactMessagesForToolLoop($messages, $iteration),
                         [],
-                        $heartbeat,
                         false
                     );
                     if (!is_wp_error($summaryResponse)) {

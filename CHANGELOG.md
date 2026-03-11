@@ -8,6 +8,8 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 - **Kein „database is locked“ mehr:** Die SQLite-Vector-DB nutzt jetzt WAL-Mode und einen 5-Sekunden-Busy-Timeout. Learnings-Extraktion und Chat können parallel laufen, ohne sich gegenseitig zu blockieren.
 - **Prompt-Caching nur für Anthropic:** Kimi 2.5 auf OpenRouter nutzt eigenes implizites Caching – der vorherige Anthropic-spezifische Ansatz wurde entfernt, damit Kimi korrekt cachen kann.
 - **Stream-Text bleibt sichtbar:** Wenn Levi mit Tools arbeitet, verschwindet seine vorherige Antwort nicht mehr – sie bleibt lesbar, darunter erscheint „Levi arbeitet…“.
+- **Continuation nach Tools: robuster und ehrlich:** Wenn die Zusammenfassung nach einer Tool-Ausführung wegen Timeout fehlschlägt, versucht Levi es erneut mit kleinerem Payload (ohne Tool-Definitionen). Ein Ehrlichkeits-Guard verhindert, dass Levi Ergebnisse erfindet, wenn Tools gerade nicht verfügbar sind – er sagt dann ehrlich, was erledigt wurde und was noch offen ist.
+- **„Levi antwortet…“ bleibt sichtbar:** Der Status-Text verschwindet nicht mehr vorzeitig bei Timeouts; „Levi versucht es erneut…“ erscheint während des Retrys.
 
 ## [0.7.1] – 2026-03-11
 - **Levi antwortet deutlich schneller:** Drei Performance-Optimierungen sorgen dafür, dass Levi spürbar weniger Zeit pro Anfrage braucht:

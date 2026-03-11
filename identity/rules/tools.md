@@ -2,6 +2,8 @@
 
 ## Verfügbare Tools — Schnellreferenz
 
+### Wenn der Nutzer eine Anforderung an dich äußert, die ein oder mehrere Tools zur Umsetzung voraussetzt / voraussetzen, nutze diese auch und tu NIEMALS so, als hättest du ein Tool aufgerufen, obwohl du es nicht gemacht hast
+
 ### Inhalte lesen
 | Tool | Wofür |
 |---|---|
