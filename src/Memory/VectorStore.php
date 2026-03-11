@@ -37,6 +37,8 @@ class VectorStore {
         try {
             $this->db = new \SQLite3($this->dbPath);
             $this->db->enableExceptions(true);
+            $this->db->exec('PRAGMA journal_mode=WAL');
+            $this->db->exec('PRAGMA busy_timeout=5000');
             $this->createTables();
         } catch (\Throwable $e) {
             error_log('Levi Agent: SQLite3 init failed: ' . $e->getMessage());
@@ -506,6 +508,32 @@ class VectorStore {
         usort($similarities, fn($a, $b) => $b['similarity'] <=> $a['similarity']);
 
         return array_slice($similarities, 0, $limit);
+    }
+
+    /**
+     * Keep only the N most recent episodic memories, delete the rest.
+     */
+    public function pruneOldEpisodicMemories(int $keepLatest = 100): bool {
+        if (!$this->db || $keepLatest <= 0) {
+            return false;
+        }
+
+        try {
+            $stmt = $this->db->prepare('
+                DELETE FROM episodic_memory
+                WHERE id NOT IN (
+                    SELECT id FROM episodic_memory
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT :keep
+                )
+            ');
+            $stmt->bindValue(':keep', $keepLatest, SQLITE3_INTEGER);
+            $stmt->execute();
+            return true;
+        } catch (\Exception $e) {
+            error_log('VectorStore pruneOldEpisodicMemories error: ' . $e->getMessage());
+            return false;
+        }
     }
 
     private function cosineSimilarity(array $a, array $b): float {
