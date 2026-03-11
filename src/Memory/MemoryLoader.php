@@ -99,7 +99,7 @@ class MemoryLoader {
      */
     public function loadIdentityFiles(): array {
         $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
-        $files = ['soul.md', 'rules.md', 'knowledge.md'];
+        $files = $this->getAllIdentityFiles();
         
         $loaded = [];
         $errors = [];
@@ -576,7 +576,7 @@ class MemoryLoader {
         ];
 
         $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
-        foreach (['soul.md', 'rules.md', 'knowledge.md'] as $file) {
+        foreach ($this->getAllIdentityFiles() as $file) {
             $path = $identityDir . $file;
             if (file_exists($path)) {
                 $hash = $this->vectorStore->getFileHash($path) . ':' . self::CHUNK_VERSION;
@@ -615,13 +615,30 @@ class MemoryLoader {
     }
 
     /**
-     * Get list of existing identity file names (soul.md, rules.md, knowledge.md)
+     * Get the full list of identity file paths (relative to identity/).
+     * Includes both the base files and any modular rule files.
+     */
+    private function getAllIdentityFiles(): array {
+        $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
+        $files = ['soul.md', 'rules.md', 'knowledge.md'];
+
+        $rulesDir = $identityDir . 'rules/';
+        if (is_dir($rulesDir)) {
+            foreach (glob($rulesDir . '*.md') as $path) {
+                $files[] = 'rules/' . basename($path);
+            }
+        }
+
+        return $files;
+    }
+
+    /**
+     * Get list of existing identity file names (for stats display).
      */
     private function getIdentityFileNames(): array {
         $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
-        $candidates = ['soul.md', 'rules.md', 'knowledge.md'];
         $found = [];
-        foreach ($candidates as $file) {
+        foreach ($this->getAllIdentityFiles() as $file) {
             if (file_exists($identityDir . $file)) {
                 $found[] = $file;
             }

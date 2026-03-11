@@ -141,10 +141,23 @@ class Identity {
     }
 
     /**
-     * SHA-256 hash over the three identity files for cache invalidation.
+     * SHA-256 hash over all identity files (including rule modules) for cache invalidation.
      */
     public function getContentHash(): string {
-        return hash('sha256', ($this->soul ?? '') . ($this->rules ?? '') . ($this->knowledge ?? ''));
+        $data = ($this->soul ?? '') . ($this->rules ?? '') . ($this->knowledge ?? '');
+
+        $rulesDir = $this->identityPath . 'rules/';
+        if (is_dir($rulesDir)) {
+            $modules = glob($rulesDir . '*.md');
+            if ($modules) {
+                sort($modules);
+                foreach ($modules as $path) {
+                    $data .= file_get_contents($path) ?: '';
+                }
+            }
+        }
+
+        return hash('sha256', $data);
     }
 
     /**
