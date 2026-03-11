@@ -53,18 +53,48 @@
             });
         });
 
-        // Reload memories button
-        $('#levi-reload-memories').on('click', function() {
-            const $btn = $(this);
-            const $result = $('#levi-reload-result');
-            
-            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.reloadConfirm) ? leviSettings.i18n.reloadConfirm : 'Reload all memories? This may take a moment.';
+        // OAuth disconnect button
+        $('#levi-oauth-disconnect').on('click', function() {
+            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.confirmDisconnect)
+                ? leviSettings.i18n.confirmDisconnect
+                : 'Disconnect from OpenRouter? You will need to reconnect or enter an API key manually.';
             if (!confirm(confirmMsg)) {
                 return;
             }
+            var $btn = $(this);
+            $btn.prop('disabled', true).addClass('levi-loading');
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'levi_oauth_disconnect',
+                    nonce: leviSettings.nonce,
+                },
+                success: function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data && response.data.message ? response.data.message : 'Error');
+                        $btn.prop('disabled', false).removeClass('levi-loading');
+                    }
+                },
+                error: function() {
+                    alert('Request failed');
+                    $btn.prop('disabled', false).removeClass('levi-loading');
+                }
+            });
+        });
+
+        // Sync changed memory files button
+        $('#levi-reload-memories').on('click', function() {
+            const $btn = $(this);
+            const $fetchBtn = $('#levi-fetch-docs');
+            const $result = $('#levi-reload-result');
             
             $btn.prop('disabled', true);
-            $result.text((leviSettings.i18n && leviSettings.i18n.reloading) ? leviSettings.i18n.reloading : 'Reloading…');
+            $fetchBtn.prop('disabled', true);
+            $result.text((leviSettings.i18n && leviSettings.i18n.reloading) ? leviSettings.i18n.reloading : 'Syncing…');
             
             $.ajax({
                 url: leviSettings.ajaxUrl,
@@ -73,27 +103,69 @@
                     action: 'levi_reload_memories',
                     nonce: leviSettings.nonce,
                 },
+                timeout: 300000,
                 success: function(response) {
                     if (response.success) {
-                        const identityCount = Object.keys(response.data.results.identity.loaded || {}).length;
-                        const referenceCount = Object.keys(response.data.results.reference.loaded || {}).length;
-                        var reloaded = (leviSettings.i18n && leviSettings.i18n.reloaded) ? leviSettings.i18n.reloaded : 'Reloaded:';
-                        var idLabel = (leviSettings.i18n && leviSettings.i18n.identity) ? leviSettings.i18n.identity : 'identity';
-                        var refLabel = (leviSettings.i18n && leviSettings.i18n.reference) ? leviSettings.i18n.reference : 'reference';
-                        var filesLabel = (leviSettings.i18n && leviSettings.i18n.files) ? leviSettings.i18n.files : 'files';
-                        $result.html('<span class="levi-success">✓ ' + reloaded + ' ' + identityCount + ' ' + idLabel + ', ' + referenceCount + ' ' + refLabel + ' ' + filesLabel + '</span>');
-                        setTimeout(function() {
-                            location.reload();
-                        }, 1500);
+                        $result.html('<span class="levi-success">✓ ' + response.data.message + '</span>');
+                        setTimeout(function() { location.reload(); }, 2000);
                     } else {
-                        $result.html('<span class="levi-error">✗ ' + (response.data || (leviSettings.i18n && leviSettings.i18n.failed ? leviSettings.i18n.failed : 'Failed')) + '</span>');
+                        $result.html('<span class="levi-error">✗ ' + (response.data || 'Failed') + '</span>');
                     }
                 },
                 error: function() {
-                    $result.html('<span class="levi-error">✗ ' + (leviSettings.i18n && leviSettings.i18n.error ? leviSettings.i18n.error : 'Error') + '</span>');
+                    $result.html('<span class="levi-error">✗ Error</span>');
                 },
                 complete: function() {
                     $btn.prop('disabled', false);
+                    $fetchBtn.prop('disabled', false);
+                }
+            });
+        });
+
+        // Fetch docs & sync all button
+        $('#levi-fetch-docs').on('click', function() {
+            const $btn = $(this);
+            const $syncBtn = $('#levi-reload-memories');
+            const $result = $('#levi-reload-result');
+            
+            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.fetchDocsConfirm)
+                ? leviSettings.i18n.fetchDocsConfirm
+                : 'Fetch latest docs and sync? This may take several minutes.';
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+            
+            $btn.prop('disabled', true);
+            $syncBtn.prop('disabled', true);
+            $result.text((leviSettings.i18n && leviSettings.i18n.fetchingDocs) ? leviSettings.i18n.fetchingDocs : 'Fetching docs…');
+            
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'levi_fetch_and_sync_docs',
+                    nonce: leviSettings.nonce,
+                },
+                timeout: 600000,
+                success: function(response) {
+                    if (response.success) {
+                        var status = response.data.fetch.status || 'done';
+                        $result.html('<span class="levi-success">✓ Docs fetched (' + status + ') & synced</span>');
+                        setTimeout(function() { location.reload(); }, 2000);
+                    } else {
+                        $result.html('<span class="levi-error">✗ ' + (response.data || 'Failed') + '</span>');
+                    }
+                },
+                error: function(xhr) {
+                    if (xhr.statusText === 'timeout') {
+                        $result.html('<span class="levi-error">✗ Timeout – check cron log</span>');
+                    } else {
+                        $result.html('<span class="levi-error">✗ Error</span>');
+                    }
+                },
+                complete: function() {
+                    $btn.prop('disabled', false);
+                    $syncBtn.prop('disabled', false);
                 }
             });
         });
@@ -192,6 +264,50 @@
             });
         });
 
+        // Clear audit log button
+        $('#levi-clear-audit-log').on('click', function() {
+            const $btn = $(this);
+            const $result = $('#levi-audit-clear-result');
+            const confirmMsg = (leviSettings.i18n && leviSettings.i18n.clearAuditConfirm)
+                ? leviSettings.i18n.clearAuditConfirm
+                : 'Delete all audit log entries now?';
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            $btn.prop('disabled', true);
+            $result.text((leviSettings.i18n && leviSettings.i18n.clearing) ? leviSettings.i18n.clearing : 'Deleting…');
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'levi_clear_audit_log',
+                    nonce: leviSettings.nonce,
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const msg = response.data && response.data.message
+                            ? response.data.message
+                            : ((leviSettings.i18n && leviSettings.i18n.cleared) ? leviSettings.i18n.cleared : 'Audit log deleted.');
+                        $result.html('<span class="levi-success">✓ ' + msg + '</span>');
+                        setTimeout(function() {
+                            location.reload();
+                        }, 600);
+                    } else {
+                        $result.html('<span class="levi-error">✗ ' + (response.data || (leviSettings.i18n && leviSettings.i18n.failed ? leviSettings.i18n.failed : 'Failed')) + '</span>');
+                    }
+                },
+                error: function() {
+                    $result.html('<span class="levi-error">✗ ' + (leviSettings.i18n && leviSettings.i18n.error ? leviSettings.i18n.error : 'Error') + '</span>');
+                },
+                complete: function() {
+                    $btn.prop('disabled', false);
+                }
+            });
+        });
+
         // Form submission with visual feedback
         $('.levi-settings-form').on('submit', function() {
             const $form = $(this);
@@ -233,6 +349,137 @@
             var notConn = (leviSettings.i18n && leviSettings.i18n.notConnected) ? leviSettings.i18n.notConnected : 'Not Connected';
             $status.find('.levi-status-text').text(isConnected ? conn : notConn);
         }
+
+        // ── Cron Task Handlers ──────────────────────────────────────
+
+        $(document).on('click', '.levi-cron-run', function() {
+            var $btn = $(this);
+            var taskId = $btn.data('task-id');
+            $btn.prop('disabled', true).find('.dashicons').removeClass('dashicons-controls-play').addClass('dashicons-update levi-spin');
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: { action: 'levi_run_cron_task', nonce: leviSettings.nonce, task_id: taskId },
+                success: function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data || 'Error');
+                        $btn.prop('disabled', false).find('.dashicons').removeClass('dashicons-update levi-spin').addClass('dashicons-controls-play');
+                    }
+                },
+                error: function() {
+                    alert('Request failed');
+                    $btn.prop('disabled', false).find('.dashicons').removeClass('dashicons-update levi-spin').addClass('dashicons-controls-play');
+                }
+            });
+        });
+
+        $(document).on('click', '.levi-cron-toggle', function() {
+            var $btn = $(this);
+            var taskId = $btn.data('task-id');
+            $btn.prop('disabled', true);
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: { action: 'levi_toggle_cron_task', nonce: leviSettings.nonce, task_id: taskId },
+                success: function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data || 'Error');
+                        $btn.prop('disabled', false);
+                    }
+                },
+                error: function() {
+                    alert('Request failed');
+                    $btn.prop('disabled', false);
+                }
+            });
+        });
+
+        $(document).on('click', '.levi-cron-delete', function() {
+            var $btn = $(this);
+            var taskId = $btn.data('task-id');
+            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.confirmDelete) || 'Delete this task?';
+            if (!confirm(confirmMsg)) return;
+
+            $btn.prop('disabled', true);
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: { action: 'levi_delete_cron_task', nonce: leviSettings.nonce, task_id: taskId },
+                success: function(response) {
+                    if (response.success) {
+                        $btn.closest('tr').next('.levi-cron-detail').remove();
+                        $btn.closest('tr').fadeOut(300, function() { $(this).remove(); });
+                    } else {
+                        alert(response.data || 'Error');
+                        $btn.prop('disabled', false);
+                    }
+                },
+                error: function() {
+                    alert('Request failed');
+                    $btn.prop('disabled', false);
+                }
+            });
+        });
+
+        $(document).on('click', '.levi-cron-email-toggle', function() {
+            var $btn = $(this);
+            var taskId = $btn.data('task-id');
+            $btn.prop('disabled', true);
+            $.post(leviSettings.ajaxUrl, {
+                action: 'levi_toggle_cron_email',
+                nonce: leviSettings.nonce,
+                task_id: taskId
+            }, function(response) {
+                $btn.prop('disabled', false);
+                if (response.success) {
+                    var active = response.data.notify_email;
+                    $btn.toggleClass('levi-btn-email-active', active)
+                        .toggleClass('levi-btn-secondary', !active);
+                    $btn.attr('title', active
+                        ? (leviSettings.i18n && leviSettings.i18n.emailOn || 'E-Mail aktiv')
+                        : (leviSettings.i18n && leviSettings.i18n.emailOff || 'E-Mail deaktiviert'));
+                } else {
+                    alert(response.data || 'Error');
+                }
+            }).fail(function() {
+                $btn.prop('disabled', false);
+                alert('Request failed');
+            });
+        });
+
+        $(document).on('click', '.levi-cron-expand', function() {
+            var taskId = $(this).data('task-id');
+            var $detail = $('tr.levi-cron-detail[data-detail-for="' + taskId + '"]');
+            var $icon = $(this).find('.dashicons');
+
+            if ($detail.is(':visible')) {
+                $detail.slideUp(200);
+                $icon.removeClass('dashicons-arrow-up-alt2').addClass('dashicons-arrow-down-alt2');
+            } else {
+                $detail.slideDown(200);
+                $icon.removeClass('dashicons-arrow-down-alt2').addClass('dashicons-arrow-up-alt2');
+            }
+        });
+
+        $('#levi-cron-all-toggle').on('click', function() {
+            var $content = $('#levi-cron-all-content');
+            var $icon = $(this).find('.levi-collapse-icon');
+
+            if ($content.is(':visible')) {
+                $content.slideUp(300);
+                $icon.removeClass('dashicons-arrow-down-alt2').addClass('dashicons-arrow-right-alt2');
+            } else {
+                $content.slideDown(300);
+                $icon.removeClass('dashicons-arrow-right-alt2').addClass('dashicons-arrow-down-alt2');
+            }
+        });
     });
 
 })(jQuery);

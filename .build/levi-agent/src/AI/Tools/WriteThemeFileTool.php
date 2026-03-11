@@ -2,7 +2,11 @@
 
 namespace Levi\Agent\AI\Tools;
 
+use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
+
 class WriteThemeFileTool implements ToolInterface {
+
+    use SanitizesHtmlOutput;
 
     public function getName(): string {
         return 'write_theme_file';
@@ -64,10 +68,17 @@ class WriteThemeFileTool implements ToolInterface {
 
         $themeRoot = trailingslashit(get_theme_root()) . $slug;
         if (!is_dir($themeRoot)) {
-            return [
-                'success' => false,
-                'error' => 'Theme directory does not exist. Create theme first.',
-            ];
+            $resolved = $this->resolveThemeDirectory($slug);
+            if ($resolved !== null) {
+                $themeRoot = $resolved;
+                $slug = basename($resolved);
+            } else {
+                return [
+                    'success' => false,
+                    'error' => 'Theme directory does not exist. Create theme first.',
+                    'suggestion' => 'Use get_themes to list installed themes and find the correct theme_slug.',
+                ];
+            }
         }
 
         $targetPath = $themeRoot . '/' . $relativePath;
@@ -90,6 +101,8 @@ class WriteThemeFileTool implements ToolInterface {
                 'error' => 'Resolved path is outside theme directory.',
             ];
         }
+
+        [$content, $strippedCount] = $this->stripCodeTagsFromOutput($content, $relativePath);
 
         $filesystem = $this->getFilesystem();
         if ($filesystem === null) {
@@ -140,7 +153,46 @@ class WriteThemeFileTool implements ToolInterface {
         if (!empty($lint['warning'])) {
             $result['warning'] = $lint['warning'];
         }
+
+        if ($strippedCount > 0) {
+            $result['stripped_tags'] = $strippedCount;
+            $result['strip_notice'] = "$strippedCount <code>/<pre>-Tag(s) wurden automatisch entfernt.";
+        }
+
+        $codeTagCheck = $this->detectCodeTagsInOutput($content, $relativePath);
+        if ($codeTagCheck !== null) {
+            $result['code_tag_warning'] = $codeTagCheck;
+        }
+
         return $result;
+    }
+
+    private function resolveThemeDirectory(string $requestedSlug): ?string {
+        $themesDir = get_theme_root();
+        if (!is_dir($themesDir)) {
+            return null;
+        }
+        $entries = scandir($themesDir);
+        if ($entries === false) {
+            return null;
+        }
+        $normalized = $this->normalizeSlug($requestedSlug);
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..' || !is_dir($themesDir . '/' . $entry)) {
+                continue;
+            }
+            if ($entry === $requestedSlug) {
+                continue;
+            }
+            if ($this->normalizeSlug($entry) === $normalized) {
+                return $themesDir . '/' . $entry;
+            }
+        }
+        return null;
+    }
+
+    private function normalizeSlug(string $slug): string {
+        return strtolower(str_replace(['-', '_'], '', $slug));
     }
 
     private function getFilesystem(): ?\WP_Filesystem_Base {

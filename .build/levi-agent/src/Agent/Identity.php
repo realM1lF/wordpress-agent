@@ -54,13 +54,45 @@ class Identity {
             $parts[] = $this->knowledge;
         }
 
-        // Add dynamic context
-        $parts[] = $this->getDynamicContext();
+        $parts[] = self::getDynamicContext();
 
         return implode("\n\n---\n\n", $parts);
     }
 
-    private function getDynamicContext(): string {
+    /**
+     * Static identity text only (soul + rules + knowledge), without dynamic context.
+     * Suitable for caching since it only changes when the .md files change.
+     */
+    public function getFullContent(): string {
+        $parts = [];
+
+        if ($this->soul) {
+            $parts[] = $this->soul;
+        }
+
+        if ($this->rules) {
+            $parts[] = $this->rules;
+        }
+
+        if ($this->knowledge) {
+            $parts[] = $this->knowledge;
+        }
+
+        return implode("\n\n---\n\n", $parts);
+    }
+
+    /**
+     * SHA-256 hash over the three identity files for cache invalidation.
+     */
+    public function getContentHash(): string {
+        return hash('sha256', ($this->soul ?? '') . ($this->rules ?? '') . ($this->knowledge ?? ''));
+    }
+
+    /**
+     * Dynamic context (user, site, time). Static because it uses only WP API functions,
+     * no instance properties -- avoids unnecessary file I/O when called standalone.
+     */
+    public static function getDynamicContext(): string {
         $user = wp_get_current_user();
         $siteName = get_bloginfo('name');
         $siteUrl = get_site_url();

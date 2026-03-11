@@ -15,6 +15,9 @@ class UpdateOptionTool implements ToolInterface {
         'posts_per_rss',
         'default_category',
         'default_post_format',
+        'show_on_front',
+        'page_on_front',
+        'page_for_posts',
     ];
 
     public function getName(): string {
@@ -37,6 +40,13 @@ class UpdateOptionTool implements ToolInterface {
                     'date_format',
                     'time_format',
                     'posts_per_page',
+                    'posts_per_rss',
+                    'start_of_week',
+                    'default_category',
+                    'default_post_format',
+                    'show_on_front',
+                    'page_on_front',
+                    'page_for_posts',
                 ],
             ],
             'value' => [
@@ -62,16 +72,58 @@ class UpdateOptionTool implements ToolInterface {
         }
 
         $oldValue = get_option($option);
-        $newValue = sanitize_text_field($params['value']);
+        $rawValue = $params['value'] ?? '';
+        $newValue = $this->normalizeOptionValue($option, $rawValue);
 
-        update_option($option, $newValue);
+        if ($option === 'show_on_front' && !in_array($newValue, ['posts', 'page'], true)) {
+            return [
+                'success' => false,
+                'error' => "Invalid value for 'show_on_front'. Allowed: posts, page.",
+            ];
+        }
+
+        if (in_array($option, ['page_on_front', 'page_for_posts'], true) && !is_int($newValue)) {
+            return [
+                'success' => false,
+                'error' => "Invalid value for '$option'. Expected integer page ID.",
+            ];
+        }
+
+        $updated = update_option($option, $newValue);
+        $actualValue = get_option($option);
+        $verified = $this->valuesEqual($option, $actualValue, $newValue);
 
         return [
-            'success' => true,
+            'success' => $verified,
             'option' => $option,
             'old_value' => $oldValue,
             'new_value' => $newValue,
-            'message' => "Option '$option' updated successfully.",
+            'actual_value' => $actualValue,
+            'updated' => (bool) $updated,
+            'verified' => $verified,
+            'message' => $verified
+                ? "Option '$option' updated and verified successfully."
+                : "Option '$option' write attempted, but verification failed.",
         ];
+    }
+
+    private function normalizeOptionValue(string $option, mixed $value): mixed {
+        if ($option === 'show_on_front') {
+            return sanitize_key((string) $value);
+        }
+
+        if (in_array($option, ['page_on_front', 'page_for_posts', 'posts_per_page', 'posts_per_rss', 'start_of_week', 'default_category'], true)) {
+            return (int) $value;
+        }
+
+        return sanitize_text_field((string) $value);
+    }
+
+    private function valuesEqual(string $option, mixed $actual, mixed $expected): bool {
+        if (in_array($option, ['page_on_front', 'page_for_posts', 'posts_per_page', 'posts_per_rss', 'start_of_week', 'default_category'], true)) {
+            return (int) $actual === (int) $expected;
+        }
+
+        return (string) $actual === (string) $expected;
     }
 }

@@ -2,7 +2,11 @@
 
 namespace Levi\Agent\AI\Tools;
 
+use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
+
 class WriteThemeFileTool implements ToolInterface {
+
+    use SanitizesHtmlOutput;
 
     public function getName(): string {
         return 'write_theme_file';
@@ -98,6 +102,8 @@ class WriteThemeFileTool implements ToolInterface {
             ];
         }
 
+        [$content, $strippedCount] = $this->stripCodeTagsFromOutput($content, $relativePath);
+
         $filesystem = $this->getFilesystem();
         if ($filesystem === null) {
             return [
@@ -147,6 +153,17 @@ class WriteThemeFileTool implements ToolInterface {
         if (!empty($lint['warning'])) {
             $result['warning'] = $lint['warning'];
         }
+
+        if ($strippedCount > 0) {
+            $result['stripped_tags'] = $strippedCount;
+            $result['strip_notice'] = "$strippedCount <code>/<pre>-Tag(s) wurden automatisch entfernt.";
+        }
+
+        $codeTagCheck = $this->detectCodeTagsInOutput($content, $relativePath);
+        if ($codeTagCheck !== null) {
+            $result['code_tag_warning'] = $codeTagCheck;
+        }
+
         return $result;
     }
 

@@ -9,7 +9,7 @@ class GetPluginsTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get a list of installed WordPress plugins with their status.';
+        return 'Get a list of installed WordPress plugins with their status. CRITICAL: Returns ONLY actual plugins from the database - never invent, assume, or hallucinate plugins that are not in the result.';
     }
 
     public function getParameters(): array {

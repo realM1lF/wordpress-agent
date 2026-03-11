@@ -1,4 +1,4 @@
-/* Levi Setup Wizard */
+/* Levi Setup Wizard – Purple accent */
 .levi-setup-wrap .levi-settings-main {
     max-width: 960px;
 }
@@ -7,14 +7,14 @@
     width: 100%;
     height: 8px;
     border-radius: 999px;
-    background: rgba(59, 130, 246, 0.15);
+    background: rgba(124, 58, 237, 0.15);
     margin-bottom: var(--levi-space-xl);
     overflow: hidden;
 }
 
 .levi-setup-progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #60a5fa, #3b82f6);
+    background: linear-gradient(90deg, #a78bfa, #7c3aed);
     transition: width 240ms ease;
 }
 
@@ -29,7 +29,7 @@
 }
 
 .levi-setup-link {
-    color: #60a5fa;
+    color: #a78bfa;
     text-decoration: none;
 }
 
@@ -55,7 +55,7 @@
 }
 
 .levi-setup-plan:hover {
-    border-color: rgba(59, 130, 246, 0.4);
+    border-color: rgba(124, 58, 237, 0.4);
     transform: translateY(-1px);
 }
 
@@ -75,8 +75,8 @@
 
 .levi-setup-plan-active {
     border-color: var(--levi-accent);
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
-    background: rgba(59, 130, 246, 0.08);
+    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.25);
+    background: rgba(124, 58, 237, 0.08);
 }
 
 @media (max-width: 782px) {
@@ -138,11 +138,11 @@
 
 /* Info box (API key instructions) */
 .levi-setup-info-box {
-    border: 1px solid rgba(59, 130, 246, 0.2);
+    border: 1px solid rgba(124, 58, 237, 0.2);
     border-radius: var(--levi-radius-md);
     padding: var(--levi-space-md) var(--levi-space-lg);
     margin-bottom: var(--levi-space-lg);
-    background: rgba(59, 130, 246, 0.05);
+    background: rgba(124, 58, 237, 0.05);
     color: var(--levi-text-secondary);
 }
 
@@ -153,7 +153,7 @@
 }
 
 .levi-setup-info-box a {
-    color: #60a5fa;
+    color: #a78bfa;
     text-decoration: none;
 }
 
@@ -182,7 +182,7 @@
 }
 
 .levi-setup-profile-option:hover {
-    border-color: rgba(59, 130, 246, 0.4);
+    border-color: rgba(124, 58, 237, 0.4);
 }
 
 .levi-setup-profile-option input[type="radio"] {
@@ -207,8 +207,8 @@
 
 .levi-setup-profile-option-active {
     border-color: var(--levi-accent);
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
-    background: rgba(59, 130, 246, 0.08);
+    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.25);
+    background: rgba(124, 58, 237, 0.08);
 }
 
 /* Plan feature lists */
@@ -227,4 +227,72 @@
 .levi-setup-plan p + .levi-setup-plan-features {
     border-top: 1px solid var(--levi-border-subtle);
     padding-top: var(--levi-space-md);
+}
+
+/* Wizard sync steps */
+.levi-wizard-sync {
+    margin: var(--levi-space-lg) 0;
+}
+
+.levi-wizard-sync-step {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--levi-border-subtle);
+    border-radius: var(--levi-radius-md);
+    background: var(--levi-bg-surface);
+    transition: all 300ms ease;
+}
+
+.levi-wizard-sync-step .levi-wizard-sync-icon {
+    font-size: 1.2em;
+    flex-shrink: 0;
+    width: 1.5em;
+    text-align: center;
+}
+
+.levi-wizard-sync-step .levi-wizard-sync-label {
+    flex: 1;
+    color: var(--levi-text-secondary);
+    font-size: 14px;
+}
+
+.levi-wizard-sync-step .levi-wizard-sync-status {
+    font-size: 12px;
+    color: var(--levi-text-muted);
+    white-space: nowrap;
+}
+
+.levi-wizard-sync-step.is-running {
+    border-color: rgba(124, 58, 237, 0.4);
+    background: rgba(124, 58, 237, 0.06);
+}
+
+.levi-wizard-sync-step.is-running .levi-wizard-sync-icon {
+    animation: levi-spin 1.2s linear infinite;
+}
+
+.levi-wizard-sync-step.is-running .levi-wizard-sync-label {
+    color: var(--levi-text-primary);
+}
+
+.levi-wizard-sync-step.is-done {
+    border-color: rgba(34, 197, 94, 0.35);
+    background: rgba(34, 197, 94, 0.06);
+}
+
+.levi-wizard-sync-step.is-done .levi-wizard-sync-label {
+    color: var(--levi-text-primary);
+}
+
+.levi-wizard-sync-step.is-error {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.06);
+}
+
+@keyframes levi-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }

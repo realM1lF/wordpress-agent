@@ -53,9 +53,11 @@ add_action('plugins_loaded', function() {
     global $wpdb;
     $table = $wpdb->prefix . 'levi_conversations';
     $auditTable = $wpdb->prefix . 'levi_audit_log';
+    $usageTable = $wpdb->prefix . 'levi_usage_log';
     if (
         $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table
         || $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $auditTable)) !== $auditTable
+        || $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $usageTable)) !== $usageTable
     ) {
         require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
         Tables::create();

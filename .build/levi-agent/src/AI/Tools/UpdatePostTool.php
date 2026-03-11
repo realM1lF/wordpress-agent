@@ -51,7 +51,8 @@ class UpdatePostTool implements ToolInterface {
         if (!$post) {
             return [
                 'success' => false,
-                'error' => 'Post not found',
+                'error' => 'Post not found.',
+                'suggestion' => 'Use get_posts to list available posts and verify the ID.',
             ];
         }
 
@@ -108,13 +109,20 @@ class UpdatePostTool implements ToolInterface {
         // Log action
         $this->logAction($postId, 'update', $params);
 
-        return [
+        $result = [
             'success' => true,
             'post_id' => $postId,
+            'post_type' => $post->post_type,
             'title' => get_the_title($postId),
             'edit_url' => get_edit_post_link($postId, 'raw'),
             'message' => 'Post updated successfully.',
         ];
+
+        if ($post->post_type !== 'post') {
+            $result['note'] = sprintf('This is a %s, not a post.', $post->post_type);
+        }
+
+        return $result;
     }
 
     private function logAction(int $postId, string $action, array $params): void {

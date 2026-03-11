@@ -16,9 +16,16 @@
         const uploadBtn = document.getElementById('levi-chat-upload-btn');
         const clearFilesBtn = document.getElementById('levi-chat-clear-files-btn');
         const fileInput = document.getElementById('levi-chat-file-input');
-        const uploadStatus = document.getElementById('levi-chat-upload-status');
-        const contextHint = document.getElementById('levi-chat-context-hint');
+        const attachmentsBar = document.getElementById('levi-chat-attachments');
         const fileList = document.getElementById('levi-chat-file-list');
+        const userName = typeof leviAgent.userName === 'string' ? leviAgent.userName : '';
+        const userInitial = typeof leviAgent.userInitial === 'string' && leviAgent.userInitial
+            ? leviAgent.userInitial
+            : getInitial(userName, 'U');
+        const userAvatarUrl = typeof leviAgent.userAvatarUrl === 'string' ? leviAgent.userAvatarUrl : '';
+        const leviAvatarUrl = typeof leviAgent.leviAvatarUrl === 'string' ? leviAgent.leviAvatarUrl : '';
+
+        const stop = document.getElementById('levi-chat-stop');
 
         const sessionKey = 'levi_session_id';
         const openKey = 'levi_chat_open';
@@ -28,6 +35,49 @@
         let sendInFlight = false;
         let uploadInFlight = false;
         let uploadedFiles = [];
+        let currentAbortController = null;
+        let editingMessageEl = null;
+        let webSearchActive = false;
+        const webSearchBtn = document.getElementById('levi-chat-web-search-btn');
+        let titleInterval = null;
+        let titleOriginal = null;
+
+        function startTitleWorking() {
+            if (titleInterval) return;
+            titleOriginal = document.title;
+            var dotState = 0;
+            var dots = ['', '.', '..', '...'];
+            titleInterval = setInterval(function() {
+                dotState = (dotState + 1) % dots.length;
+                document.title = 'Levi arbeitet' + dots[dotState];
+            }, 600);
+        }
+
+        function stopTitleWorking() {
+            if (!titleInterval) return;
+            clearInterval(titleInterval);
+            titleInterval = null;
+            if (titleOriginal) document.title = titleOriginal;
+            titleOriginal = null;
+        }
+
+        function notifyIfHidden(label) {
+            stopTitleWorking();
+            if (!document.hidden) return;
+            titleOriginal = titleOriginal || document.title;
+            var orig = titleOriginal;
+            titleInterval = setInterval(function() {
+                document.title = document.title === orig ? label : orig;
+            }, 1000);
+            document.addEventListener('visibilitychange', function onVisible() {
+                if (document.hidden) return;
+                clearInterval(titleInterval);
+                titleInterval = null;
+                document.title = orig;
+                titleOriginal = null;
+                document.removeEventListener('visibilitychange', onVisible);
+            });
+        }
 
         function setChatOpen(isOpen) {
             window_.style.display = isOpen ? 'flex' : 'none';
@@ -60,10 +110,12 @@
             setFullWidth(true);
         }
 
-        // Restore server-side history if we already have a session
+        // Restore server-side history if we already have a session; otherwise show full greeting
         if (sessionId) {
             loadHistory(sessionId);
             loadSessionUploads(sessionId);
+        } else {
+            renderHistory([]);
         }
 
         // Toggle chat window
@@ -89,6 +141,13 @@
             clear.addEventListener('click', clearCurrentSession);
         }
 
+        if (webSearchBtn) {
+            webSearchBtn.addEventListener('click', function() {
+                webSearchActive = !webSearchActive;
+                webSearchBtn.classList.toggle('levi-web-search-active', webSearchActive);
+            });
+        }
+
         if (uploadBtn && fileInput) {
             uploadBtn.addEventListener('click', function() {
                 if (!uploadInFlight) {
@@ -102,10 +161,20 @@
         if (clearFilesBtn) {
             clearFilesBtn.addEventListener('click', clearSessionFiles);
         }
-        updateClearFilesButton();
+        updateAttachmentsBar();
 
         // Send message on button click
         send.addEventListener('click', sendMessage);
+
+        // Stop button aborts current request
+        if (stop) {
+            stop.addEventListener('click', function() {
+                if (currentAbortController) {
+                    currentAbortController.abort();
+                    currentAbortController = null;
+                }
+            });
+        }
 
         // Send message on Enter (Shift+Enter for new line)
         input.addEventListener('keydown', function(e) {
@@ -130,22 +199,44 @@
             const text = input.value.trim();
             if (!text) return;
 
-            addMessage(text, 'user');
+            const messageAttachments = uploadedFiles.length > 0 ? [...uploadedFiles] : null;
+
+            // If editing, remove the old user message and its assistant reply from DOM
+            const isEdit = editingMessageEl !== null;
+            if (isEdit && editingMessageEl) {
+                const nextSibling = editingMessageEl.nextElementSibling;
+                if (nextSibling && nextSibling.classList.contains('levi-message-assistant')) {
+                    nextSibling.remove();
+                }
+                editingMessageEl.remove();
+                editingMessageEl = null;
+            }
+
+            currentAbortController = new AbortController();
+            addMessage(text, 'user', messageAttachments);
             input.value = '';
 
-            const taskMode = inferTaskMode(text);
-            const typing = addTypingIndicator(taskMode);
-            const phaseTimers = scheduleTypingPhases(typing, taskMode);
+            // Clear attachments from input area (consumed by this message)
+            if (messageAttachments) {
+                uploadedFiles = [];
+                renderUploadedFiles();
+            }
+
+            const typing = addTypingIndicator();
+            const phaseTimers = scheduleTypingPhases();
             setSendingState(true);
 
             if (supportsReadableStream()) {
-                sendMessageSSE(text, typing, phaseTimers);
+                sendMessageSSE(text, typing, phaseTimers, isEdit);
             } else {
-                sendMessageClassic(text, typing, phaseTimers);
+                sendMessageClassic(text, typing, phaseTimers, isEdit);
             }
         }
 
-        async function sendMessageSSE(text, typing, phaseTimers) {
+        async function sendMessageSSE(text, typing, phaseTimers, isEdit) {
+            var useWebSearch = webSearchActive;
+            webSearchActive = false;
+            if (webSearchBtn) webSearchBtn.classList.remove('levi-web-search-active');
             try {
                 const response = await fetch(leviAgent.streamUrl, {
                     method: 'POST',
@@ -156,7 +247,10 @@
                     body: JSON.stringify({
                         message: text,
                         session_id: sessionId,
+                        replace_last: isEdit || false,
+                        web_search: useWebSearch,
                     }),
+                    signal: currentAbortController ? currentAbortController.signal : undefined,
                 });
 
                 if (!response.ok && !response.body) {
@@ -196,15 +290,20 @@
                     clearPhaseTimers(phaseTimers);
                     typing.complete();
                     setSendingState(false);
-                    addMessage('Ich konnte gerade keine Antwort generieren. Schreibe "mach weiter", damit ich es erneut versuche.', 'assistant');
+                    addMessage('Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.', 'assistant');
                     console.warn('Levi SSE: stream ended without done/error event');
                 }
             } catch (error) {
                 clearPhaseTimers(phaseTimers);
                 typing.remove();
                 setSendingState(false);
-                addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
-                console.error('SSE Error:', error);
+                currentAbortController = null;
+                if (error.name === 'AbortError') {
+                    addMessage('⏹ Abgebrochen.', 'assistant');
+                } else {
+                    addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
+                    console.error('SSE Error:', error);
+                }
             }
         }
 
@@ -231,6 +330,7 @@
                     clearPhaseTimers(phaseTimers);
                     typing.complete();
                     setSendingState(false);
+                    notifyIfHidden('✅ Levi ist fertig!');
 
                     if (data.session_id) {
                         sessionId = data.session_id;
@@ -239,12 +339,17 @@
 
                     const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                     addMessage(cleanedMessage, 'assistant');
+                    if (data.pending_confirmation) {
+                        appendConfirmationCard(data.pending_confirmation);
+                    }
+                    clearSessionFilesQuietly();
                     return true;
 
                 case 'error':
                     clearPhaseTimers(phaseTimers);
                     typing.complete();
                     setSendingState(false);
+                    notifyIfHidden('⚠ Levi braucht Hilfe');
 
                     if (data.session_id) {
                         sessionId = data.session_id;
@@ -259,7 +364,10 @@
             }
         }
 
-        function sendMessageClassic(text, typing, phaseTimers) {
+        function sendMessageClassic(text, typing, phaseTimers, isEdit) {
+            var useWebSearch = webSearchActive;
+            webSearchActive = false;
+            if (webSearchBtn) webSearchBtn.classList.remove('levi-web-search-active');
             fetch(leviAgent.restUrl + 'chat', {
                 method: 'POST',
                 headers: {
@@ -269,7 +377,10 @@
                 body: JSON.stringify({
                     message: text,
                     session_id: sessionId,
+                    replace_last: isEdit || false,
+                    web_search: useWebSearch,
                 }),
+                signal: currentAbortController ? currentAbortController.signal : undefined,
             })
             .then(async response => {
                 const text = await response.text();
@@ -286,6 +397,7 @@
                 clearPhaseTimers(phaseTimers);
                 typing.complete();
                 setSendingState(false);
+                notifyIfHidden(data.error ? '⚠ Levi braucht Hilfe' : '✅ Levi ist fertig!');
 
                 if (data.error) {
                     addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
@@ -299,13 +411,22 @@
 
                 const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                 addMessage(cleanedMessage, 'assistant');
+                if (data.pending_confirmation) {
+                    appendConfirmationCard(data.pending_confirmation);
+                }
+                clearSessionFilesQuietly();
             })
             .catch(error => {
                 clearPhaseTimers(phaseTimers);
                 typing.remove();
                 setSendingState(false);
-                addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
-                console.error('Error:', error);
+                currentAbortController = null;
+                if (error.name === 'AbortError') {
+                    addMessage('⏹ Abgebrochen.', 'assistant');
+                } else {
+                    addMessage('❌ Entschuldigung, es gab einen Fehler: ' + error.message, 'assistant');
+                    console.error('Error:', error);
+                }
             });
         }
 
@@ -313,24 +434,51 @@
             sendInFlight = !!isSending;
             send.disabled = !!isSending;
             input.disabled = !!isSending;
+            if (uploadBtn) uploadBtn.disabled = !!isSending;
+            if (webSearchBtn) webSearchBtn.disabled = !!isSending;
             if (isSending) {
-                send.style.opacity = '0.7';
+                send.style.display = 'none';
+                if (stop) stop.style.display = 'inline-flex';
+                if (document.hidden) startTitleWorking();
             } else {
+                send.style.display = '';
+                if (stop) stop.style.display = 'none';
                 send.style.opacity = '1';
                 input.focus();
+                stopTitleWorking();
             }
         }
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden && sendInFlight) startTitleWorking();
+            if (!document.hidden && sendInFlight) stopTitleWorking();
+        });
+
+        // Warn when leaving/reloading while Levi is processing
+        window.addEventListener('beforeunload', function(e) {
+            if (sendInFlight || uploadInFlight) {
+                e.preventDefault();
+                var msg = 'Levi arbeitet gerade an einer Aufgabe. Ein Seitenwechsel oder Neuladen würde den Prozess unterbrechen. Wirklich verlassen?';
+                e.returnValue = msg;
+                return msg;
+            }
+        });
 
         function uploadSelectedFiles(fileListObj) {
             if (!fileListObj || fileListObj.length === 0 || uploadInFlight) {
                 return;
             }
 
+            const previews = {};
+            for (const file of fileListObj) {
+                if (/^image\//i.test(file.type)) {
+                    previews[file.name] = URL.createObjectURL(file);
+                }
+            }
+
             uploadInFlight = true;
             uploadBtn.disabled = true;
-            if (uploadStatus) {
-                uploadStatus.textContent = 'Upload läuft...';
-            }
+            uploadBtn.classList.add('levi-uploading');
 
             const formData = new FormData();
             for (const file of fileListObj) {
@@ -360,6 +508,7 @@
             .then(data => {
                 uploadInFlight = false;
                 uploadBtn.disabled = false;
+                uploadBtn.classList.remove('levi-uploading');
                 if (fileInput) {
                     fileInput.value = '';
                 }
@@ -370,33 +519,40 @@
                 }
 
                 if (data.error) {
-                    if (uploadStatus) uploadStatus.textContent = 'Upload fehlgeschlagen';
                     addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
                     return;
                 }
 
                 const uploaded = Array.isArray(data.files) ? data.files : [];
+                uploaded.forEach(function(f) {
+                    if (f && f.name && previews[f.name]) {
+                        f.preview = previews[f.name];
+                    }
+                });
                 const fullList = Array.isArray(data.session_files) ? data.session_files : null;
+                if (fullList) {
+                    fullList.forEach(function(f) {
+                        if (f && f.name && previews[f.name]) {
+                            f.preview = previews[f.name];
+                        }
+                    });
+                }
                 if (uploaded.length > 0) {
                     uploadedFiles = fullList || uploadedFiles.concat(uploaded).slice(-5);
                     renderUploadedFiles();
-                    if (uploadStatus) uploadStatus.textContent = uploaded.length + ' Datei(en) hochgeladen';
-                    addMessage('📎 Datei(en) hochgeladen: ' + uploaded.map(f => f.name).join(', '), 'assistant');
-                } else {
-                    if (uploadStatus) uploadStatus.textContent = 'Keine Datei übernommen';
                 }
 
                 if (Array.isArray(data.errors) && data.errors.length > 0) {
-                    addMessage('⚠️ Upload-Hinweise: ' + data.errors.join(' | '), 'assistant');
+                    addMessage('⚠️ ' + data.errors.join(' | '), 'assistant');
                 }
             })
             .catch(error => {
                 uploadInFlight = false;
                 uploadBtn.disabled = false;
+                uploadBtn.classList.remove('levi-uploading');
                 if (fileInput) {
                     fileInput.value = '';
                 }
-                if (uploadStatus) uploadStatus.textContent = 'Upload fehlgeschlagen';
                 addMessage('❌ Upload-Fehler: ' + error.message, 'assistant');
             });
         }
@@ -409,8 +565,18 @@
                 chip.className = 'levi-chat-file-chip';
                 const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
                 const fileId = escapeHtml((f && f.id) ? String(f.id) : '');
-                chip.innerHTML = '<span class="dashicons dashicons-media-text"></span><span>' + name + '</span>'
-                    + '<button type="button" class="levi-chat-file-chip-remove" data-file-id="' + fileId + '" title="Datei entfernen">×</button>';
+                const fileType = (f && f.type) ? String(f.type) : '';
+                const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
+                const preview = (f && f.preview) ? f.preview : '';
+                let thumb;
+                if (isImage && preview) {
+                    thumb = '<img src="' + escapeHtml(preview) + '" class="levi-chat-file-chip-thumb" alt="">';
+                } else {
+                    const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
+                    thumb = '<span class="dashicons ' + icon + '"></span>';
+                }
+                chip.innerHTML = thumb + '<span class="levi-chat-file-chip-name">' + name + '</span>'
+                    + '<button type="button" class="levi-chat-file-chip-remove" data-file-id="' + fileId + '" title="Entfernen">×</button>';
                 fileList.appendChild(chip);
             });
             fileList.querySelectorAll('.levi-chat-file-chip-remove').forEach((btn) => {
@@ -421,23 +587,12 @@
                     }
                 });
             });
-            updateClearFilesButton();
-            updateContextHint();
+            updateAttachmentsBar();
         }
 
-        function updateClearFilesButton() {
-            if (!clearFilesBtn) return;
-            clearFilesBtn.style.display = uploadedFiles.length > 0 ? 'inline-flex' : 'none';
-        }
-
-        function updateContextHint() {
-            if (!contextHint) return;
-            const count = uploadedFiles.length;
-            if (count === 0) {
-                contextHint.textContent = '';
-                return;
-            }
-            contextHint.textContent = count + ' Datei(en) sind im aktuellen Chat-Kontext aktiv.';
+        function updateAttachmentsBar() {
+            if (!attachmentsBar) return;
+            attachmentsBar.style.display = uploadedFiles.length > 0 ? 'flex' : 'none';
         }
 
         function loadSessionUploads(currentSessionId) {
@@ -466,11 +621,18 @@
             });
         }
 
+        function clearSessionFilesQuietly() {
+            if (!sessionId) return;
+            fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(sessionId) + '/uploads', {
+                method: 'DELETE',
+                headers: { 'X-WP-Nonce': leviAgent.nonce },
+            }).catch(function() {});
+        }
+
         function clearSessionFiles() {
             if (!sessionId) {
                 uploadedFiles = [];
                 renderUploadedFiles();
-                if (uploadStatus) uploadStatus.textContent = '';
                 return;
             }
             fetch(leviAgent.restUrl + 'chat/' + encodeURIComponent(sessionId) + '/uploads', {
@@ -492,7 +654,6 @@
                 }
                 uploadedFiles = [];
                 renderUploadedFiles();
-                if (uploadStatus) uploadStatus.textContent = 'Uploads entfernt';
             })
             .catch((error) => {
                 addMessage('❌ Uploads konnten nicht gelöscht werden: ' + error.message, 'assistant');
@@ -520,7 +681,6 @@
                 }
                 uploadedFiles = Array.isArray(data.files) ? data.files : [];
                 renderUploadedFiles();
-                if (uploadStatus) uploadStatus.textContent = 'Datei entfernt';
             })
             .catch((error) => {
                 addMessage('❌ Datei konnte nicht entfernt werden: ' + error.message, 'assistant');
@@ -563,9 +723,6 @@
                 historyLoaded = false;
                 uploadedFiles = [];
                 renderUploadedFiles();
-                if (uploadStatus) {
-                    uploadStatus.textContent = '';
-                }
                 renderHistory([]);
             })
             .catch((error) => {
@@ -573,18 +730,180 @@
             });
         }
 
-        function addMessage(text, role) {
+        function formatTimestamp(dateInput) {
+            var d = dateInput ? new Date(dateInput) : new Date();
+            if (isNaN(d.getTime())) { d = new Date(); }
+            var hh = String(d.getHours()).padStart(2, '0');
+            var mm = String(d.getMinutes()).padStart(2, '0');
+            var dd = String(d.getDate()).padStart(2, '0');
+            var mo = String(d.getMonth() + 1).padStart(2, '0');
+            return dd + '.' + mo + '. ' + hh + ':' + mm;
+        }
+
+        function addMessage(text, role, attachments, timestamp) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'levi-message levi-message-' + role;
-            messageDiv.innerHTML = '<div class="levi-message-content">' + renderMessageContent(text, role) + '</div>';
+
+            let inner = '';
+            if (role === 'user' && attachments && attachments.length > 0) {
+                inner += '<div class="levi-message-attachments">';
+                attachments.forEach(function(f) {
+                    const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
+                    const fileType = (f && f.type) ? String(f.type) : '';
+                    const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
+                    const preview = (f && f.preview) ? escapeHtml(f.preview) : '';
+                    let thumb;
+                    if (isImage && preview) {
+                        thumb = '<img src="' + preview + '" class="levi-msg-file-thumb" alt="">';
+                    } else {
+                        const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
+                        thumb = '<span class="dashicons ' + icon + '"></span>';
+                    }
+                    inner += '<span class="levi-msg-file">' + thumb + name + '</span>';
+                });
+                inner += '</div>';
+            }
+            inner += renderMessageContent(text, role);
+
+            var ts = formatTimestamp(timestamp);
+            let html = buildAvatarHtml(role) + '<div class="levi-message-main"><div class="levi-message-content">' + inner + '</div>'
+                + '<span class="levi-message-time">' + ts + '</span>';
+
+            if (role === 'user') {
+                html += '<button type="button" class="levi-message-edit-btn dashicons dashicons-edit" title="Nachricht bearbeiten" aria-label="Nachricht bearbeiten"></button>';
+            }
+            html += '</div>';
+
+            messageDiv.innerHTML = html;
+
+            if (role === 'user') {
+                const editBtn = messageDiv.querySelector('.levi-message-edit-btn');
+                if (editBtn) {
+                    editBtn.addEventListener('click', function() {
+                        if (sendInFlight) return;
+                        input.value = text;
+                        input.focus();
+                        editingMessageEl = messageDiv;
+                    });
+                }
+            }
+
             messages.appendChild(messageDiv);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function appendConfirmationCard(pending) {
+            if (!pending || !pending.action_id) return;
+
+            var card = document.createElement('div');
+            card.className = 'levi-confirmation-card';
+            card.setAttribute('data-action-id', pending.action_id);
+
+            var label = document.createElement('div');
+            label.className = 'levi-confirmation-label';
+            label.textContent = 'Levi möchte: ' + (pending.description || pending.tool || 'Aktion ausführen');
+            card.appendChild(label);
+
+            var btnRow = document.createElement('div');
+            btnRow.className = 'levi-confirmation-buttons';
+
+            var confirmBtn = document.createElement('button');
+            confirmBtn.type = 'button';
+            confirmBtn.className = 'levi-confirm-btn levi-confirm-btn-primary';
+            confirmBtn.textContent = 'Bestätigen';
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className = 'levi-confirm-btn levi-confirm-btn-secondary';
+            cancelBtn.textContent = 'Abbrechen';
+
+            btnRow.appendChild(confirmBtn);
+            btnRow.appendChild(cancelBtn);
+            card.appendChild(btnRow);
+
+            confirmBtn.addEventListener('click', async function() {
+                confirmBtn.disabled = true;
+                cancelBtn.disabled = true;
+                confirmBtn.textContent = 'Wird ausgeführt...';
+                card.classList.add('levi-confirmation-loading');
+
+                var typing = addTypingIndicator();
+                typing.setLabel('Levi führt bestätigte Aktion aus...');
+                setSendingState(true);
+
+                try {
+                    var resp = await fetch(leviAgent.restUrl + 'chat/confirm-action', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-WP-Nonce': leviAgent.nonce,
+                        },
+                        body: JSON.stringify({ action_id: pending.action_id }),
+                    });
+
+                    if (!resp.ok && !resp.body) {
+                        throw new Error('Server error: ' + resp.status);
+                    }
+
+                    var reader = resp.body.getReader();
+                    var decoder = new TextDecoder();
+                    var buffer = '';
+                    var finalHandled = false;
+                    var phaseTimers = {};
+
+                    while (true) {
+                        var chunk = await reader.read();
+                        if (chunk.done) break;
+
+                        buffer += decoder.decode(chunk.value, { stream: true });
+
+                        while (buffer.includes('\n\n')) {
+                            var eventEnd = buffer.indexOf('\n\n');
+                            var eventStr = buffer.substring(0, eventEnd);
+                            buffer = buffer.substring(eventEnd + 2);
+
+                            var lines = eventStr.split('\n');
+                            for (var li = 0; li < lines.length; li++) {
+                                if (!lines[li].startsWith('data: ')) continue;
+                                try {
+                                    var data = JSON.parse(lines[li].substring(6));
+                                    finalHandled = handleSSEEvent(data, typing, phaseTimers) || finalHandled;
+                                } catch (e) {
+                                    console.warn('SSE parse error:', e, lines[li]);
+                                }
+                            }
+                        }
+                    }
+
+                    card.remove();
+                    if (!finalHandled) {
+                        typing.complete();
+                        setSendingState(false);
+                    }
+                } catch (err) {
+                    typing.remove();
+                    card.remove();
+                    setSendingState(false);
+                    addMessage('❌ Bestätigung fehlgeschlagen: ' + err.message, 'assistant');
+                }
+            });
+
+            cancelBtn.addEventListener('click', function() {
+                card.remove();
+            });
+
+            messages.appendChild(card);
             messages.scrollTop = messages.scrollHeight;
         }
 
         function renderHistory(historyMessages) {
             messages.innerHTML = '';
             if (!Array.isArray(historyMessages) || historyMessages.length === 0) {
-                addMessage('Hallo ' + (leviAgent.userName || '') + '! 👋\nIch bin dein WordPress KI-Assistent. Wie kann ich dir helfen?', 'assistant');
+                var greeting = 'Hallo ' + (leviAgent.userName || '') + '! 👋\n\nIch bin dein WordPress KI-Assistent. Wie kann ich dir helfen?\n\n'
+                    + '<span class="levi-session-hint">Das ist eine neue Session. Levi merkt sich den Gespraechsverlauf innerhalb dieser Session (bis zu 30 Tage). '
+                    + 'Nutze den Papierkorb-Button um die Session zu löschen und eine neue zu starten.</span>'
+                    + '<span class="levi-session-alert">VORSICHT: Ein Seitenwechsel unterbricht laufende Aufgaben von Levi. Falls du also an etwas arbeiten möchtest während Levi eine Aufgabe bearbeitet, öffne dir bitte einen neuen Tab und arbeite in diesem.</span>';
+                addMessage(greeting, 'assistant');
                 return;
             }
 
@@ -593,7 +912,7 @@
                     return;
                 }
                 if (msg.role === 'user' || msg.role === 'assistant') {
-                    addMessage(msg.content, msg.role);
+                    addMessage(msg.content, msg.role, null, msg.created_at);
                 }
             });
         }
@@ -626,17 +945,18 @@
             });
         }
 
-        function addTypingIndicator(taskMode) {
+        function addTypingIndicator() {
             const typingDiv = document.createElement('div');
             typingDiv.className = 'levi-message levi-message-assistant';
             typingDiv.innerHTML =
-                '<div class="levi-message-content levi-typing">' +
+                buildAvatarHtml('assistant') +
+                '<div class="levi-message-main"><div class="levi-message-content levi-typing">' +
                 '<div class="levi-typing-row">' +
                 '<span></span><span></span><span></span>' +
                 '<small class="levi-typing-label"></small>' +
                 '</div>' +
                 '<div class="levi-chat-progress-track levi-chat-progress-indeterminate"><div class="levi-chat-progress-shimmer"></div></div>' +
-                '</div>';
+                '</div></div>';
             messages.appendChild(typingDiv);
             messages.scrollTop = messages.scrollHeight;
 
@@ -648,7 +968,7 @@
                 }
             };
 
-            setLabel(getTypingLabel(taskMode, 'start'));
+            setLabel('Levi verarbeitet die Anfrage...');
 
             return {
                 setLabel,
@@ -662,32 +982,8 @@
             };
         }
 
-        function inferTaskMode(text) {
-            const t = String(text || '').toLowerCase();
-            if (/\b(code|plugin|php|javascript|js|css|datei|funktion|implement|bugfix|refactor)\b/.test(t)) {
-                return 'code';
-            }
-            if (/\b(rechtschreibung|analyse|prüf|review|durchsuch|korrigier)\b/.test(t)) {
-                return 'analysis';
-            }
-            return 'write';
-        }
-
-        function getTypingLabel(taskMode, phase) {
-            if (taskMode === 'code') {
-                return phase === 'final' ? 'Levi finalisiert Code...' : 'Levi codet...';
-            }
-            if (taskMode === 'analysis') {
-                return phase === 'final' ? 'Levi fasst Ergebnisse zusammen...' : 'Levi analysiert...';
-            }
-            return phase === 'final' ? 'Levi finalisiert Antwort...' : 'Levi schreibt...';
-        }
-
-        function scheduleTypingPhases(typing, taskMode) {
-            return [
-                setTimeout(() => typing.setLabel('Levi arbeitet...'), 2200),
-                setTimeout(() => typing.setLabel(getTypingLabel(taskMode, 'final')), 5200),
-            ];
+        function scheduleTypingPhases() {
+            return [];
         }
 
         function clearPhaseTimers(timerIds) {
@@ -755,7 +1051,7 @@
             cleaned = cleaned.replace(/<\|[^|>]+?\|>/g, '');
             cleaned = cleaned.replace(/(?:^|\n)\s*functions\.[a-z0-9_]+\s*:\s*\d+[\s\S]*$/i, '');
             cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
-            return cleaned || 'Ich konnte gerade keine Antwort generieren. Schreibe "mach weiter", damit ich es erneut versuche.';
+            return cleaned || 'Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.';
         }
 
         function fallbackPlainText(text) {
@@ -766,6 +1062,29 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function getInitial(name, fallback) {
+            const source = String(name || '').trim();
+            if (!source) return fallback;
+            return source.charAt(0).toUpperCase();
+        }
+
+        function buildAvatarHtml(role) {
+            const isAssistant = role === 'assistant';
+            const letter = isAssistant ? 'L' : userInitial;
+            const imgUrl = isAssistant ? leviAvatarUrl : userAvatarUrl;
+            const title = isAssistant ? 'Levi' : (userName || 'User');
+
+            let imageHtml = '';
+            if (imgUrl) {
+                imageHtml = '<img src="' + escapeHtml(imgUrl) + '" alt="' + escapeHtml(title) + '" class="levi-message-avatar-image" loading="lazy" decoding="async" onerror="this.style.display=\'none\'; this.parentElement.classList.add(\'levi-avatar-fallback-visible\');">';
+            }
+
+            return '<div class="levi-message-avatar levi-message-avatar-' + (isAssistant ? 'assistant' : 'user') + '">' +
+                imageHtml +
+                '<span class="levi-message-avatar-fallback">' + escapeHtml(letter) + '</span>' +
+                '</div>';
         }
 
         // Test connection button (on settings page)
@@ -847,11 +1166,18 @@
                 .then(data => {
                     reloadBtn.disabled = false;
                     if (data.success) {
-                        const identityCount = Object.keys(data.data.results.identity.loaded || {}).length;
-                        const referenceCount = Object.keys(data.data.results.reference.loaded || {}).length;
-                        result.innerHTML = ' <span style="color: green;">✅ Reloaded! Identity: ' + identityCount + ', Reference: ' + referenceCount + ' files</span>';
-                        // Reload page after 2 seconds to show updated stats
-                        setTimeout(() => location.reload(), 2000);
+                        const r = data.data.results || {};
+                        const errors = r.errors || [];
+                        const loadedCount = Object.keys(r.loaded || {}).length;
+                        const hadChanges = (r.changed_identity || []).length > 0 || (r.changed_reference || []).length > 0;
+                        result.innerHTML = ' <span style="color: ' + (errors.length ? 'orange' : 'green') + ';">✅ ' + data.data.message + '</span>';
+                        if (hadChanges && errors.length === 0 && loadedCount > 0) {
+                            const warningEl = document.getElementById('levi-memory-changes-warning');
+                            if (warningEl) {
+                                warningEl.style.display = 'none';
+                            }
+                        }
+                        setTimeout(() => location.reload(), 1500);
                     } else {
                         result.innerHTML = ' <span style="color: red;">❌ ' + (data.data || 'Failed') + '</span>';
                     }

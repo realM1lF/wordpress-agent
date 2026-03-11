@@ -39,6 +39,45 @@
         let editingMessageEl = null;
         let webSearchActive = false;
         const webSearchBtn = document.getElementById('levi-chat-web-search-btn');
+        let titleInterval = null;
+        let titleOriginal = null;
+
+        function startTitleWorking() {
+            if (titleInterval) return;
+            titleOriginal = document.title;
+            var dotState = 0;
+            var dots = ['', '.', '..', '...'];
+            titleInterval = setInterval(function() {
+                dotState = (dotState + 1) % dots.length;
+                document.title = 'Levi arbeitet' + dots[dotState];
+            }, 600);
+        }
+
+        function stopTitleWorking() {
+            if (!titleInterval) return;
+            clearInterval(titleInterval);
+            titleInterval = null;
+            if (titleOriginal) document.title = titleOriginal;
+            titleOriginal = null;
+        }
+
+        function notifyIfHidden(label) {
+            stopTitleWorking();
+            if (!document.hidden) return;
+            titleOriginal = titleOriginal || document.title;
+            var orig = titleOriginal;
+            titleInterval = setInterval(function() {
+                document.title = document.title === orig ? label : orig;
+            }, 1000);
+            document.addEventListener('visibilitychange', function onVisible() {
+                if (document.hidden) return;
+                clearInterval(titleInterval);
+                titleInterval = null;
+                document.title = orig;
+                titleOriginal = null;
+                document.removeEventListener('visibilitychange', onVisible);
+            });
+        }
 
         function setChatOpen(isOpen) {
             window_.style.display = isOpen ? 'flex' : 'none';
@@ -284,6 +323,16 @@
                     }
                     return false;
 
+                case 'delta':
+                    if (data.content) {
+                        typing.appendDelta(data.content);
+                    }
+                    return false;
+
+                case 'stream_end':
+                    typing.clearStream();
+                    return false;
+
                 case 'heartbeat':
                     return false;
 
@@ -291,6 +340,7 @@
                     clearPhaseTimers(phaseTimers);
                     typing.complete();
                     setSendingState(false);
+                    notifyIfHidden('✅ Levi ist fertig!');
 
                     if (data.session_id) {
                         sessionId = data.session_id;
@@ -298,7 +348,7 @@
                     }
 
                     const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
-                    addMessage(cleanedMessage, 'assistant');
+                    addMessage(cleanedMessage, 'assistant', undefined, undefined, data.usage);
                     if (data.pending_confirmation) {
                         appendConfirmationCard(data.pending_confirmation);
                     }
@@ -309,6 +359,7 @@
                     clearPhaseTimers(phaseTimers);
                     typing.complete();
                     setSendingState(false);
+                    notifyIfHidden('⚠ Levi braucht Hilfe');
 
                     if (data.session_id) {
                         sessionId = data.session_id;
@@ -356,6 +407,7 @@
                 clearPhaseTimers(phaseTimers);
                 typing.complete();
                 setSendingState(false);
+                notifyIfHidden(data.error ? '⚠ Levi braucht Hilfe' : '✅ Levi ist fertig!');
 
                 if (data.error) {
                     addMessage('❌ ' + formatApiError(data.error, data.__httpStatus), 'assistant');
@@ -368,7 +420,7 @@
                 }
 
                 const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
-                addMessage(cleanedMessage, 'assistant');
+                addMessage(cleanedMessage, 'assistant', undefined, undefined, data.usage);
                 if (data.pending_confirmation) {
                     appendConfirmationCard(data.pending_confirmation);
                 }
@@ -397,13 +449,20 @@
             if (isSending) {
                 send.style.display = 'none';
                 if (stop) stop.style.display = 'inline-flex';
+                if (document.hidden) startTitleWorking();
             } else {
                 send.style.display = '';
                 if (stop) stop.style.display = 'none';
                 send.style.opacity = '1';
                 input.focus();
+                stopTitleWorking();
             }
         }
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden && sendInFlight) startTitleWorking();
+            if (!document.hidden && sendInFlight) stopTitleWorking();
+        });
 
         // Warn when leaving/reloading while Levi is processing
         window.addEventListener('beforeunload', function(e) {
@@ -691,7 +750,27 @@
             return dd + '.' + mo + '. ' + hh + ':' + mm;
         }
 
-        function addMessage(text, role, attachments, timestamp) {
+        function formatUsageBadge(usage) {
+            if (!usage || (!usage.prompt_tokens && !usage.completion_tokens)) return '';
+            var total = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
+            var cached = usage.cached_tokens || 0;
+            var calls = usage.api_calls || 1;
+            var parts = [total.toLocaleString('de-DE') + ' tokens'];
+            if (cached > 0) {
+                var pct = Math.round(cached / (usage.prompt_tokens || 1) * 100);
+                parts.push(pct + '% cached');
+            }
+            if (calls > 1) {
+                parts.push(calls + ' calls');
+            }
+            return '<span class="levi-usage-badge" title="Prompt: ' + (usage.prompt_tokens || 0).toLocaleString('de-DE')
+                + ' | Completion: ' + (usage.completion_tokens || 0).toLocaleString('de-DE')
+                + ' | Cached: ' + cached.toLocaleString('de-DE')
+                + ' | API-Calls: ' + calls + '">'
+                + parts.join(' · ') + '</span>';
+        }
+
+        function addMessage(text, role, attachments, timestamp, usage) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'levi-message levi-message-' + role;
 
@@ -717,8 +796,9 @@
             inner += renderMessageContent(text, role);
 
             var ts = formatTimestamp(timestamp);
+            var usageBadge = (role === 'assistant') ? formatUsageBadge(usage) : '';
             let html = buildAvatarHtml(role) + '<div class="levi-message-main"><div class="levi-message-content">' + inner + '</div>'
-                + '<span class="levi-message-time">' + ts + '</span>';
+                + '<span class="levi-message-time">' + ts + '</span>' + usageBadge;
 
             if (role === 'user') {
                 html += '<button type="button" class="levi-message-edit-btn dashicons dashicons-edit" title="Nachricht bearbeiten" aria-label="Nachricht bearbeiten"></button>';
@@ -912,6 +992,12 @@
             messages.scrollTop = messages.scrollHeight;
 
             const labelEl = typingDiv.querySelector('.levi-typing-label');
+            const contentEl = typingDiv.querySelector('.levi-message-content');
+            const typingRow = typingDiv.querySelector('.levi-typing-row');
+            const progressTrack = typingDiv.querySelector('.levi-chat-progress-track');
+            let streamEl = null;
+            let isStreaming = false;
+            let streamBuffer = '';
 
             const setLabel = (label) => {
                 if (labelEl) {
@@ -919,10 +1005,39 @@
                 }
             };
 
+            const appendDelta = (text) => {
+                if (!isStreaming) {
+                    isStreaming = true;
+                    if (typingRow) typingRow.style.display = 'none';
+                    if (progressTrack) progressTrack.style.display = 'none';
+                    streamEl = document.createElement('div');
+                    streamEl.className = 'levi-stream-content';
+                    contentEl.appendChild(streamEl);
+                    contentEl.classList.remove('levi-typing');
+                }
+                streamBuffer += text;
+                if (streamEl) {
+                    streamEl.innerHTML = renderMessageContent(streamBuffer, 'assistant');
+                    messages.scrollTop = messages.scrollHeight;
+                }
+            };
+
+            const clearStream = () => {
+                if (isStreaming) {
+                    isStreaming = false;
+                    streamBuffer = '';
+                    streamEl = null;
+                    if (typingRow) typingRow.style.display = '';
+                    if (progressTrack) progressTrack.style.display = '';
+                }
+            };
+
             setLabel('Levi verarbeitet die Anfrage...');
 
             return {
                 setLabel,
+                appendDelta,
+                clearStream,
                 complete: () => {
                     typingDiv.classList.add('levi-typing-complete');
                     setTimeout(() => typingDiv.remove(), 200);

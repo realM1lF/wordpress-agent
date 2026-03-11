@@ -131,16 +131,31 @@ class QueryClassifier {
             '/\b(erstelle|ändere|lösche|installiere|aktiviere|deaktiviere|publiziere)\b/u',
             '/\b(bau|baue|bauen|programmier|implementier|entwickl|code|coden)\b/u',
             '/\b(create|update|delete|install|activate|deactivate|publish|change|modify|add|remove|build|implement|develop)\b/u',
+            '/\b(fix|fixe|fixen|reparier|repariere|korrigier|korrigiere|beheb|behebe|patch|patche|wiederherstell)\b/u',
         ];
-        
+
+        $hasActionVerb = false;
         foreach ($actionPatterns as $pattern) {
             if (preg_match($pattern, $lower)) {
-                if (preg_match('/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung|page|menu|widget|shortcode|produkt|product|block|formular|form|newsletter|badge|modul|feature|funktion)\b/u', $lower)) {
-                    return true;
-                }
+                $hasActionVerb = true;
+                break;
             }
         }
-        
+
+        if (!$hasActionVerb) {
+            return false;
+        }
+
+        if (preg_match('/\b(plugin|seite|post|beitrag|datei|theme|benutzer|user|option|einstellung|page|menu|widget|shortcode|produkt|product|block|formular|form|newsletter|badge|modul|feature|funktion|grid|css|style|layout|design|fehler|bug|error)\b/u', $lower)) {
+            return true;
+        }
+
+        // Short queries with action verbs + demonstrative/context words are implicit actions
+        // e.g. "fix das", "kannst du das fixen", "mach das weg", "lösch den bitte"
+        if (preg_match('/\b(das|es|die|den|dem|dieser|dieses|diese|ihn|ihr|ihm|gleich|bitte|mal|schnell|direkt|nochmal|sofort)\b/u', $lower)) {
+            return true;
+        }
+
         return false;
     }
     
@@ -153,14 +168,25 @@ class QueryClassifier {
     private function isSimpleKnowledgeQuery(string $lower): bool {
         // Capability questions - ALWAYS simple, even with WordPress objects
         // "Wie gut kennst du dich mit Elementor aus?" = simple!
+        // BUT: "kannst du das fixen?" is an ACTION, not a capability question
         $capabilityPatterns = [
-            '/\b(wie gut kennst du|was kannst du|was weißt du|kennst du dich|kannst du)\b/u',
-            '/\b(how well do you know|what can you|do you know|can you)\b/u',
+            '/\b(wie gut kennst du|was kannst du|was weißt du|kennst du dich)\b/u',
+            '/\b(how well do you know|what can you|do you know)\b/u',
         ];
-        
+
+        // "kannst du" / "can you" is only a capability question when NOT followed by an action verb
+        $actionVerbCheck = '/\b(erstell|anleg|schreib|änder|bearbeit|update|install|aktivier|deaktivier|lösch|entfern|mach|bau|programmier|implementier|fix|fixen|fixe|reparier|korrigier|beheb|patch|code|coden|develop|build|create|delete|change|modify|add|remove)\b/u';
+
+        if (preg_match('/\b(kannst du|can you)\b/u', $lower)) {
+            if (!preg_match($actionVerbCheck, $lower)) {
+                return true;
+            }
+            return false;
+        }
+
         foreach ($capabilityPatterns as $pattern) {
             if (preg_match($pattern, $lower)) {
-                return true; // Always simple - no WP object check
+                return true;
             }
         }
         
@@ -266,8 +292,8 @@ class QueryClassifier {
         }
         
         $complexPatterns = [
-            '/\b(optimier|verbesser|erweiter|anpassen|konfigurier|debug|fehler|problem|issue)\b/u',
-            '/\b(optimize|improve|extend|configure|customize|debug|error|fix|solve)\b/u',
+            '/\b(optimier|verbesser|erweiter|anpassen|konfigurier|debug|fehler|problem|issue|fixen|reparier|korrigier|beheb)\b/u',
+            '/\b(optimize|improve|extend|configure|customize|debug|error|fix|solve|repair|patch)\b/u',
             '/\b(warum|warum nicht|why|why not|wie kann ich|how can i)\b/u',
             '/\b(vergleich|unterschied|difference|compare|vs|versus)\b/u',
             '/\b(best practice|empfohlen|recommended|optimal|richtig|falsch)\b/u',

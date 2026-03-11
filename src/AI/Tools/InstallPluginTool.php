@@ -9,25 +9,25 @@ class InstallPluginTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Install, activate, or bulk-update WordPress plugins. '
-            . 'Use action "install" (default) to install a specific plugin by slug. '
-            . 'Use action "update_outdated" to check for and install all available plugin updates — perfect for automated cron tasks.';
+        return 'Manage WordPress plugins: install, delete, activate, deactivate, or bulk-update. '
+            . 'Use action "delete" to fully remove a plugin (deactivates first, runs uninstall hooks, deletes all files). '
+            . 'Use action "update_outdated" to update all plugins with available updates.';
     }
 
     public function getParameters(): array {
         return [
             'action' => [
                 'type' => 'string',
-                'description' => 'Action to perform. "install" (default) to install a specific plugin, "update_outdated" to update all plugins with available updates.',
-                'enum' => ['install', 'update_outdated'],
+                'description' => 'Action: "install" (default), "delete", "activate", "deactivate", or "update_outdated".',
+                'enum' => ['install', 'delete', 'activate', 'deactivate', 'update_outdated'],
             ],
             'plugin_slug' => [
                 'type' => 'string',
-                'description' => 'Plugin slug (e.g., "wordpress-seo" for Yoast). Required for action "install".',
+                'description' => 'Plugin slug (directory name, e.g. "debug-bar"). Required for install/delete/activate/deactivate.',
             ],
             'activate' => [
                 'type' => 'boolean',
-                'description' => 'Activate after install (for action "install")',
+                'description' => 'Activate after install (only for action "install")',
                 'default' => true,
             ],
         ];
@@ -46,8 +46,19 @@ class InstallPluginTool implements ToolInterface {
 
         $slug = sanitize_file_name($params['plugin_slug'] ?? '');
         if ($slug === '') {
-            return ['success' => false, 'error' => 'plugin_slug is required for action "install".'];
+            return ['success' => false, 'error' => 'plugin_slug is required.'];
         }
+
+        if ($action === 'delete') {
+            return $this->deletePlugin($slug);
+        }
+        if ($action === 'activate') {
+            return $this->activatePlugin($slug);
+        }
+        if ($action === 'deactivate') {
+            return $this->deactivatePlugin($slug);
+        }
+
         $activate = $params['activate'] ?? true;
 
         if (!function_exists('plugins_api')) {
@@ -195,5 +206,83 @@ class InstallPluginTool implements ToolInterface {
             'total_failed' => count($failed),
             'message' => count($updated) . ' plugin(s) updated' . (count($failed) > 0 ? ', ' . count($failed) . ' failed' : '') . '.',
         ];
+    }
+
+    private function deletePlugin(string $slug): array {
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        WP_Filesystem();
+
+        $installedPlugins = get_plugins('/' . $slug);
+        if (empty($installedPlugins)) {
+            return [
+                'success' => false,
+                'error' => "Plugin '$slug' is not installed.",
+                'suggestion' => 'Use get_plugins to find the correct slug.',
+            ];
+        }
+
+        $pluginFile = $slug . '/' . array_key_first($installedPlugins);
+
+        if (is_plugin_active($pluginFile)) {
+            deactivate_plugins($pluginFile);
+        }
+
+        $result = delete_plugins([$pluginFile]);
+
+        if (is_wp_error($result)) {
+            return ['success' => false, 'error' => $result->get_error_message()];
+        }
+
+        return [
+            'success' => true,
+            'plugin_slug' => $slug,
+            'message' => "Plugin '$slug' fully deleted (files removed, uninstall hooks executed).",
+        ];
+    }
+
+    private function activatePlugin(string $slug): array {
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+
+        $installedPlugins = get_plugins('/' . $slug);
+        if (empty($installedPlugins)) {
+            return ['success' => false, 'error' => "Plugin '$slug' is not installed."];
+        }
+
+        $pluginFile = $slug . '/' . array_key_first($installedPlugins);
+        if (is_plugin_active($pluginFile)) {
+            return ['success' => true, 'message' => "Plugin '$slug' is already active."];
+        }
+
+        $result = activate_plugin($pluginFile);
+        if (is_wp_error($result)) {
+            return ['success' => false, 'error' => $result->get_error_message()];
+        }
+
+        return ['success' => true, 'plugin_slug' => $slug, 'message' => "Plugin '$slug' activated."];
+    }
+
+    private function deactivatePlugin(string $slug): array {
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+
+        $installedPlugins = get_plugins('/' . $slug);
+        if (empty($installedPlugins)) {
+            return ['success' => false, 'error' => "Plugin '$slug' is not installed."];
+        }
+
+        $pluginFile = $slug . '/' . array_key_first($installedPlugins);
+        if (!is_plugin_active($pluginFile)) {
+            return ['success' => true, 'message' => "Plugin '$slug' is already inactive."];
+        }
+
+        deactivate_plugins($pluginFile);
+
+        return ['success' => true, 'plugin_slug' => $slug, 'message' => "Plugin '$slug' deactivated."];
     }
 }

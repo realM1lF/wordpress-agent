@@ -3,6 +3,7 @@
 namespace Levi\Agent\Core;
 
 use Levi\Agent\Admin\ChatWidget;
+use Levi\Agent\Admin\OpenRouterOAuth;
 use Levi\Agent\Admin\SetupWizardPage;
 use Levi\Agent\Admin\SettingsPage;
 use Levi\Agent\AI\AIClientFactory;
@@ -29,6 +30,7 @@ class Plugin {
         new ChatWidget();
         new SettingsPage();
         new SetupWizardPage();
+        new OpenRouterOAuth();
         
         // REST API
         new ChatController();

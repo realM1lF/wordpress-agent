@@ -1,7 +1,17 @@
 # KNOWLEDGE
 
 ## Basis-Wissen
-Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in /home/rin/Work/personal-ki-agents/wordpress-agent/memories abgelegt sind. Diese werden in dein Langzeitgedächtnis übertragen.
+Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in memories/ abgelegt sind. Diese werden in dein Langzeitgedächtnis übertragen.
+
+## Dokumentationsquellen (memories/)
+
+| Datei | Inhalt | Wann nutzen |
+|-------|--------|-------------|
+| wordpress-lllm-developer.txt | WordPress Core: Block Editor, Themes, REST API, Hooks, WP-CLI | Immer bei WP-Entwicklung |
+| woocommerce-llm-developer.txt | WooCommerce: Produkte, Cart, Hooks, REST API | Bei Shops, Produkten, Warenkorb |
+| elementor-llm-developer.txt | Elementor: Addons, Widgets, Controls, Hooks, Forms, Themes, Layouting via _elementor_data | Bei Page-Builder, Elementor-Layouts, Elementor-Addons |
+
+Diese Dateien werden taeglich aktualisiert. Nutze sie als erste Referenz, bevor du ratest.
 
 ## WooCommerce-Architektur
 
@@ -56,6 +66,18 @@ Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in /h
 - `$product->get_attributes()`: Produkt-Attribute
 - `wc_get_product_terms($id, 'product_cat')`: Produkt-Kategorien
 
+### WooCommerce-Tool-Referenz (manage_woocommerce)
+
+Das Tool `manage_woocommerce` deckt alle schreibenden WooCommerce-Operationen ab:
+- Produkte: create_product, update_product, delete_product
+- Attribute: set_product_attributes (erstellt automatisch globale Taxonomien pa_*)
+- Variationen: create_variations (alle Kombinationen oder individuell), update_variation, delete_variation
+- Bestellungen: update_order_status
+- Steuern: configure_tax
+- Coupons: create_coupon, update_coupon, delete_coupon
+
+Fuer variable Produkte ist die korrekte Reihenfolge: create_product → set_product_attributes → create_variations
+
 ## Tool-Profile
 
 Dir stehen je nach Nutzer-Einstellung unterschiedliche Tools zur Verfügung:
@@ -68,6 +90,88 @@ Dir stehen je nach Nutzer-Einstellung unterschiedliche Tools zur Verfügung:
 - **REST-API erkunden**: `discover_rest_api` ohne Parameter = alle Routes; `namespace=wc/v3` = WooCommerce; `search=product` = Suche.
 - **Medien**: `upload_media` – Bilder von URL laden; `set_featured=true` / `attach_to_post=<ID>` für Zuordnung.
 - **Limitierungen**: `http_fetch` nur Same-Site; `execute_wp_code` muss in Einstellungen aktiviert sein; WooCommerce-Tools melden Fehler wenn WC inaktiv.
+- **Design-Kontext lesen**: `http_fetch` mit `extract: 'styles'` liefert CSS-Custom-Properties, Stylesheets und Body-Klassen einer Seite. Nutze das **vor** dem Schreiben von CSS, um dich ans bestehende Design anzupassen.
+
+## CSS-Custom-Properties — gängige Patterns
+
+Wenn du `http_fetch` mit `extract: 'styles'` nutzt, findest du typischerweise:
+
+| Quelle | Variable-Pattern | Beispiel |
+|--------|-----------------|----------|
+| **WordPress (Block-Themes)** | `--wp--preset--color--*` | `var(--wp--preset--color--primary)` |
+| | `--wp--preset--font-size--*` | `var(--wp--preset--font-size--medium)` |
+| | `--wp--preset--spacing--*` | `var(--wp--preset--spacing--40)` |
+| **Elementor** | `--e-global-color-*` | `var(--e-global-color-primary)` |
+| | `--e-global-typography-*` | `var(--e-global-typography-primary-font-family)` |
+| **WooCommerce** | `--wc--*` | `var(--wc--body-text-color)` |
+| **Classic Themes** | Oft keine CSS-Vars | Fallback: WordPress-System-Font + Admin-Farben nutzen |
+
+**Fallback wenn keine Variablen vorhanden:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif` (WordPress System-Font-Stack) und `#1d2327` (WP-Admin-Textfarbe), `#2271b1` (WP-Admin-Linkfarbe).
+
+## Tool-Ergebnisse vs. Historie/Wissen (KRITISCH)
+
+**ABSOLUTE REGEL: Tool-Ergebnisse sind die einzige Wahrheit**
+
+Wenn du ein Tool verwendest (z.B. `get_pages`, `get_posts`, `get_woocommerce_data`, etc.), gilt:
+
+1. **Vertraue NUR dem Tool-Ergebnis** - nie deiner Chat-Historie oder deinem Wissen
+2. **Frische Daten schlagen alte Daten** - auch wenn sie anders sind als erwartet
+3. **Niemals halluzinieren** - wenn das Tool 3 Seiten zeigt, gibt es genau 3 Seiten
+4. **Keine Ergänzungen aus dem Gedächtnis** - zeige nur was das Tool zurückgibt
+
+**Beispiel:**
+- Tool sagt: "Seiten: A, B, C"
+- Deine Historie sagt: "Es gab auch Seite D"
+- **Richtige Antwort**: "Du hast 3 Seiten: A, B, C" (D ignorieren!)
+
+## Eigene Datenbank-Tabellen in Plugins (KRITISCH)
+
+Wenn ein Plugin eine eigene DB-Tabelle braucht, verwende **NIEMALS** nur `register_activation_hook` für die Tabellenerstellung. Der Grund: `create_plugin` aktiviert das Plugin bevor der volle Code geschrieben ist — der Activation-Hook feuert also mit dem leeren Scaffold und nie wieder.
+
+**Korrektes Pattern — immer so verwenden:**
+
+```php
+add_action('admin_init', function () {
+    $installed = get_option('myplugin_db_version', '0');
+    if ($installed === '1.0') {
+        return; // Tabelle existiert bereits
+    }
+    global $wpdb;
+    $table = $wpdb->prefix . 'myplugin_items';
+    $charset = $wpdb->get_charset_collate();
+    $sql = "CREATE TABLE $table (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        -- weitere Spalten --
+        PRIMARY KEY  (id)
+    ) $charset;";
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    dbDelta($sql);
+    update_option('myplugin_db_version', '1.0');
+}, 5);
+```
+
+**Häufige `dbDelta`-Fallen:**
+- `require_once ABSPATH . 'wp-admin/includes/upgrade.php'` **muss** vor `dbDelta()` stehen
+- Nach `PRIMARY KEY` müssen **zwei Leerzeichen** stehen: `PRIMARY KEY  (id)`
+- Kein Trailing-Comma nach der letzten Spalte
+- Jede Spalte auf eigener Zeile
+
+**Cleanup bei Deinstallation — immer mitliefern:**
+
+Wenn ein Plugin eigene Tabellen oder Optionen anlegt, erstelle **immer** eine `uninstall.php` im Plugin-Root:
+
+```php
+<?php
+// uninstall.php
+if (!defined('WP_UNINSTALL_PLUGIN')) {
+    exit;
+}
+global $wpdb;
+$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}myplugin_items");
+delete_option('myplugin_db_version');
+```
+
+Ohne diese Datei bleiben Tabellen und Optionen **für immer** in der Datenbank, auch nach dem Löschen des Plugins.
 
 ## Debugging-Workflow
 
@@ -76,3 +180,28 @@ Wenn etwas nicht funktioniert:
 2. `read_plugin_file` nutzen um den eigenen Code zu prüfen
 3. `http_fetch` nutzen um den Frontend-Output zu sehen (falls verfügbar)
 4. `execute_wp_code` nutzen um WP-Funktionen direkt zu testen (falls verfügbar)
+
+### Dateien lesen vor dem Patchen
+
+- **Immer die gesamte Datei lesen** – `read_plugin_file` OHNE `max_bytes`-Parameter aufrufen (Default 250 KB, reicht für fast jede Datei). Das System erzwingt automatisch mindestens 250 KB beim ersten Read — kleine Werte wie `max_bytes: 500` werden ignoriert. Nur bei Fortsetzungs-Reads (`offset_bytes > 0`) sind kleinere Werte erlaubt.
+- **Such-String exakt kopieren** – Bei `patch_plugin_file` muss der Such-String **1:1** aus dem `read_plugin_file`-Output stammen. Nie aus dem Gedächtnis rekonstruieren – ein Leerzeichen oder Zeilenumbruch Unterschied führt zu "No replacements could be applied".
+- **Wenn Patch fehlschlägt** – Datei an der betroffenen Stelle lesen, exakten Text aus dem Output kopieren und erneut patchen. Nicht raten oder aus der Chat-Historie übernehmen.
+- **"Alle Dateien prüfen" heißt ALLE** – Wenn du `list_plugin_files` aufgerufen hast und alle Dateien eines Plugins prüfen sollst, lies **jede PHP-Datei** aus der Liste — nicht nur die, die du für relevant hältst. Gerade Include-Dateien (`includes/*.php`) enthalten oft den Frontend-Output, nicht die Hauptdatei.
+
+### Typische Fehler bei KI-generiertem Code (selbst prüfen)
+
+Forschung und Praxis zeigen wiederkehrende Muster. Prüfe deinen Code gezielt darauf:
+
+| Fehlertyp | Beschreibung | Was prüfen |
+|-----------|--------------|------------|
+| **Fehlende Klammern** | In repetitiven Blöcken (z.B. `if` / `else if` / `else`) fehlt oft die öffnende `{` bei einem Block | Jeden Zweig in if/else-Ketten auf vollständige `{ }` prüfen |
+| **Variable inkonsistent** | Variable wird als `$userName` definiert, aber als `$username` oder `$user_name` verwendet | Alle Variablen-Namen in der Datei auf Einheitlichkeit prüfen |
+| **Off-by-one** | Schleifen enden eine Iteration zu früh oder zu spät; Array-Indizes falsch | Loop-Grenzen und Array-Zugriffe (0-basiert vs. 1-basiert) prüfen |
+| **Edge Cases fehlen** | Leere Eingaben, null, leere Arrays werden nicht abgefangen | Leere Werte, null, leere Strings/Arrays testen |
+| **Unvollständiger Code** | Bei langen Dateien werden Zeilen oder Funktionen übersprungen | Nach dem Schreiben mit `read_plugin_file` prüfen, ob der Code vollständig ist |
+| **Falsche API-Nutzung** | WordPress-/Plugin-Funktionen werden mit falschen Parametern oder falscher Reihenfolge aufgerufen | In der Referenz-Doku (memories/) die korrekte Signatur prüfen |
+
+### Nach dem Schreiben von Code
+
+- Mit `read_plugin_file` prüfen, ob der geschriebene Code vollständig und syntaktisch stimmig ist
+- Bei `js_error` oder `js_warning` im Tool-Result: Der JavaScript-Code hat einen Syntaxfehler – Fehlermeldung lesen und sofort beheben

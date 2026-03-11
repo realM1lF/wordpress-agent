@@ -35,20 +35,22 @@ class GetPluginsTool implements ToolInterface {
         $allPlugins = get_plugins();
         $activePlugins = get_option('active_plugins', []);
         $muPlugins = get_mu_plugins();
+        $updateData = get_site_transient('update_plugins');
+        $updatesAvailable = (is_object($updateData) && !empty($updateData->response)) ? $updateData->response : [];
 
         $plugins = [];
+        $outdatedCount = 0;
 
         foreach ($allPlugins as $pluginFile => $pluginData) {
             $isActive = in_array($pluginFile, $activePlugins);
             $status = $isActive ? 'active' : 'inactive';
 
-            // Filter by status
             $filter = $params['status'] ?? 'all';
             if ($filter !== 'all' && $filter !== $status) {
                 continue;
             }
 
-            $plugins[] = [
+            $entry = [
                 'name' => $pluginData['Name'],
                 'version' => $pluginData['Version'],
                 'description' => $pluginData['Description'],
@@ -56,9 +58,16 @@ class GetPluginsTool implements ToolInterface {
                 'status' => $status,
                 'file' => $pluginFile,
             ];
+
+            if (isset($updatesAvailable[$pluginFile])) {
+                $entry['update_available'] = true;
+                $entry['new_version'] = $updatesAvailable[$pluginFile]->new_version ?? null;
+                $outdatedCount++;
+            }
+
+            $plugins[] = $entry;
         }
 
-        // Add must-use plugins
         foreach ($muPlugins as $pluginFile => $pluginData) {
             $plugins[] = [
                 'name' => $pluginData['Name'],
@@ -73,6 +82,7 @@ class GetPluginsTool implements ToolInterface {
         return [
             'success' => true,
             'count' => count($plugins),
+            'outdated_count' => $outdatedCount,
             'plugins' => $plugins,
         ];
     }

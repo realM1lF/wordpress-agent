@@ -70,6 +70,25 @@ rsync "${RSYNC_FLAGS[@]}" \
 echo "Sync finished:"
 echo "  ${SOURCE_DIR} -> ${TARGET_DIR}"
 
+# Invalidate PHP-FPM OPcache so DDEV picks up changed files immediately
+if command -v ddev >/dev/null 2>&1 && [[ -d "${WP_PROJECT_DIR}" ]]; then
+  echo "Flushing OPcache..."
+  (
+    cd "${WP_PROJECT_DIR}"
+    OC_FILE="/var/www/html/web/_opcache_reset.php"
+    ddev exec bash -c "cat > ${OC_FILE} <<'OPCPHP'
+<?php opcache_reset(); echo 'opcache_cleared';
+OPCPHP" 2>/dev/null
+    RESULT=$(ddev exec curl -sf http://localhost/_opcache_reset.php 2>/dev/null) || true
+    ddev exec rm -f "${OC_FILE}" 2>/dev/null
+    if [[ "${RESULT}" == *"opcache_cleared"* ]]; then
+      echo "  OPcache cleared"
+    else
+      echo "  OPcache reset skipped (not active or unreachable)"
+    fi
+  ) || true
+fi
+
 if [[ "${ACTIVATE}" -eq 1 ]]; then
   if ! command -v ddev >/dev/null 2>&1; then
     echo "ddev not found, skipping plugin activation."

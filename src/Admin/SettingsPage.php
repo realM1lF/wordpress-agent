@@ -71,6 +71,7 @@ class SettingsPage {
                 'connectionError' => $this->tr('Connection error', 'Verbindungsfehler'),
                 'failed' => $this->tr('Failed', 'Fehlgeschlagen'),
                 'reloading' => $this->tr('Syncing…', 'Synchronisiere...'),
+                'confirmDisconnect' => $this->tr('Disconnect from OpenRouter? You will need to reconnect or enter an API key manually.', 'Von OpenRouter trennen? Du musst dich danach erneut verbinden oder einen API-Key manuell eingeben.'),
                 'fetchDocsConfirm' => $this->tr('Fetch latest docs from WooCommerce, WordPress & Elementor and sync? This may take several minutes.', 'Aktuelle Docs von WooCommerce, WordPress & Elementor abrufen und synchronisieren? Das kann einige Minuten dauern.'),
                 'fetchingDocs' => $this->tr('Fetching docs & syncing…', 'Docs werden abgerufen & synchronisiert...'),
                 'error' => $this->tr('Error', 'Fehler'),
@@ -102,16 +103,16 @@ class SettingsPage {
     private function deriveThoroughness(int $historyLimit, array $tuningMode): string {
         if (isset($tuningMode['thoroughness']) && in_array($tuningMode['thoroughness'], ['low', 'balanced', 'high'], true)) {
             $expected = match ($tuningMode['thoroughness']) {
-                'low' => 30, 'high' => 80, default => 50,
+                'low' => 10, 'high' => 40, default => 20,
             };
             if ($historyLimit === $expected) {
                 return $tuningMode['thoroughness'];
             }
         }
         return match (true) {
-            $historyLimit === 30 => 'low',
-            $historyLimit === 50 => 'balanced',
-            $historyLimit === 80 => 'high',
+            $historyLimit === 10 => 'low',
+            $historyLimit === 20 => 'balanced',
+            $historyLimit === 40 => 'high',
             default => 'custom',
         };
     }
@@ -210,6 +211,9 @@ class SettingsPage {
             $sanitized['web_search_enabled'] = !empty($input['web_search_enabled']) ? 1 : 0;
         }
 
+        if (array_key_exists('compact_model', $input)) {
+            $sanitized['compact_model'] = sanitize_text_field((string) ($input['compact_model'] ?? ''));
+        }
         if (array_key_exists('summary_model', $input)) {
             $sanitized['summary_model'] = sanitize_text_field((string) ($input['summary_model'] ?? ''));
         }
@@ -238,9 +242,9 @@ class SettingsPage {
 
         if (in_array($thoroughness, ['low', 'balanced', 'high'], true)) {
             $sanitized['history_context_limit'] = match ($thoroughness) {
-                'high' => 80,
-                'low' => 30,
-                default => 50,
+                'high' => 40,
+                'low' => 10,
+                default => 20,
             };
         } elseif (array_key_exists('history_context_limit', $input)) {
             $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'])));
@@ -317,7 +321,7 @@ class SettingsPage {
         $activeTab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'general';
         
         $tabs = [
-            'general' => ['icon' => 'dashicons-admin-generic', 'label' => $this->tr('General', 'Allgemein')],
+            'general' => ['icon' => 'dashicons-dashboard', 'label' => $this->tr('Dashboard', 'Dashboard')],
             'ai-provider' => ['icon' => 'dashicons-cloud', 'label' => $this->tr('AI Provider', 'KI-Anbieter')],
             'memory' => ['icon' => 'dashicons-database', 'label' => $this->tr('Memory', 'Memory')],
             'safety' => ['icon' => 'dashicons-shield', 'label' => $this->tr('Limits & Safety', 'Limits & Sicherheit')],
@@ -494,44 +498,6 @@ class SettingsPage {
                     </div>
                 </div>
 
-                <!-- State Snapshot Card -->
-                <div class="levi-card">
-                    <div class="levi-card-header">
-                        <span class="dashicons dashicons-backup"></span>
-                        <h3><?php echo esc_html($this->tr('WordPress Snapshot', 'WordPress-Snapshot')); ?></h3>
-                    </div>
-                    <div class="levi-card-content">
-                        <?php 
-                        $snapshotMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMeta();
-                        $snapshotStatus = (string) ($snapshotMeta['status'] ?? 'not_run');
-                        $snapshotCapturedAt = (string) ($snapshotMeta['captured_at'] ?? '-');;
-                        ?>
-                        <div class="levi-status-row">
-                            <span class="levi-status-label"><?php echo esc_html($this->tr('Last Run', 'Letzter Lauf')); ?></span>
-                            <span class="levi-status-value"><?php echo esc_html($snapshotCapturedAt); ?></span>
-                        </div>
-                        <div class="levi-status-row">
-                            <span class="levi-status-label"><?php echo esc_html($this->tr('Status', 'Status')); ?></span>
-                            <span class="levi-status-badge levi-badge-<?php echo $snapshotStatus === 'changed_stored' ? 'success' : 'neutral'; ?>">
-                                <?php echo esc_html($this->translateSnapshotStatus($snapshotStatus)); ?>
-                            </span>
-                        </div>
-                    </div>
-                    <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr('Hint: The daily snapshot indexes your WordPress state (plugins, themes, config) so Levi can answer questions about your site. Run manually here or wait for the scheduled task.', 'Hinweis: Der taegliche Snapshot indexiert deinen WordPress-Stand (Plugins, Themes, Konfiguration), damit Levi Fragen zur Seite beantworten kann. Hier manuell starten oder auf den geplanten Lauf warten.')); ?>
-                    </p>
-                    <div class="levi-card-footer">
-                        <button type="button" id="levi-run-state-snapshot" class="levi-btn levi-btn-small levi-btn-secondary">
-                            <span class="dashicons dashicons-update"></span>
-                            <?php echo esc_html($this->tr('Run Now', 'Jetzt ausfuehren')); ?>
-                        </button>
-                        <div id="levi-state-snapshot-progress-wrap" class="levi-progress-wrap" style="display:none;">
-                            <div id="levi-state-snapshot-progress" class="levi-progress-bar"></div>
-                        </div>
-                        <span id="levi-state-snapshot-result"></span>
-                    </div>
-                </div>
-
                 <!-- Plan & Wizard Card -->
                 <div class="levi-card">
                     <div class="levi-card-header">
@@ -587,40 +553,141 @@ class SettingsPage {
             <div class="levi-form-card">
                 <h3><?php echo esc_html($this->tr('Authentication', 'Authentifizierung')); ?></h3>
                 
-                <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" value="api_key">
-                <div class="levi-form-group">
-                    <label class="levi-form-label">
-                        <?php echo esc_html($this->tr('API Key', 'API-Schluessel')); ?>
-                        <?php 
-                        $keyField = match($provider) {
-                            'openai' => 'openai_api_key',
-                            'anthropic' => 'anthropic_api_key',
-                            default => 'openrouter_api_key',
-                        };
-                        $hasKey = !empty($this->getApiKeyForProvider($provider));
-                        ?>
-                        <?php if ($hasKey): ?>
-                            <span class="levi-badge levi-badge-success"><?php echo esc_html($this->tr('Configured', 'Konfiguriert')); ?></span>
-                        <?php endif; ?>
-                    </label>
-                    <input type="password" 
-                           name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($keyField); ?>]" 
-                           value="" 
-                           class="levi-form-input"
-                           placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : 'sk-...'; ?>">
-                    <p class="levi-form-help">
-                        <?php if ($hasKey): ?>
-                            <?php echo esc_html($this->tr('API key is saved. Enter a new key to replace it.', 'API-Schluessel ist gespeichert. Gib einen neuen ein, um ihn zu ersetzen.')); ?>
-                        <?php else: ?>
-                            <?php echo esc_html($this->tr('Enter your API key from the provider.', 'Bitte den API-Schluessel des Anbieters eintragen.')); ?>
-                        <?php endif; ?>
-                    </p>
-                    <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr('Hint: The API key is stored in the database and only sent to OpenRouter. You can also set it via .env (OPEN_ROUTER_API_KEY).', 'Hinweis: Der API-Schluessel wird in der Datenbank gespeichert und nur an OpenRouter uebertragen. Alternativ per .env setzen (OPEN_ROUTER_API_KEY).')); ?>
-                    </p>
-                </div>
+                <?php
+                $oauth = new OpenRouterOAuth();
+                $isOAuth = $oauth->isOAuthConnected();
+                $hasKey = !empty($this->getApiKeyForProvider($provider));
+                $keyField = match($provider) {
+                    'openai' => 'openai_api_key',
+                    'anthropic' => 'anthropic_api_key',
+                    default => 'openrouter_api_key',
+                };
+                ?>
 
-                <div class="levi-form-actions-inline">
+                <?php if ($isOAuth): ?>
+                    <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" value="oauth">
+                    <div class="levi-oauth-connected">
+                        <div class="levi-oauth-status">
+                            <span class="dashicons dashicons-yes-alt" style="color: #46b450; font-size: 24px;"></span>
+                            <div>
+                                <strong><?php echo esc_html($this->tr('Connected via OpenRouter OAuth', 'Verbunden ueber OpenRouter OAuth')); ?></strong>
+                                <p class="levi-form-help" style="margin-top: 4px;">
+                                    <?php
+                                    $connectedAt = $settings['oauth_connected_at'] ?? null;
+                                    if ($connectedAt) {
+                                        printf(
+                                            esc_html($this->tr('Connected since %s', 'Verbunden seit %s')),
+                                            esc_html(wp_date(get_option('date_format') . ' ' . get_option('time_format'), (int) $connectedAt))
+                                        );
+                                    }
+                                    ?>
+                                </p>
+                            </div>
+                        </div>
+                        <button type="button" id="levi-oauth-disconnect" class="levi-btn levi-btn-danger levi-btn-small" style="margin-top: 12px;">
+                            <span class="dashicons dashicons-dismiss"></span>
+                            <?php echo esc_html($this->tr('Disconnect', 'Verbindung trennen')); ?>
+                        </button>
+                    </div>
+
+                <?php else: ?>
+                    <?php
+                    $oauthUrl = $oauth->getAuthUrl('settings');
+                    ?>
+                    <div class="levi-oauth-connect">
+                        <p class="levi-form-description" style="margin-bottom: 8px;">
+                            <?php echo esc_html($this->tr(
+                                'Connect your OpenRouter account with one click. You will be redirected to OpenRouter to authorize Levi. Costs are billed to your own OpenRouter account.',
+                                'Verbinde dein OpenRouter-Konto mit einem Klick. Du wirst zu OpenRouter weitergeleitet, um Levi zu autorisieren. Die Kosten werden ueber dein eigenes OpenRouter-Konto abgerechnet.'
+                            )); ?>
+                        </p>
+                        <div class="levi-cost-hint" style="margin-bottom: 16px; padding: 10px 14px; background: rgba(124, 58, 237, 0.08); border-left: 4px solid var(--levi-accent, #7c3aed); border-radius: 4px; font-size: 13px; color: var(--levi-text-secondary, #94a3b8);">
+                            <strong style="color: var(--levi-text-primary, #f1f5f9);"><?php echo esc_html($this->tr('Typical costs:', 'Typische Kosten:')); ?></strong>
+                            <?php echo esc_html($this->tr(
+                                'Approx. $0.01–0.05 per message for simple questions. Complex tasks like plugin development use significantly more tokens (approx. $0.10–0.50 per message), as Levi generates code, verifies it, and performs multiple tool calls. Default model Kimi K2.5: $0.60/$3.00 per 1M tokens — one of the most cost-effective options.',
+                                'Ca. 0,01–0,05 $ pro Nachricht bei einfachen Fragen. Bei komplexen Aufgaben wie Plugin-Entwicklung werden deutlich mehr Tokens verbraucht (ca. 0,10–0,50 $ pro Nachricht), da Levi Code generiert, prueft und mehrere Tool-Aufrufe durchfuehrt. Standard-Modell Kimi K2.5: 0,60$/3,00$ pro 1M Tokens — eines der guenstigsten Modelle.'
+                            )); ?>
+                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(124, 58, 237, 0.15);">
+                                <strong style="color: var(--levi-text-primary, #f1f5f9); font-size: 14px;"><?php echo esc_html($this->tr('$5 credit is plenty to get started!', '5$ Guthaben reichen fuer den Einstieg locker aus!')); ?></strong>
+                            </div>
+                        </div>
+                        <a href="<?php echo esc_url($oauthUrl); ?>" class="levi-btn levi-btn-primary" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
+                            <span class="dashicons dashicons-admin-links"></span>
+                            <?php echo esc_html($this->tr('Connect with OpenRouter', 'Mit OpenRouter verbinden')); ?>
+                        </a>
+                    </div>
+
+                    <div class="levi-oauth-divider" style="margin: 20px 0; display: flex; align-items: center; gap: 12px;">
+                        <hr style="flex: 1; border: none; border-top: 1px solid #ddd;">
+                        <span style="color: #999; font-size: 13px;"><?php echo esc_html($this->tr('or enter manually', 'oder manuell eingeben')); ?></span>
+                        <hr style="flex: 1; border: none; border-top: 1px solid #ddd;">
+                    </div>
+
+                    <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" value="api_key">
+                    <div class="levi-form-group">
+                        <label class="levi-form-label">
+                            <?php echo esc_html($this->tr('API Key', 'API-Schluessel')); ?>
+                            <?php if ($hasKey && !$isOAuth): ?>
+                                <span class="levi-badge levi-badge-success"><?php echo esc_html($this->tr('Configured', 'Konfiguriert')); ?></span>
+                            <?php endif; ?>
+                        </label>
+                        <input type="password" 
+                               name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($keyField); ?>]" 
+                               value="" 
+                               class="levi-form-input"
+                               placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : 'sk-or-...'; ?>">
+                        <p class="levi-form-help">
+                            <?php if ($hasKey): ?>
+                                <?php echo esc_html($this->tr('API key is saved. Enter a new key to replace it.', 'API-Schluessel ist gespeichert. Gib einen neuen ein, um ihn zu ersetzen.')); ?>
+                            <?php else: ?>
+                                <?php echo esc_html($this->tr(
+                                    'Get your key at openrouter.ai/keys — or use the button above for easier setup.',
+                                    'Hole deinen Key auf openrouter.ai/keys — oder nutze den Button oben fuer einfacheres Setup.'
+                                )); ?>
+                            <?php endif; ?>
+                        </p>
+                        <p class="levi-form-help levi-hint">
+                            <?php echo esc_html($this->tr(
+                                'Hint: The API key is stored in the database and only sent to OpenRouter. You can also set it via .env (OPEN_ROUTER_API_KEY).',
+                                'Hinweis: Der API-Schluessel wird in der Datenbank gespeichert und nur an OpenRouter uebertragen. Alternativ per .env setzen (OPEN_ROUTER_API_KEY).'
+                            )); ?>
+                        </p>
+                    </div>
+                <?php endif; ?>
+
+                <?php if (!empty($_GET['oauth_success'])): ?>
+                    <div class="levi-notice levi-notice-success" style="margin-top: 12px; padding: 10px 14px; background: #ecf7ed; border-left: 4px solid #46b450; border-radius: 4px;">
+                        <?php echo esc_html($this->tr(
+                            'Successfully connected with OpenRouter!',
+                            'Erfolgreich mit OpenRouter verbunden!'
+                        )); ?>
+                    </div>
+                <?php endif; ?>
+
+                <?php if (!empty($_GET['oauth_error'])): ?>
+                    <div class="levi-notice levi-notice-error" style="margin-top: 12px; padding: 10px 14px; background: #fbeaea; border-left: 4px solid #dc3232; border-radius: 4px;">
+                        <?php
+                        $errorCode = sanitize_key($_GET['oauth_error']);
+                        $errorMessages = [
+                            'verifier_expired' => $this->tr(
+                                'OAuth session expired. Please try again.',
+                                'OAuth-Sitzung abgelaufen. Bitte erneut versuchen.'
+                            ),
+                            'exchange_failed' => $this->tr(
+                                'Could not exchange authorization code. Please try again or use a manual API key.',
+                                'Autorisierungscode konnte nicht eingeloest werden. Bitte erneut versuchen oder manuellen API-Key nutzen.'
+                            ),
+                        ];
+                        echo esc_html($errorMessages[$errorCode] ?? $this->tr('OAuth error. Please try again.', 'OAuth-Fehler. Bitte erneut versuchen.'));
+                        $details = isset($_GET['oauth_details']) ? sanitize_text_field(wp_unslash($_GET['oauth_details'])) : '';
+                        if ($details !== '') {
+                            echo ' <small>(' . esc_html($details) . ')</small>';
+                        }
+                        ?>
+                    </div>
+                <?php endif; ?>
+
+                <div class="levi-form-actions-inline" style="margin-top: 16px;">
                     <button type="button" id="levi-test-connection" class="levi-btn levi-btn-secondary">
                         <span class="dashicons dashicons-admin-site-alt3"></span>
                         <?php echo esc_html($this->tr('Test Connection', 'Verbindung testen')); ?>
@@ -758,34 +825,6 @@ class SettingsPage {
                 </div>
             </div>
 
-            <!-- Web Search -->
-            <div class="levi-form-card">
-                <h3><?php echo esc_html($this->tr('Web Search', 'Web-Suche')); ?></h3>
-                <p class="levi-form-description">
-                    <?php echo esc_html($this->tr(
-                        'When enabled, a globe button appears in the chat input. Click it before sending a message to let Levi search the web for current information.',
-                        'Wenn aktiviert, erscheint ein Globus-Button im Chat. Klicke ihn vor dem Senden einer Nachricht, damit Levi im Internet nach aktuellen Infos suchen kann.'
-                    )); ?>
-                </p>
-                <div class="levi-form-group">
-                    <label class="levi-toggle-label">
-                        <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" value="0">
-                        <input type="checkbox" 
-                               name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" 
-                               value="1" 
-                               <?php checked(!empty($settings['web_search_enabled'])); ?>
-                               class="levi-toggle-input">
-                        <span class="levi-toggle-switch"></span>
-                        <span class="levi-toggle-text"><?php echo esc_html($this->tr('Enable Web Search', 'Web-Suche aktivieren')); ?></span>
-                    </label>
-                    <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr(
-                            'Note: Web search incurs additional costs per request at OpenRouter. The user controls when to use it via the chat toggle.',
-                            'Hinweis: Web-Suche verursacht zusätzliche Kosten pro Anfrage bei OpenRouter. Der Nutzer steuert per Toggle im Chat, wann sie genutzt wird.'
-                        )); ?>
-                    </p>
-                </div>
-            </div>
         </div>
         <?php
     }
@@ -904,6 +943,44 @@ class SettingsPage {
                             <?php echo esc_html($this->tr('Docs are fetched automatically daily at 04:00. Click "Fetch Docs" to trigger manually.', 'Docs werden taeglich um 04:00 Uhr automatisch abgerufen. Klicke "Docs abrufen" fuer manuellen Abruf.')); ?>
                         </p>
                     <?php endif; ?>
+                </div>
+
+                <!-- State Snapshot Card -->
+                <div class="levi-form-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-backup"></span>
+                        <h3><?php echo esc_html($this->tr('WordPress Snapshot', 'WordPress-Snapshot')); ?></h3>
+                    </div>
+                    <div class="levi-card-content">
+                        <?php 
+                        $snapshotMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMeta();
+                        $snapshotStatus = (string) ($snapshotMeta['status'] ?? 'not_run');
+                        $snapshotCapturedAt = (string) ($snapshotMeta['captured_at'] ?? '-');
+                        ?>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Last Run', 'Letzter Lauf')); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html($snapshotCapturedAt); ?></span>
+                        </div>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Status', 'Status')); ?></span>
+                            <span class="levi-status-badge levi-badge-<?php echo $snapshotStatus === 'changed_stored' ? 'success' : 'neutral'; ?>">
+                                <?php echo esc_html($this->translateSnapshotStatus($snapshotStatus)); ?>
+                            </span>
+                        </div>
+                    </div>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr('Hint: The daily snapshot indexes your WordPress state (plugins, themes, config) so Levi can answer questions about your site. Run manually here or wait for the scheduled task.', 'Hinweis: Der taegliche Snapshot indexiert deinen WordPress-Stand (Plugins, Themes, Konfiguration), damit Levi Fragen zur Seite beantworten kann. Hier manuell starten oder auf den geplanten Lauf warten.')); ?>
+                    </p>
+                    <div class="levi-card-footer">
+                        <button type="button" id="levi-run-state-snapshot" class="levi-btn levi-btn-small levi-btn-secondary">
+                            <span class="dashicons dashicons-update"></span>
+                            <?php echo esc_html($this->tr('Run Now', 'Jetzt ausfuehren')); ?>
+                        </button>
+                        <div id="levi-state-snapshot-progress-wrap" class="levi-progress-wrap" style="display:none;">
+                            <div id="levi-state-snapshot-progress" class="levi-progress-bar"></div>
+                        </div>
+                        <span id="levi-state-snapshot-result"></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1054,7 +1131,7 @@ class SettingsPage {
                     <?php
                     $tuningMode = get_option('levi_setup_tuning_mode', []);
                     if (!is_array($tuningMode)) { $tuningMode = []; }
-                    $curHistoryLimit = (int) ($settings['history_context_limit'] ?? 50);
+                    $curHistoryLimit = (int) ($settings['history_context_limit'] ?? 20);
                     $curThoroughness = $this->deriveThoroughness($curHistoryLimit, $tuningMode);
                     $curSafety = !empty($settings['require_confirmation_destructive']) ? 'strict' : 'standard';
                     $curMaxIterations = (int) ($settings['max_tool_iterations'] ?? 25);
@@ -1065,9 +1142,9 @@ class SettingsPage {
                         <label class="levi-form-label" for="levi_thoroughness"><?php echo esc_html($this->tr('How much chat history should Levi consider?', 'Wie viel Chat-Verlauf soll Levi beruecksichtigen?')); ?></label>
                         <div style="display: flex; gap: 0.75rem; align-items: center;">
                             <select id="levi_thoroughness" name="<?php echo esc_attr($this->optionName); ?>[levi_thoroughness]" class="levi-form-select" style="flex: 1;">
-                                <option value="low" <?php selected($curThoroughness, 'low'); ?>><?php echo esc_html($this->tr('Few (30 messages)', 'Wenig (30 Nachrichten)')); ?></option>
-                                <option value="balanced" <?php selected($curThoroughness, 'balanced'); ?>><?php echo esc_html($this->tr('Medium (50 messages, recommended)', 'Mittel (50 Nachrichten, empfohlen)')); ?></option>
-                                <option value="high" <?php selected($curThoroughness, 'high'); ?>><?php echo esc_html($this->tr('Many (80 messages)', 'Viel (80 Nachrichten)')); ?></option>
+                                <option value="low" <?php selected($curThoroughness, 'low'); ?>><?php echo esc_html($this->tr('Few (10 messages)', 'Wenig (10 Nachrichten)')); ?></option>
+                                <option value="balanced" <?php selected($curThoroughness, 'balanced'); ?>><?php echo esc_html($this->tr('Medium (20 messages, recommended)', 'Mittel (20 Nachrichten, empfohlen)')); ?></option>
+                                <option value="high" <?php selected($curThoroughness, 'high'); ?>><?php echo esc_html($this->tr('Many (40 messages)', 'Viel (40 Nachrichten)')); ?></option>
                                 <option value="custom" <?php selected($curThoroughness, 'custom'); ?>><?php echo esc_html($this->tr('Custom', 'Benutzerdefiniert')); ?></option>
                             </select>
                             <input type="number" id="levi_history_value"
@@ -1209,14 +1286,14 @@ class SettingsPage {
                     </div>
 
                     <div class="levi-form-group">
-                        <label class="levi-form-label"><?php echo esc_html($this->tr('Summary Model (optional)', 'Summary-Modell (optional)')); ?></label>
+                        <label class="levi-form-label"><?php echo esc_html($this->tr('Compaction Model (optional)', 'Compaction-Modell (optional)')); ?></label>
                         <input type="text"
-                               name="<?php echo esc_attr($this->optionName); ?>[summary_model]"
-                               value="<?php echo esc_attr($settings['summary_model'] ?? ''); ?>"
-                               placeholder="google/gemini-2.0-flash-001"
+                               name="<?php echo esc_attr($this->optionName); ?>[compact_model]"
+                               value="<?php echo esc_attr($settings['compact_model'] ?? $settings['summary_model'] ?? ''); ?>"
+                               placeholder="google/gemini-2.5-flash-preview"
                                class="levi-form-input">
                         <p class="levi-form-help">
-                            <?php echo esc_html($this->tr('Fast/cheap model used to summarize older messages when context limit is exceeded. Leave empty for default (Gemini 2.0 Flash).', 'Schnelles/guenstiges Modell fuer die Zusammenfassung aelterer Nachrichten bei Kontext-Ueberschreitung. Leer lassen fuer Standard (Gemini 2.0 Flash).')); ?>
+                            <?php echo esc_html($this->tr('Cheap model for compacting older messages when context limit is reached. Falls back to primary model on failure. Leave empty for provider default.', 'Guenstiges Modell fuer die Komprimierung aelterer Nachrichten bei Kontext-Ueberschreitung. Bei Fehler wird automatisch das Hauptmodell verwendet. Leer lassen fuer Provider-Standard.')); ?>
                         </p>
                     </div>
                 </div>
@@ -1308,6 +1385,38 @@ class SettingsPage {
                     </div>
                 </div>
 
+                <!-- Web Search -->
+                <div class="levi-form-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-admin-site-alt3"></span>
+                        <h3><?php echo esc_html($this->tr('Web Search', 'Web-Suche')); ?></h3>
+                    </div>
+                    <p class="levi-form-description">
+                        <?php echo esc_html($this->tr(
+                            'When enabled, a globe button appears in the chat input. Click it before sending a message to let Levi search the web for current information.',
+                            'Wenn aktiviert, erscheint ein Globus-Button im Chat. Klicke ihn vor dem Senden einer Nachricht, damit Levi im Internet nach aktuellen Infos suchen kann.'
+                        )); ?>
+                    </p>
+                    <div class="levi-form-group">
+                        <label class="levi-toggle-label">
+                            <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" value="0">
+                            <input type="checkbox" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" 
+                                   value="1" 
+                                   <?php checked(!empty($settings['web_search_enabled'])); ?>
+                                   class="levi-toggle-input">
+                            <span class="levi-toggle-switch"></span>
+                            <span class="levi-toggle-text"><?php echo esc_html($this->tr('Enable Web Search', 'Web-Suche aktivieren')); ?></span>
+                        </label>
+                        <p class="levi-form-help levi-hint">
+                            <?php echo esc_html($this->tr(
+                                'Note: Web search incurs additional costs per request at OpenRouter. The user controls when to use it via the chat toggle.',
+                                'Hinweis: Web-Suche verursacht zusätzliche Kosten pro Anfrage bei OpenRouter. Der Nutzer steuert per Toggle im Chat, wann sie genutzt wird.'
+                            )); ?>
+                        </p>
+                    </div>
+                </div>
+
                 <!-- System Info -->
                 <div class="levi-form-card">
                     <div class="levi-card-header">
@@ -1347,7 +1456,10 @@ class SettingsPage {
     }
 
     public function getAuthMethodOptions(string $provider): array {
-        return ['api_key' => $this->tr('API Key', 'API-Schluessel')];
+        return [
+            'oauth' => $this->tr('Connect with OpenRouter (recommended)', 'Mit OpenRouter verbinden (empfohlen)'),
+            'api_key' => $this->tr('Manual API Key', 'Manueller API-Schluessel'),
+        ];
     }
 
     public function getAuthMethod(): string {
@@ -1474,6 +1586,7 @@ class SettingsPage {
         return [
             'ai_provider' => 'openrouter',
             'ai_auth_method' => 'api_key',
+            'oauth_connected_at' => null,
             'openrouter_api_key' => '',
             'openai_api_key' => '',
             'anthropic_api_key' => '',
@@ -1482,12 +1595,12 @@ class SettingsPage {
             'openai_model' => 'gpt-4o-mini',
             'anthropic_model' => 'claude-3-5-sonnet-20241022',
             'rate_limit' => 100,
-            'max_tool_iterations' => 25,
+            'max_tool_iterations' => 30,
             'max_tokens' => 131072,
             'ai_timeout' => 120,
-            'php_time_limit' => 300,
+            'php_time_limit' => 0,
             'max_context_tokens' => 100000,
-            'history_context_limit' => 50,
+            'history_context_limit' => 20,
             'tool_profile' => 'standard',
             'allowed_plugin_slugs_manual' => '',
             'require_confirmation_destructive' => 1,
@@ -1497,6 +1610,7 @@ class SettingsPage {
             'pii_redaction' => 1,
             'blocked_post_types' => '',
             'web_search_enabled' => 0,
+            'compact_model' => '',
             'summary_model' => '',
         ];
     }
