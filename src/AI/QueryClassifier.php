@@ -343,6 +343,45 @@ class QueryClassifier {
     }
     
     /**
+     * Return which rule modules should be loaded for this query.
+     *
+     * Mapping:
+     *   GREETING / SIMPLE → core only
+     *   KNOWLEDGE / DATA  → core + tools
+     *   ACTION / COMPLEX  → core + tools + coding + planning
+     *
+     * Domain-specific modules (woocommerce, elementor, cron) are appended
+     * when the query contains relevant keywords.
+     *
+     * @return string[] Module names (without .md) matching files in identity/rules/
+     */
+    public function getRequiredRuleModules(string $query): array {
+        $type = $this->classify($query);
+        $lower = mb_strtolower(trim($query));
+
+        $modules = match ($type) {
+            self::TYPE_GREETING, self::TYPE_SIMPLE => ['core'],
+            self::TYPE_KNOWLEDGE, self::TYPE_DATA   => ['core', 'tools'],
+            self::TYPE_ACTION, self::TYPE_COMPLEX   => ['core', 'tools', 'coding', 'planning'],
+            default                                  => ['core', 'tools', 'coding', 'planning'],
+        };
+
+        if (preg_match('/\b(woocommerce|produkt|produkte|product|products|shop|bestell|coupon|gutschein|warenkorb|cart)\b/u', $lower)) {
+            $modules[] = 'woocommerce';
+        }
+
+        if (preg_match('/\b(elementor|widget|section|container|template-kit)\b/u', $lower)) {
+            $modules[] = 'elementor';
+        }
+
+        if (preg_match('/\b(cron|zeitplan|schedule|automatisch|wiederkehrend|recurring|task)\b/u', $lower)) {
+            $modules[] = 'cron';
+        }
+
+        return array_unique($modules);
+    }
+
+    /**
      * Get human-readable classification details (for debugging).
      */
     public function getClassificationDetails(string $query): array {

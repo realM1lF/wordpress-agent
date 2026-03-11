@@ -1004,6 +1004,30 @@ class ChatController extends WP_REST_Controller {
                 }
             }
 
+            $codeTagWarnings = $this->injectCodeTagWarnings($toolResults);
+            if (!empty($codeTagWarnings)) {
+                $this->emitSSE('progress', [
+                    'message' => 'Code-Tag-Sanitierung...',
+                    'tool' => 'code_tag_check',
+                    'iteration' => $iteration,
+                ]);
+                foreach ($codeTagWarnings as $ctw) {
+                    $messages[] = $ctw;
+                }
+            }
+
+            $toolMismatch = $this->injectToolMismatchCorrection($latestUserMessage, $toolResults);
+            if (!empty($toolMismatch)) {
+                $this->emitSSE('progress', [
+                    'message' => 'Tool-Korrektur...',
+                    'tool' => 'tool_mismatch_check',
+                    'iteration' => $iteration,
+                ]);
+                foreach ($toolMismatch as $tm) {
+                    $messages[] = $tm;
+                }
+            }
+
             if (connection_aborted()) {
                 error_log('Levi: client disconnected during tool loop');
                 return;
@@ -1011,11 +1035,12 @@ class ChatController extends WP_REST_Controller {
 
             $this->emitSSE('status', ['message' => 'Levi arbeitet...']);
 
-            $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), $heartbeat, $webSearch);
+            $loopMessages = $this->compactMessagesForToolLoop($messages, $iteration);
+            $nextResponse = $this->aiClient->chat($loopMessages, $this->toolRegistry->getDefinitions(), $heartbeat, $webSearch);
             if (is_wp_error($nextResponse)) {
                 $errMsgLower = mb_strtolower($nextResponse->get_error_message());
                 if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
-                    $nextResponse = $this->aiClient->chat($messages, [], $heartbeat, $webSearch);
+                    $nextResponse = $this->aiClient->chat($loopMessages, [], $heartbeat, $webSearch);
                 }
             }
             if (is_wp_error($nextResponse)) {
@@ -1606,13 +1631,23 @@ class ChatController extends WP_REST_Controller {
                 $messages[] = $ic;
             }
 
-            $nextResponse = $this->aiClient->chat($messages, $this->toolRegistry->getDefinitions(), null, $webSearch);
+            $codeTagWarnings = $this->injectCodeTagWarnings($toolResults);
+            foreach ($codeTagWarnings as $ctw) {
+                $messages[] = $ctw;
+            }
+
+            $toolMismatch = $this->injectToolMismatchCorrection($message, $toolResults);
+            foreach ($toolMismatch as $tm) {
+                $messages[] = $tm;
+            }
+
+            $loopMessages = $this->compactMessagesForToolLoop($messages, $iteration);
+            $nextResponse = $this->aiClient->chat($loopMessages, $this->toolRegistry->getDefinitions(), null, $webSearch);
             if (is_wp_error($nextResponse)) {
                 $errMsg = $nextResponse->get_error_message();
                 $errMsgLower = mb_strtolower($errMsg);
                 if ($this->isNoEndpointsError($errMsgLower) || $this->isTimeoutError($errMsgLower)) {
-                    // Retry once without tool definitions to avoid tool-mode endpoint limitations.
-                    $nextResponse = $this->aiClient->chat($messages, [], null, $webSearch);
+                    $nextResponse = $this->aiClient->chat($loopMessages, [], null, $webSearch);
                 }
             }
             if (is_wp_error($nextResponse)) {
@@ -1732,10 +1767,17 @@ class ChatController extends WP_REST_Controller {
     private function buildMessages(string $sessionId, string $newMessage, bool $includeUploadedContext = true): array {
         $messages = [];
 
+        [$stablePrompt, $dynamicPrompt] = $this->getSystemPromptParts($newMessage, $sessionId, $includeUploadedContext);
         $messages[] = [
             'role' => 'system',
-            'content' => $this->getSystemPrompt($newMessage, $sessionId, $includeUploadedContext),
+            'content' => $stablePrompt,
         ];
+        if ($dynamicPrompt !== '') {
+            $messages[] = [
+                'role' => 'system',
+                'content' => $dynamicPrompt,
+            ];
+        }
 
         $runtimeSettings = $this->settings->getSettings();
         $historyLimit = max(10, (int) ($runtimeSettings['history_context_limit'] ?? 50));
@@ -1938,61 +1980,82 @@ class ChatController extends WP_REST_Controller {
         return array_merge($systemMessages, $kept, [$userMsg]);
     }
 
+    /**
+     * Legacy single-string system prompt (used by buildMessagesForConfirmation etc.).
+     */
     private function getSystemPrompt(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): string {
-        // Identity: cached static full text (ALWAYS, every message)
-        try {
-            $basePrompt = $this->getCachedIdentity();
-        } catch (\Throwable $e) {
-            error_log('Levi Identity Error: ' . $e->getMessage());
-            $basePrompt = "You are Levi, a helpful AI assistant for WordPress.";
+        [$stable, $dynamic] = $this->getSystemPromptParts($query, $sessionId, $includeUploadedContext);
+        if ($dynamic !== '') {
+            return $stable . "\n\n---\n\n" . $dynamic;
         }
+        return $stable;
+    }
 
-        // Dynamic context: user name, role, time (ALWAYS, fresh per request, no disk I/O)
-        try {
-            $basePrompt .= "\n\n---\n\n" . Identity::getDynamicContext();
-        } catch (\Throwable $e) {
-            // non-critical
-        }
-
-        // QueryClassifier: evaluate once, pass strategy through
+    /**
+     * Returns [stablePrompt, dynamicPrompt].
+     *
+     * The stable part (identity) is identical across roundtrips and benefits from
+     * provider-side prompt caching. The dynamic part (user context, memories,
+     * state baseline) changes per request and must not be cached.
+     */
+    private function getSystemPromptParts(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): array {
+        // ---- Classify query once, reuse for both rule modules and retrieval strategy ----
+        $classifier = null;
+        $ruleModules = null;
         $strategy = ['identity' => true, 'reference' => false, 'snapshot' => false, 'full_tools' => false];
+
         if (!empty($query)) {
             try {
                 $classifier = new QueryClassifier();
                 $strategy = $classifier->getRetrievalStrategy($query);
+                $ruleModules = $classifier->getRequiredRuleModules($query);
             } catch (\Throwable $e) {
                 $strategy = ['identity' => true, 'reference' => true, 'snapshot' => true, 'full_tools' => true];
             }
         }
 
-        // Context Layer: only when strategy demands it (knowledge/complex queries)
+        // ---- STABLE PART (cacheable) ----
+        try {
+            $stablePrompt = $this->getCachedIdentity($ruleModules);
+        } catch (\Throwable $e) {
+            error_log('Levi Identity Error: ' . $e->getMessage());
+            $stablePrompt = "You are Levi, a helpful AI assistant for WordPress.";
+        }
+
+        // ---- DYNAMIC PART (changes per request) ----
+        $dynamicParts = [];
+
+        try {
+            $dynamicParts[] = Identity::getDynamicContext();
+        } catch (\Throwable $e) {
+            // non-critical
+        }
+
         if ($strategy['reference'] || $strategy['snapshot']) {
             try {
                 $contextMemories = $this->getContextMemories($query, $strategy);
                 if (!empty($contextMemories)) {
-                    $basePrompt .= "\n\n# Relevant Context\n\n" . $contextMemories;
+                    $dynamicParts[] = "# Relevant Context\n\n" . $contextMemories;
                 }
             } catch (\Throwable $e) {
                 error_log('Levi Memory Error: ' . $e->getMessage());
             }
         }
 
-        // State Baseline metadata (ALWAYS, cheap -- from wp_options)
         $stateBaseline = StateSnapshotService::getPromptContext();
         if ($stateBaseline !== '') {
-            $basePrompt .= "\n\n# Daily WordPress State Baseline\n\n" . $stateBaseline;
+            $dynamicParts[] = "# Daily WordPress State Baseline\n\n" . $stateBaseline;
         }
 
-        // Uploaded file context only for non-simple queries
         $isSimpleQuery = !$strategy['reference'] && !$strategy['snapshot'] && !$strategy['full_tools'];
         if (!$isSimpleQuery && $includeUploadedContext && !empty($sessionId)) {
             $uploadedContext = $this->buildUploadedFilesContext($sessionId, get_current_user_id());
             if ($uploadedContext !== '') {
-                $basePrompt .= "\n\n# Session File Context\n\n" . $uploadedContext;
+                $dynamicParts[] = "# Session File Context\n\n" . $uploadedContext;
             }
         }
 
-        return $basePrompt;
+        return [$stablePrompt, implode("\n\n", $dynamicParts)];
     }
     
     /**
@@ -2046,22 +2109,31 @@ PROMPT;
 
     /**
      * Get cached identity text from WordPress transient.
-     * Caches only the static content (soul+rules+knowledge). getDynamicContext() is appended separately per request.
+     * When rule modules are provided and modular rules exist, only the specified
+     * modules are loaded — resulting in a smaller prompt for simple queries.
+     *
+     * @param string[]|null $ruleModules Specific rule module names, or null for full rules.md
      */
-    private function getCachedIdentity(): string {
+    private function getCachedIdentity(?array $ruleModules = null): string {
         $this->ensureMemoryFreshness();
 
-        $cached = get_transient('levi_identity_cache');
+        $cacheKey = 'levi_identity_cache';
+        if ($ruleModules !== null) {
+            sort($ruleModules);
+            $cacheKey .= '_' . implode('_', $ruleModules);
+        }
+
+        $cached = get_transient($cacheKey);
         if (is_string($cached) && $cached !== '') {
             return $cached;
         }
 
         $identity = new Identity();
-        $content = $identity->getFullContent();
+        $content = $identity->getFullContent($ruleModules);
         $hash = $identity->getContentHash();
 
         if ($content !== '') {
-            set_transient('levi_identity_cache', $content, HOUR_IN_SECONDS);
+            set_transient($cacheKey, $content, HOUR_IN_SECONDS);
             set_transient('levi_identity_hash', $hash, HOUR_IN_SECONDS);
         }
 
@@ -2855,6 +2927,161 @@ PROMPT;
                 . "Bei PHP: require_once. Bei CSS: wp_enqueue_style. Bei JS: wp_enqueue_script. "
                 . "Antworte dem Nutzer NICHT mit 'fertig' bevor die Integration sichergestellt ist.",
         ]];
+    }
+
+    /**
+     * Scan tool results for code_tag_warning entries. If any were found (i.e. tags
+     * slipped past the auto-strip), inject a hard system message forcing the AI to
+     * patch them immediately.
+     */
+    private function injectCodeTagWarnings(array $toolResults): array {
+        $affectedFiles = [];
+
+        foreach ($toolResults as $tr) {
+            if (empty($tr['result']['code_tag_warning'])) {
+                continue;
+            }
+
+            $tool = $tr['tool'] ?? '';
+            $slug = $tr['result']['plugin_slug'] ?? $tr['result']['theme_slug'] ?? '?';
+            $relPath = $tr['result']['relative_path'] ?? '?';
+            $patchTool = str_contains($tool, 'theme') ? 'write_theme_file' : 'patch_plugin_file';
+
+            $affectedFiles[] = "{$slug}/{$relPath} (verwende {$patchTool})";
+        }
+
+        if (empty($affectedFiles)) {
+            return [];
+        }
+
+        return [[
+            'role' => 'system',
+            'content' => "[SYSTEM – CODE-TAG WARNUNG]\n"
+                . "Die folgenden Dateien enthalten noch <code>- oder <pre>-Tags im HTML-Output:\n"
+                . implode("\n", array_map(fn($f) => "  - $f", $affectedFiles))
+                . "\n\nDiese Tags MUESSEN SOFORT entfernt werden! Sie verhindern, dass CSS-Styles greifen "
+                . "und zeigen Frontend-Inhalte als haesslichen Monospace-Text an.\n"
+                . "PATCHE jede betroffene Datei JETZT und entferne alle <code>, </code>, <pre>, </pre> Tags "
+                . "aus dem HTML-Output. HTML-Elemente wie <div>, <h3>, <span> sind Render-Output, KEIN 'Code zum Anzeigen'.\n"
+                . "Antworte dem Nutzer NICHT mit 'fertig' bevor alle Tags entfernt sind.",
+        ]];
+    }
+
+    /**
+     * Detect when the AI called get_pages but the user asked about "Beiträge" (posts),
+     * or called get_posts but the user asked about "Seiten" (pages).
+     * Injects a system correction message so the AI calls the correct tool.
+     */
+    private function injectToolMismatchCorrection(?string $userMessage, array $toolResults): array {
+        if ($userMessage === null || $userMessage === '' || empty($toolResults)) {
+            return [];
+        }
+
+        $msgLower = mb_strtolower($userMessage);
+
+        $postKeywords = ['beitrag', 'beiträge', 'beitraege', 'blogbeitrag', 'blogartikel', 'blog-beitrag', 'blog-artikel', 'artikel'];
+        $pageKeywords = ['seite', 'seiten', 'unterseite', 'unterseiten', 'startseite', 'homepage'];
+
+        $userMeansPost = false;
+        $userMeansPage = false;
+
+        foreach ($postKeywords as $kw) {
+            if (mb_strpos($msgLower, $kw) !== false) {
+                $userMeansPost = true;
+                break;
+            }
+        }
+
+        foreach ($pageKeywords as $kw) {
+            if (mb_strpos($msgLower, $kw) !== false) {
+                $userMeansPage = true;
+                break;
+            }
+        }
+
+        if ($userMeansPost && $userMeansPage) {
+            return [];
+        }
+
+        $calledTools = array_unique(array_map(fn($tr) => $tr['tool'] ?? '', $toolResults));
+
+        if ($userMeansPost && in_array('get_pages', $calledTools, true) && !in_array('get_posts', $calledTools, true)) {
+            return [[
+                'role' => 'system',
+                'content' => "[SYSTEM – FALSCHES TOOL VERWENDET]\n"
+                    . "Der Nutzer hat nach BEITRÄGEN (Posts) gefragt, aber du hast get_pages (Seiten) aufgerufen. "
+                    . "Das sind unterschiedliche WordPress-Inhaltstypen!\n"
+                    . "- Beiträge/Posts/Blog = get_posts (post_type='post')\n"
+                    . "- Seiten/Pages = get_pages (post_type='page')\n\n"
+                    . "Rufe JETZT get_posts auf, um die korrekten Beiträge zu laden. "
+                    . "Verwende NICHT die Daten aus dem get_pages-Ergebnis — das sind Seiten, keine Beiträge. "
+                    . "Präsentiere dem Nutzer NUR die Daten aus get_posts.",
+            ]];
+        }
+
+        if ($userMeansPage && in_array('get_posts', $calledTools, true) && !in_array('get_pages', $calledTools, true)) {
+            $postType = '';
+            foreach ($toolResults as $tr) {
+                if (($tr['tool'] ?? '') === 'get_posts') {
+                    $postType = $tr['result']['queried_post_type'] ?? 'post';
+                    break;
+                }
+            }
+            if ($postType === 'page') {
+                return [];
+            }
+
+            return [[
+                'role' => 'system',
+                'content' => "[SYSTEM – FALSCHES TOOL VERWENDET]\n"
+                    . "Der Nutzer hat nach SEITEN (Pages) gefragt, aber du hast get_posts (Beiträge) aufgerufen. "
+                    . "Das sind unterschiedliche WordPress-Inhaltstypen!\n"
+                    . "- Seiten/Pages = get_pages (post_type='page')\n"
+                    . "- Beiträge/Posts/Blog = get_posts (post_type='post')\n\n"
+                    . "Rufe JETZT get_pages auf, um die korrekten Seiten zu laden. "
+                    . "Verwende NICHT die Daten aus dem get_posts-Ergebnis — das sind Beiträge, keine Seiten. "
+                    . "Präsentiere dem Nutzer NUR die Daten aus get_pages.",
+            ]];
+        }
+
+        return [];
+    }
+
+    /**
+     * Compact messages for tool-loop iterations to reduce token count.
+     *
+     * In early iterations (0-1) we keep everything. From iteration 2+ we strip
+     * older chat history while preserving: system messages, the last few
+     * user/assistant pairs, and ALL tool-related messages from the current session.
+     */
+    private function compactMessagesForToolLoop(array $messages, int $iteration): array {
+        if ($iteration < 2) {
+            return $messages;
+        }
+
+        $systemMessages = [];
+        $toolMessages = [];
+        $historyMessages = [];
+
+        foreach ($messages as $msg) {
+            $role = $msg['role'] ?? '';
+
+            if ($role === 'system') {
+                $systemMessages[] = $msg;
+                continue;
+            }
+
+            if ($role === 'tool' || !empty($msg['tool_calls'])) {
+                $toolMessages[] = $msg;
+                continue;
+            }
+
+            $historyMessages[] = $msg;
+        }
+
+        $recentHistory = array_slice($historyMessages, -6);
+
+        return array_merge($systemMessages, $recentHistory, $toolMessages);
     }
 
     /**

@@ -39,7 +39,7 @@ class OpenRouterClient implements AIClientInterface {
         $temperature = $this->resolveTemperature($messages);
         $payload = [
             'model' => $model,
-            'messages' => $messages,
+            'messages' => $this->applyCacheControl($messages),
             'temperature' => $temperature,
             'max_tokens' => $this->maxTokens,
         ];
@@ -199,6 +199,30 @@ class OpenRouterClient implements AIClientInterface {
         }
 
         return $body;
+    }
+
+    /**
+     * Add cache_control breakpoint to the first system message so providers
+     * (Anthropic, OpenAI, DeepSeek) can cache the stable identity prefix.
+     * Providers that don't support cache_control simply ignore the field.
+     */
+    private function applyCacheControl(array $messages): array {
+        $applied = false;
+        foreach ($messages as $i => $msg) {
+            if ($applied || ($msg['role'] ?? '') !== 'system') {
+                continue;
+            }
+            $content = $msg['content'] ?? '';
+            if (is_string($content) && mb_strlen($content) > 1024) {
+                $messages[$i]['content'] = [[
+                    'type' => 'text',
+                    'text' => $content,
+                    'cache_control' => ['type' => 'ephemeral'],
+                ]];
+                $applied = true;
+            }
+        }
+        return $messages;
     }
 
     private function resolveTemperature(array $messages): float {

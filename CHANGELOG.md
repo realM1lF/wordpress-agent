@@ -3,7 +3,11 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [0.7.1] – 2026-03-10
+## [0.7.1] – 2026-03-11
+- **Levi antwortet deutlich schneller:** Drei Performance-Optimierungen sorgen dafür, dass Levi spürbar weniger Zeit pro Anfrage braucht:
+  - **Prompt Caching:** Der stabile Teil von Levis Identität (soul, rules, knowledge) wird jetzt als eigener System-Prompt-Block gesendet, der von Anbietern wie Anthropic und OpenAI gecacht werden kann. Bei Folgenachrichten werden diese ~18K Tokens nicht erneut verarbeitet.
+  - **Modulare Regeln:** Die Regeldatei (vorher ~14K Tokens in einem Stück) ist jetzt in 7 thematische Module aufgeteilt (core, tools, coding, planning, woocommerce, elementor, cron). Bei einfachen Anfragen (z.B. "Hallo" oder "Welche Plugins habe ich?") lädt Levi nur die relevanten Module — das spart bis zu 10K Tokens pro Anfrage.
+  - **History-Komprimierung in Tool-Loops:** Ab der 2. Iteration in einer Tool-Kette wird die Chat-Historie auf die letzten Nachrichten gekürzt. System-Prompts und Tool-Ergebnisse bleiben vollständig erhalten, aber ältere Konversationsnachrichten werden weggelassen.
 - **`<code>`- und `<pre>`-Tags werden automatisch entfernt:** Beim Schreiben und Patchen von Plugin- und Theme-Dateien entfernt Levi diese Tags jetzt automatisch aus dem HTML-Output, bevor die Datei gespeichert wird. So greifen CSS-Styles zuverlässig und Frontend-Inhalte werden nicht mehr als Monospace-Text angezeigt.
 - **Tab-Benachrichtigungen bei Hintergrund-Tab:** Wenn du in einem anderen Tab arbeitest, zeigt der Browser-Tab-Titel den Levi-Status an: „Levi arbeitet…“ (mit animierten Punkten) während Levi tüftelt, „Levi ist fertig!“ wenn er fertig ist, und „Levi braucht Hilfe“ bei Fehlern. Sobald du zurück zum Tab wechselst, wird der normale Titel wiederhergestellt.
 - **Beiträge vs. Seiten – keine Verwechslung mehr:** Levi hat manchmal Beiträge und Seiten verwechselt (z.B. `get_pages` statt `get_posts` aufgerufen). Das System erkennt das jetzt automatisch und korrigiert Levi, sodass er das richtige Tool nutzt. Zusätzlich sind die Tool-Beschreibungen und Regeln klarer formuliert.
