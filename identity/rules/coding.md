@@ -52,9 +52,10 @@ Für jede betroffene Datei prüfen: Geschrieben? Read-after-Write? Eingebunden (
 ## Debugging
 1. `read_error_log` → PHP-Fehler?
 2. `read_plugin_file` auf ALLE beteiligten Dateien → Konsistenz?
-3. Ursache benennen
+3. Ursache aus gelesenem Code ableiten — NIE raten oder vermuten
 4. Minimaler Fix — NICHT komplett neu schreiben
 - Keine Duplikate: Bestehende Funktion fixen statt zweite daneben schreiben
+- Diagnose MUSS auf Tool-Ergebnissen basieren. Wenn kein Tool aufgerufen: kein Urteil.
 
 ## Konsistenz
 - Nonce-Namen, Action-Namen, CSS-Klassen über alle Dateien identisch

@@ -233,19 +233,8 @@ class Registry {
             new UpdateOptionTool(),
             new UploadMediaTool(),
             new ManageMenuTool(),
-            new HttpFetchTool(),
-        ];
-
-        $advancedTools = [
-            new ManageUserTool(),
-            new ManageCronTool(),
-            new UpdateAnyOptionTool(),
-            new SwitchThemeTool(),
-            new CreateThemeTool(),
-            new WriteThemeFileTool(),
-            new DeleteThemeFileTool(),
             new ManageTaxonomyTool(),
-            new StoreSessionImageTool(),
+            new HttpFetchTool(),
             new DiscoverContentTypesTool(),
             new DiscoverRestApiTool(),
             new WooCommerceProductTool(),
@@ -254,6 +243,17 @@ class Registry {
             new ElementorReadTool(),
             new ElementorBuildTool(),
             new ElementorManageTool(),
+            new ManageUserTool(),
+            new ManageCronTool(),
+            new UpdateAnyOptionTool(),
+            new SwitchThemeTool(),
+            new CreateThemeTool(),
+            new WriteThemeFileTool(),
+            new DeleteThemeFileTool(),
+            new StoreSessionImageTool(),
+        ];
+
+        $advancedTools = [
             new ExecuteWPCodeTool(),
         ];
 

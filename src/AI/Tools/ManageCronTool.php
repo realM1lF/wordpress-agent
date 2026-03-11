@@ -17,7 +17,7 @@ class ManageCronTool implements ToolInterface {
             . '"update_task" to modify, "delete_task" to remove, "run_task" to execute immediately. '
             . 'Read-only tools (get_plugins, get_posts, etc.) work without extra confirmation. '
             . 'Write tools (create_post, update_post, install_plugin, etc.) are also allowed — the user\'s confirmation when creating the task serves as permanent approval. '
-            . 'Max 20 tasks, min interval: hourly. Allowed schedules: hourly, twicedaily, daily, weekly.';
+            . 'Max 20 tasks. Allowed schedules: once (one-time, auto-deletes after execution), hourly, twicedaily, daily, weekly.';
     }
 
     public function getParameters(): array {

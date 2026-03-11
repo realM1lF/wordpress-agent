@@ -1027,8 +1027,14 @@
                     isStreaming = false;
                     streamBuffer = '';
                     streamEl = null;
-                    if (typingRow) typingRow.style.display = '';
-                    if (progressTrack) progressTrack.style.display = '';
+                    if (typingRow) {
+                        contentEl.appendChild(typingRow);
+                        typingRow.style.display = '';
+                    }
+                    if (progressTrack) {
+                        contentEl.appendChild(progressTrack);
+                        progressTrack.style.display = '';
+                    }
                 }
             };
 

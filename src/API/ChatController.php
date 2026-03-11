@@ -310,7 +310,6 @@ class ChatController extends WP_REST_Controller {
         $toolName = (string) $pending['tool_name'];
         $toolArgs = is_array($pending['tool_args']) ? $pending['tool_args'] : [];
         $sessionId = (string) ($pending['session_id'] ?? '');
-        $planContext = $pending['plan_context'] ?? null;
 
         $result = $this->toolRegistry->execute($toolName, $toolArgs);
         $this->trackOwnedPluginFromToolResult($toolName, $toolArgs, $result);
@@ -362,7 +361,7 @@ class ChatController extends WP_REST_Controller {
             $latestUserMessage = $this->getLatestUserMessage($sessionId);
             return $this->handleToolCalls(
                 $messageData, $messages, $sessionId, $userId,
-                $latestUserMessage, false, $planContext
+                $latestUserMessage, false
             );
         }
 
@@ -475,7 +474,7 @@ class ChatController extends WP_REST_Controller {
             $latestUserMessage = $this->getLatestUserMessage($sessionId);
             $this->handleToolCallsStreaming(
                 $messageData, $messages, $sessionId, $userId,
-                $latestUserMessage, $heartbeat, false, $pending['plan_context'] ?? null
+                $latestUserMessage, $heartbeat, false
             );
             return;
         }
@@ -661,7 +660,7 @@ class ChatController extends WP_REST_Controller {
                     'content' => $streamResult['content'] ?? null,
                     'tool_calls' => $streamResult['tool_calls'],
                 ];
-                $this->handleToolCallsStreaming($toolCallData, $messages, $sessionId, $userId, (string) $message, $heartbeat, $webSearch, null);
+                $this->handleToolCallsStreaming($toolCallData, $messages, $sessionId, $userId, (string) $message, $heartbeat, $webSearch);
                 if ($hasUploadedContext) {
                     $this->clearSessionUploads($sessionId, $userId);
                 }
@@ -686,7 +685,7 @@ class ChatController extends WP_REST_Controller {
                 if (!is_wp_error($retryResponse)) {
                     $retryData = $retryResponse['choices'][0]['message'] ?? [];
                     if (!empty($retryData['tool_calls'])) {
-                        $this->handleToolCallsStreaming($retryData, $messages, $sessionId, $userId, (string) $message, $heartbeat, $webSearch, null);
+                        $this->handleToolCallsStreaming($retryData, $messages, $sessionId, $userId, (string) $message, $heartbeat, $webSearch);
                         if ($hasUploadedContext) {
                             $this->clearSessionUploads($sessionId, $userId);
                         }
@@ -794,7 +793,7 @@ class ChatController extends WP_REST_Controller {
         $messageData = $response['choices'][0]['message'] ?? [];
 
         if (!empty($messageData['tool_calls'])) {
-            $this->handleToolCallsStreaming($messageData, $messages, $sessionId, $userId, (string) $message, $heartbeat, $webSearch, null);
+            $this->handleToolCallsStreaming($messageData, $messages, $sessionId, $userId, (string) $message, $heartbeat, $webSearch);
             if ($hasUploadedContext) {
                 $this->clearSessionUploads($sessionId, $userId);
             }
@@ -995,7 +994,7 @@ class ChatController extends WP_REST_Controller {
         $messageData = $response['choices'][0]['message'] ?? [];
         
         if (isset($messageData['tool_calls']) && !empty($messageData['tool_calls'])) {
-            $toolResponse = $this->handleToolCalls($messageData, $messages, $sessionId, $userId, (string) $message, $webSearch, null);
+            $toolResponse = $this->handleToolCalls($messageData, $messages, $sessionId, $userId, (string) $message, $webSearch);
             if ($hasUploadedContext) {
                 $this->clearSessionUploads($sessionId, $userId);
             }
@@ -1304,155 +1303,14 @@ class ChatController extends WP_REST_Controller {
         return !empty($toolResults);
     }
 
-    /**
-     * @deprecated Removed — ToolGuard handles safety; intent-mismatch is handled via post-execution hint only.
-     */
-    private function shouldDeferCreationTool(string $toolName, array $args, array $taskIntent): bool {
-        return false;
-    }
 
     /**
-     * Build an internal dry-plan before first mutating execution.
-     * Plan is kept internal and reused across confirmation round-trips.
+     * Validates whether a tool call is allowed.
+     * Currently only enforces third-party plugin protection.
      */
-    private function ensureDryPlan(?array $planContext, array $toolCalls, string $latestUserMessage, array $taskIntent): array {
-        if (is_array($planContext) && !empty($planContext['steps']) && !empty($planContext['domain'])) {
-            return $planContext;
-        }
-
-        $hasMutation = false;
-        foreach ($toolCalls as $toolCall) {
-            $name = trim((string) ($toolCall['function']['name'] ?? ''));
-            if ($this->isMutatingToolName($name)) {
-                $hasMutation = true;
-                break;
-            }
-        }
-
-        if (!$hasMutation) {
-            return is_array($planContext) ? $planContext : [
-                'plan_id' => wp_generate_uuid4(),
-                'domain' => 'unknown',
-                'intent_mode' => (string) ($taskIntent['mode'] ?? 'unknown'),
-                'steps' => [],
-                'created_at' => time(),
-            ];
-        }
-
-        $steps = $this->buildDryPlanSteps($toolCalls);
-        $domain = $this->inferPlanDomainFromIntentAndSteps($latestUserMessage, $steps);
-
-        return [
-            'plan_id' => wp_generate_uuid4(),
-            'domain' => $domain,
-            'intent_mode' => (string) ($taskIntent['mode'] ?? 'unknown'),
-            'steps' => $steps,
-            'created_at' => time(),
-        ];
-    }
-
-    private function buildDryPlanSteps(array $toolCalls): array {
-        $steps = [];
-        foreach ($toolCalls as $toolCall) {
-            $tool = trim((string) ($toolCall['function']['name'] ?? ''));
-            $args = json_decode((string) ($toolCall['function']['arguments'] ?? '{}'), true);
-            if (!is_array($args)) {
-                $args = [];
-            }
-            $action = $this->extractToolAction($tool, $args);
-            $domain = $this->classifyToolDomain($tool, $args);
-            $steps[] = [
-                'tool' => $tool,
-                'action' => $action,
-                'reason' => 'Vom Modell vorgeschlagener Schritt fuer die aktuelle Anfrage.',
-                'expected_object' => $domain !== 'unknown' ? $domain : 'wordpress_object',
-            ];
-        }
-        return $steps;
-    }
-
-    private function extractToolAction(string $toolName, array $args): string {
-        if (isset($args['action']) && is_string($args['action']) && $args['action'] !== '') {
-            return $args['action'];
-        }
-        return $toolName;
-    }
-
-    private function inferPlanDomainFromIntentAndSteps(string $latestUserMessage, array $steps): string {
-        $requested = $this->inferRequestedDomain($latestUserMessage);
-        if ($requested !== 'unknown') {
-            return $requested;
-        }
-
-        $counts = [];
-        foreach ($steps as $step) {
-            $domain = (string) ($step['expected_object'] ?? 'unknown');
-            if ($domain === 'unknown') {
-                continue;
-            }
-            $counts[$domain] = ($counts[$domain] ?? 0) + 1;
-        }
-        if (empty($counts)) {
-            return 'unknown';
-        }
-        arsort($counts);
-        return (string) array_key_first($counts);
-    }
-
-    private function inferRequestedDomain(string $latestUserMessage): string {
-        $text = mb_strtolower($latestUserMessage);
-        $domains = [
-            'woocommerce' => '/\b(woocommerce|produkt|produkte|variation|variationen|bestellung|bestellungen|coupon|gutschein|warenkorb|shop|product|products|order|orders|coupon|coupons)\b/u',
-            'elementor' => '/\b(elementor|landingpage|layout|widget|section|container)\b/u',
-            'theme' => '/\b(theme|design|stylesheet|style\\.css|template)\b/u',
-            'plugin' => '/\b(plugin|plugin-datei|plugin ordner|plugin-ordner|wp-content\/plugins)\b/u',
-            'content' => '/\b(post|beitrag|seite|page|artikel|kategorie|tag|taxonomy)\b/u',
-        ];
-
-        foreach ($domains as $domain => $pattern) {
-            if (preg_match($pattern, $text) === 1) {
-                return $domain;
-            }
-        }
-        return 'unknown';
-    }
-
-    private function classifyToolDomain(string $toolName, array $args): string {
-        if (in_array($toolName, ['manage_woocommerce', 'get_woocommerce_data', 'get_woocommerce_shop'], true)) {
-            return 'woocommerce';
-        }
-
-        if ($toolName === 'manage_taxonomy') {
-            $taxonomy = (string) ($args['taxonomy'] ?? '');
-            if (str_starts_with($taxonomy, 'product_')) {
-                return 'woocommerce';
-            }
-            return 'content';
-        }
-
-        if (in_array($toolName, ['create_plugin', 'write_plugin_file', 'patch_plugin_file', 'delete_plugin_file', 'read_plugin_file', 'list_plugin_files'], true)) {
-            return 'plugin';
-        }
-        if (in_array($toolName, ['create_theme', 'write_theme_file', 'delete_theme_file', 'read_theme_file', 'list_theme_files'], true)) {
-            return 'theme';
-        }
-        if (in_array($toolName, ['elementor_build', 'manage_elementor', 'get_elementor_data'], true)) {
-            return 'elementor';
-        }
-        if (in_array($toolName, ['create_post', 'update_post', 'create_page', 'delete_post', 'manage_post_meta'], true)) {
-            return 'content';
-        }
-        return 'unknown';
-    }
-
-    private function validateToolCallAgainstPlan(string $toolName, array $args, array $taskIntent, array $planContext): array {
+    private function validateToolCall(string $toolName, array $args): array {
         if ($toolName === '') {
             return ['allow' => false, 'reason' => 'Leerer Tool-Name ist nicht gueltig.'];
-        }
-
-        $isMutation = $this->isMutatingToolName($toolName);
-        if (!$isMutation) {
-            return ['allow' => true];
         }
 
         if ($this->isPluginMutationTool($toolName)) {
@@ -1469,29 +1327,6 @@ class ChatController extends WP_REST_Controller {
                     'reason' => "Plugin-Bearbeitung blockiert: '$pluginSlug' ist kein freigegebenes eigenes Plugin (Drittanbieter-Schutz aktiv).",
                 ];
             }
-        }
-
-        $planDomain = (string) ($planContext['domain'] ?? 'unknown');
-        if ($planDomain === 'unknown') {
-            return ['allow' => true];
-        }
-
-        $toolDomain = $this->classifyToolDomain($toolName, $args);
-        if ($toolDomain === 'unknown') {
-            return ['allow' => true];
-        }
-
-        if ($toolDomain !== $planDomain) {
-            if (
-                $toolDomain === 'plugin'
-                && ($this->isPluginMutationTool($toolName) || $toolName === 'create_plugin')
-            ) {
-                return ['allow' => true];
-            }
-            return [
-                'allow' => false,
-                'reason' => "Tool-Domain-Mismatch: erwartet '{$planDomain}', erhalten '{$toolDomain}'.",
-            ];
         }
 
         return ['allow' => true];
@@ -1755,7 +1590,7 @@ class ChatController extends WP_REST_Controller {
             ], 403);
         }
 
-        $messages = $this->conversationRepo->getHistory($sessionId);
+        $messages = $this->conversationRepo->getHistory($sessionId, 500);
 
         return new WP_REST_Response([
             'session_id' => $sessionId,
@@ -1778,19 +1613,30 @@ class ChatController extends WP_REST_Controller {
             return new WP_REST_Response(['success' => false, 'error' => 'Missing session_id'], 400);
         }
 
-        $history = $this->conversationRepo->getHistory($sessionId, 1);
+        $fullHistory = $this->conversationRepo->getHistory($sessionId, 500);
         $currentUserId = get_current_user_id();
         $isAdmin = current_user_can('manage_options');
-        $ownerId = !empty($history) ? (int) ($history[0]['user_id'] ?? 0) : 0;
+        $ownerId = !empty($fullHistory) ? (int) ($fullHistory[0]['user_id'] ?? 0) : 0;
 
         if (!$isAdmin) {
-            if (empty($history)) {
+            if (empty($fullHistory)) {
                 $this->clearSessionUploads($sessionId, $currentUserId);
                 return new WP_REST_Response(['success' => true, 'session_id' => $sessionId], 200);
             }
             if ($ownerId !== $currentUserId) {
                 return new WP_REST_Response(['success' => false, 'error' => 'Not allowed to delete this session'], 403);
             }
+        }
+
+        if (count($fullHistory) >= 6) {
+            $learningOwner = ($isAdmin && $ownerId > 0) ? $ownerId : $currentUserId;
+            set_transient(
+                'levi_learnings_pending_' . $sessionId,
+                ['history' => $fullHistory, 'user_id' => $learningOwner],
+                HOUR_IN_SECONDS
+            );
+            wp_schedule_single_event(time(), 'levi_extract_session_learnings', [$sessionId]);
+            spawn_cron();
         }
 
         $this->conversationRepo->deleteSession($sessionId);

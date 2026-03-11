@@ -394,7 +394,7 @@ trait PostProcessesToolResults {
      * create_plugin only generates a scaffold stub — without this nudge the LLM often
      * claims "done" without ever calling write_plugin_file.
      */
-    private function injectPostCreatePluginNudge(array $toolCalls, array $toolResults, ?array $planContext = null): array {
+    private function injectPostCreatePluginNudge(array $toolCalls, array $toolResults): array {
         $createdSlug = null;
         foreach ($toolCalls as $tc) {
             if (($tc['function']['name'] ?? '') !== 'create_plugin') {

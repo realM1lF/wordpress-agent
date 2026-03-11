@@ -1290,7 +1290,7 @@ class SettingsPage {
                         <input type="text"
                                name="<?php echo esc_attr($this->optionName); ?>[compact_model]"
                                value="<?php echo esc_attr($settings['compact_model'] ?? $settings['summary_model'] ?? ''); ?>"
-                               placeholder="google/gemini-2.5-flash-preview"
+                               placeholder="google/gemini-2.5-flash-lite"
                                class="levi-form-input">
                         <p class="levi-form-help">
                             <?php echo esc_html($this->tr('Cheap model for compacting older messages when context limit is reached. Falls back to primary model on failure. Leave empty for provider default.', 'Guenstiges Modell fuer die Komprimierung aelterer Nachrichten bei Kontext-Ueberschreitung. Bei Fehler wird automatisch das Hauptmodell verwendet. Leer lassen fuer Provider-Standard.')); ?>

@@ -399,6 +399,15 @@ PROMPT;
                     $memories[] = "## Historical System Snapshots\n" . implode("\n\n", $snapshotTexts);
                 }
             }
+
+            $userId = get_current_user_id();
+            if ($userId > 0 && !empty($embeddings[0])) {
+                $episodic = $vectorStore->searchEpisodicMemories($embeddings[0], $userId, 5, 0.70);
+                if (!empty($episodic)) {
+                    $facts = array_map(fn($r) => '- ' . $r['fact'], $episodic);
+                    $memories[] = "## Learnings from previous sessions\n" . implode("\n", $facts);
+                }
+            }
         } catch (\Throwable $e) {
             error_log('Levi Memory search: ' . $e->getMessage());
         }

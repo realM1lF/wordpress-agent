@@ -697,10 +697,13 @@
     word-wrap: break-word;
     overflow-wrap: break-word;
 }
-.levi-stream-content + .levi-typing-row {
-    margin-top: 10px;
+.levi-stream-content ~ .levi-typing-row {
+    margin-top: 12px;
     border-top: 1px solid rgba(255,255,255,0.08);
-    padding-top: 10px;
+    padding-top: 12px;
+}
+.levi-stream-content ~ .levi-chat-progress-track {
+    margin-top: 8px;
 }
 .levi-stream-content p:first-child {
     margin-top: 0;

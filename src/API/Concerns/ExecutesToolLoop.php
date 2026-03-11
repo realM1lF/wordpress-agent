@@ -14,8 +14,7 @@ trait ExecutesToolLoop
         int $userId,
         string $latestUserMessage,
         callable $heartbeat,
-        bool $webSearch = false,
-        ?array $planContext = null
+        bool $webSearch = false
     ): void {
         $toolResults = [];
         $pendingConfirmation = null;
@@ -34,8 +33,6 @@ trait ExecutesToolLoop
                 break;
             }
 
-            $planContext = $this->ensureDryPlan($planContext, $toolCalls, $latestUserMessage, $taskIntent);
-
             $iteration++;
             $messages[] = $messageData;
 
@@ -49,7 +46,7 @@ trait ExecutesToolLoop
                 $functionArgs = $this->normalizeToolArgumentsForIntent($functionName, $functionArgs, $latestUserMessage);
                 $toolCallId = $toolCall['id'] ?? '';
 
-                $planValidation = $this->validateToolCallAgainstPlan($functionName, $functionArgs, $taskIntent, $planContext);
+                $planValidation = $this->validateToolCall($functionName, $functionArgs);
                 if (!($planValidation['allow'] ?? false)) {
                     $result = [
                         'success' => false,
@@ -123,21 +120,14 @@ trait ExecutesToolLoop
                     'iteration' => $iteration,
                 ]);
 
-                if ($this->shouldDeferCreationTool($functionName, $functionArgs, $taskIntent)) {
-                    $result = [
-                        'success' => false,
-                        'needs_clarification' => true,
-                        'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin.',
-                        'tool' => $functionName,
-                    ];
-                } elseif ($requireConfirmation && $guardResult['verdict'] === ToolGuard::ESCALATE && !$hasConfirmation) {
+                if ($requireConfirmation && $guardResult['verdict'] === ToolGuard::ESCALATE && !$hasConfirmation) {
                     $actionId = wp_generate_uuid4();
                     set_transient('levi_pending_' . $actionId, [
                         'tool_name' => $functionName,
                         'tool_args' => $functionArgs,
                         'session_id' => $sessionId,
                         'user_id' => $userId,
-                        'plan_context' => $planContext,
+
                         'created_at' => time(),
                     ], 300);
                     $pendingConfirmation = [
@@ -227,7 +217,7 @@ trait ExecutesToolLoop
                 }
             }
 
-            $scaffoldNudge = $this->injectPostCreatePluginNudge($toolCalls, $toolResults, $planContext);
+            $scaffoldNudge = $this->injectPostCreatePluginNudge($toolCalls, $toolResults);
             foreach ($scaffoldNudge as $nudge) {
                 $messages[] = $nudge;
             }
@@ -499,7 +489,7 @@ trait ExecutesToolLoop
     /**
      * Handle tool calls from AI
      */
-    private function handleToolCalls(array $messageData, array $messages, string $sessionId, int $userId, string $latestUserMessage, bool $webSearch = false, ?array $planContext = null): WP_REST_Response {
+    private function handleToolCalls(array $messageData, array $messages, string $sessionId, int $userId, string $latestUserMessage, bool $webSearch = false): WP_REST_Response {
         $toolResults = [];
         $executionTrace = [];
         $pendingConfirmation = null;
@@ -518,8 +508,6 @@ trait ExecutesToolLoop
                 break;
             }
 
-            $planContext = $this->ensureDryPlan($planContext, $toolCalls, $latestUserMessage, $taskIntent);
-
             $iteration++;
             // Add AI's tool call request to messages
             $messages[] = $messageData;
@@ -535,7 +523,7 @@ trait ExecutesToolLoop
                 $functionArgs = $this->normalizeToolArgumentsForIntent($functionName, $functionArgs, $latestUserMessage);
                 $toolCallId = $toolCall['id'] ?? '';
 
-                $planValidation = $this->validateToolCallAgainstPlan($functionName, $functionArgs, $taskIntent, $planContext);
+                $planValidation = $this->validateToolCall($functionName, $functionArgs);
                 if (!($planValidation['allow'] ?? false)) {
                     $result = [
                         'success' => false,
@@ -630,21 +618,14 @@ trait ExecutesToolLoop
                     ],
                 ];
 
-                if ($this->shouldDeferCreationTool($functionName, $functionArgs, $taskIntent)) {
-                    $result = [
-                        'success' => false,
-                        'needs_clarification' => true,
-                        'error' => 'Der Chat-Kontext deutet auf das Bearbeiten von bestehendem Inhalt hin.',
-                        'tool' => $functionName,
-                    ];
-                } elseif ($requireConfirmation && $guardResult['verdict'] === ToolGuard::ESCALATE && !$hasConfirmation) {
+                if ($requireConfirmation && $guardResult['verdict'] === ToolGuard::ESCALATE && !$hasConfirmation) {
                     $actionId = wp_generate_uuid4();
                     set_transient('levi_pending_' . $actionId, [
                         'tool_name' => $functionName,
                         'tool_args' => $functionArgs,
                         'session_id' => $sessionId,
                         'user_id' => $userId,
-                        'plan_context' => $planContext,
+
                         'created_at' => time(),
                     ], 300);
                     $pendingConfirmation = [
@@ -740,7 +721,7 @@ trait ExecutesToolLoop
                 }
             }
 
-            $scaffoldNudge = $this->injectPostCreatePluginNudge($toolCalls, $toolResults, $planContext);
+            $scaffoldNudge = $this->injectPostCreatePluginNudge($toolCalls, $toolResults);
             foreach ($scaffoldNudge as $nudge) {
                 $messages[] = $nudge;
             }

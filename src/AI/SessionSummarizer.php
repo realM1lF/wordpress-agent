@@ -39,7 +39,7 @@ FORMAT:
 PROMPT;
 
     private const COMPACT_MODEL_DEFAULTS = [
-        'openrouter' => 'google/gemini-2.5-flash-preview',
+        'openrouter' => 'google/gemini-2.5-flash-lite',
         'openai' => 'gpt-4.1-mini',
         'anthropic' => 'claude-sonnet-4-20250514',
     ];

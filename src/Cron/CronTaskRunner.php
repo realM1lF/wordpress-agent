@@ -33,7 +33,7 @@ class CronTaskRunner {
         'manage_menu',
     ];
 
-    public const ALLOWED_SCHEDULES = ['hourly', 'twicedaily', 'daily', 'weekly'];
+    public const ALLOWED_SCHEDULES = ['once', 'hourly', 'twicedaily', 'daily', 'weekly'];
 
     public function __construct() {
         $this->registerTaskHooks();
@@ -92,6 +92,11 @@ class CronTaskRunner {
 
         self::updateTaskResult($taskId, $result);
         self::maybeSendEmailNotification($task, $result);
+
+        if (($task['schedule'] ?? '') === 'once') {
+            self::deleteTask($taskId);
+        }
+
         return $result;
     }
 
@@ -159,7 +164,11 @@ class CronTaskRunner {
 
         if (!empty($task['active'])) {
             $firstRun = self::calculateFirstRun($task['start_time'] ?? null);
-            wp_schedule_event($firstRun, $schedule, $hook);
+            if ($schedule === 'once') {
+                wp_schedule_single_event($firstRun, $hook);
+            } else {
+                wp_schedule_event($firstRun, $schedule, $hook);
+            }
         }
 
         $tasks[$id] = $task;
@@ -233,7 +242,11 @@ class CronTaskRunner {
             $schedule = $task['schedule'] ?? 'daily';
             if (!wp_next_scheduled($hook)) {
                 $firstRun = self::calculateFirstRun($task['start_time'] ?? null);
-                wp_schedule_event($firstRun, $schedule, $hook);
+                if ($schedule === 'once') {
+                    wp_schedule_single_event($firstRun, $hook);
+                } else {
+                    wp_schedule_event($firstRun, $schedule, $hook);
+                }
             }
         }
 
