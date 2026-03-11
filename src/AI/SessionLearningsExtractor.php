@@ -10,27 +10,24 @@ class SessionLearningsExtractor {
     private const EXTRACT_PROMPT = <<<'PROMPT'
 Analysiere diesen Chat-Verlauf zwischen einem WordPress-Admin und seinem KI-Assistenten "Levi".
 
-Extrahiere 3-7 konkrete Learnings, die für ZUKÜNFTIGE Sessions nützlich sind.
+Extrahiere zeitlose Learnings für zukünftige Sessions.
 
-WAS EXTRAHIEREN:
-- User-Präferenzen und Regeln (z.B. "User will deutsche Kommentare im Code", "Events immer mit post_type=event erstellen")
-- Getroffene Design-Entscheidungen (z.B. "Events-Plugin: Detailseiten ja, aber keine Archiv-Seite")
-- Wiederkehrende Fehler-Muster und deren Fix als Regel (z.B. "Bei Plugin-Templates: dirname() doppelt nötig für korrekte Pfade")
+EXTRAHIEREN:
+- Präferenzen des Users (explizit geäußert ODER erkennbar aus seinem Verhalten/Korrekturen)
+- Design-Entscheidungen die der User getroffen oder bestätigt hat
+- Korrekturen: wenn der User den Assistenten korrigiert, ist das eine Regel für die Zukunft
+- Wiederkehrende Muster: wenn der User mehrfach ähnlich handelt, ist das eine Präferenz
 
-WAS NICHT EXTRAHIEREN:
-- Höflichkeitsfloskeln, Smalltalk
-- Einmalige Aktionen (z.B. "Hat Plugin X installiert", "Seite Y wurde erstellt")
-- Session-spezifische Statusmeldungen (z.B. "Problem wurde gelöst", "User hat X behoben") — in neuen Sessions veraltet und irreführend
-- Aktueller Systemzustand (z.B. "WooCommerce ist aktiv", "Theme ist Twenty Twenty-Four", "DDEV-Umgebung") — kann sich jederzeit ändern
-- Allgemeines WordPress/PHP-Wissen
+NICHT EXTRAHIEREN:
+- Smalltalk, Höflichkeitsfloskeln, allgemeine Fragen ohne Handlungsrelevanz
+- Wissen das nur vom Assistenten kam und vom User nicht aufgegriffen wurde
+- Einmalige erledigte Aktionen
+- Aktueller Systemzustand (Plugins, Themes, Umgebung — kann sich ändern)
+- Allgemeines WordPress/PHP/Coding-Wissen das jeder Entwickler kennt
 
-WICHTIG: Nur ZEITLOSE Regeln und Präferenzen extrahieren, die IMMER gelten. Keine Momentaufnahmen, keine Zustände.
+Wenn der Chat keine verwertbaren Learnings enthält: antworte mit []
 
-FORMAT:
-Gib NUR ein JSON-Array mit Strings zurück, ein Learning pro Eintrag.
-Beispiel: ["User bevorzugt minimales CSS ohne Frameworks", "Events immer mit post_type=event erstellen, nicht post"]
-
-Kein Markdown, keine Erklärungen, NUR das JSON-Array.
+FORMAT: NUR ein JSON-Array mit Strings. Keine Erklärungen.
 PROMPT;
 
     private const MIN_MESSAGES_FOR_EXTRACTION = 6;
@@ -191,8 +188,9 @@ PROMPT;
             return null;
         }
 
-        $compactModel = $this->getCompactModel($settings, $provider);
-        $client = AIClientFactory::createWithModel($provider, $compactModel);
+        $allSettings = $settings->getSettings();
+        $model = $this->resolveModel($allSettings, $provider);
+        $client = AIClientFactory::createWithModel($provider, $model);
         $response = $client->chat($messages);
 
         if (!is_wp_error($response)) {
@@ -203,19 +201,24 @@ PROMPT;
         return null;
     }
 
-    private function getCompactModel(SettingsPage $settings, string $provider): ?string {
-        $allSettings = $settings->getSettings();
-        $model = trim((string) ($allSettings['compact_model'] ?? $allSettings['summary_model'] ?? ''));
+    private function resolveModel(array $settings, string $provider): string {
+        $providerKey = match ($provider) {
+            'openrouter' => 'openrouter_model',
+            'openai' => 'openai_model',
+            'anthropic' => 'anthropic_model',
+            default => '',
+        };
+
+        $model = trim((string) ($settings[$providerKey] ?? ''));
         if ($model !== '') {
             return $model;
         }
 
-        $defaults = [
-            'openrouter' => 'google/gemini-2.5-flash-lite',
+        return match ($provider) {
+            'openrouter' => 'moonshotai/kimi-k2.5',
             'openai' => 'gpt-4.1-mini',
             'anthropic' => 'claude-sonnet-4-20250514',
-        ];
-
-        return $defaults[$provider] ?? null;
+            default => 'moonshotai/kimi-k2.5',
+        };
     }
 }
