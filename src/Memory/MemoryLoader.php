@@ -54,7 +54,7 @@ class MemoryLoader {
                 $this->vectorStore->unmarkFileLoaded($path);
             }
 
-            $result = $this->processFile($path, 'identity');
+            $result = $this->processFile($path, 'identity', $filename);
             if (is_wp_error($result)) {
                 $errors[] = $filename . ': ' . $result->get_error_message();
             } else {
@@ -78,7 +78,7 @@ class MemoryLoader {
                 $this->vectorStore->unmarkFileLoaded($path);
             }
 
-            $result = $this->processFile($path, 'reference');
+            $result = $this->processFile($path, 'reference', $filename);
             if (is_wp_error($result)) {
                 $errors[] = $filename . ': ' . $result->get_error_message();
             } else {
@@ -115,7 +115,7 @@ class MemoryLoader {
             $this->vectorStore->clearFileVectors($file, 'identity');
             $this->vectorStore->unmarkFileLoaded($path);
 
-            $result = $this->processFile($path, 'identity');
+            $result = $this->processFile($path, 'identity', $file);
             
             if (is_wp_error($result)) {
                 $errors[] = $file . ': ' . $result->get_error_message();
@@ -147,7 +147,7 @@ class MemoryLoader {
             $this->vectorStore->clearFileVectors($filename, 'reference');
             $this->vectorStore->unmarkFileLoaded($filePath);
 
-            $result = $this->processFile($filePath, 'reference');
+            $result = $this->processFile($filePath, 'reference', $filename);
             
             if (is_wp_error($result)) {
                 $errors[] = $filename . ': ' . $result->get_error_message();
@@ -233,7 +233,7 @@ class MemoryLoader {
     /**
      * Process a single file with batch processing and resume support
      */
-    private function processFile(string $filePath, string $memoryType): array|WP_Error {
+    private function processFile(string $filePath, string $memoryType, ?string $sourceFileOverride = null): array|WP_Error {
         $content = file_get_contents($filePath);
         
         if ($content === false) {
@@ -243,8 +243,7 @@ class MemoryLoader {
         $chunks = $this->splitIntoChunks($content);
         $totalChunks = count($chunks);
         
-        // Check for resume: get highest already-stored chunk index
-        $sourceFile = basename($filePath);
+        $sourceFile = $sourceFileOverride ?? basename($filePath);
         $highestStoredIndex = $this->vectorStore->getHighestChunkIndex($sourceFile, $memoryType);
         $resumeFromIndex = $highestStoredIndex + 1;
         

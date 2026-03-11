@@ -3050,38 +3050,40 @@ PROMPT;
     /**
      * Compact messages for tool-loop iterations to reduce token count.
      *
-     * In early iterations (0-1) we keep everything. From iteration 2+ we strip
-     * older chat history while preserving: system messages, the last few
-     * user/assistant pairs, and ALL tool-related messages from the current session.
+     * In early iterations (0-1) we keep everything. From iteration 2+ we drop
+     * older pure-chat messages (user/assistant without tool_calls) while keeping
+     * the original order intact. System messages, tool messages, and assistant
+     * messages with tool_calls are never removed — the API requires
+     * assistant(tool_calls) → tool(result) pairs to stay adjacent.
      */
     private function compactMessagesForToolLoop(array $messages, int $iteration): array {
         if ($iteration < 2) {
             return $messages;
         }
 
-        $systemMessages = [];
-        $toolMessages = [];
-        $historyMessages = [];
-
-        foreach ($messages as $msg) {
+        $pureChatIndices = [];
+        foreach ($messages as $i => $msg) {
             $role = $msg['role'] ?? '';
-
-            if ($role === 'system') {
-                $systemMessages[] = $msg;
-                continue;
+            if (($role === 'user' || $role === 'assistant') && empty($msg['tool_calls'])) {
+                $pureChatIndices[] = $i;
             }
-
-            if ($role === 'tool' || !empty($msg['tool_calls'])) {
-                $toolMessages[] = $msg;
-                continue;
-            }
-
-            $historyMessages[] = $msg;
         }
 
-        $recentHistory = array_slice($historyMessages, -6);
+        $keep = 6;
+        if (count($pureChatIndices) <= $keep) {
+            return $messages;
+        }
 
-        return array_merge($systemMessages, $recentHistory, $toolMessages);
+        $dropIndices = array_flip(array_slice($pureChatIndices, 0, -$keep));
+
+        $compacted = [];
+        foreach ($messages as $i => $msg) {
+            if (!isset($dropIndices[$i])) {
+                $compacted[] = $msg;
+            }
+        }
+
+        return $compacted;
     }
 
     /**
