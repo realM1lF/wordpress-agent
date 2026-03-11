@@ -3,6 +3,12 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.7.2] – 2026-03-11
+- **Session-Learnings deutlich verbessert:** Levi merkt sich jetzt nur noch zeitlose Regeln und Präferenzen – keine Systemzustände („DDEV aktiv“, „Theme XY“), kein allgemeines WordPress-Wissen und keine Prompt-Beispiele mehr. Nutzt dafür Kimi 2.5 statt eines Billig-Modells. Erfasst sowohl explizite Wünsche als auch implizite Präferenzen aus Korrekturen.
+- **Kein „database is locked“ mehr:** Die SQLite-Vector-DB nutzt jetzt WAL-Mode und einen 5-Sekunden-Busy-Timeout. Learnings-Extraktion und Chat können parallel laufen, ohne sich gegenseitig zu blockieren.
+- **Prompt-Caching nur für Anthropic:** Kimi 2.5 auf OpenRouter nutzt eigenes implizites Caching – der vorherige Anthropic-spezifische Ansatz wurde entfernt, damit Kimi korrekt cachen kann.
+- **Stream-Text bleibt sichtbar:** Wenn Levi mit Tools arbeitet, verschwindet seine vorherige Antwort nicht mehr – sie bleibt lesbar, darunter erscheint „Levi arbeitet…“.
+
 ## [0.7.1] – 2026-03-11
 - **Levi antwortet deutlich schneller:** Drei Performance-Optimierungen sorgen dafür, dass Levi spürbar weniger Zeit pro Anfrage braucht:
   - **Prompt Caching:** Der stabile Teil von Levis Identität (soul, rules, knowledge) wird jetzt als eigener System-Prompt-Block gesendet, der von Anbietern wie Anthropic und OpenAI gecacht werden kann. Bei Folgenachrichten werden diese ~18K Tokens nicht erneut verarbeitet.
