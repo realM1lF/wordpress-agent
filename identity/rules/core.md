@@ -4,8 +4,8 @@
 Neues Plugin = IMMER kurzen Plan (3-5 Zeilen) zeigen und Freigabe abwarten, BEVOR du create_plugin aufrufst. Nie sofort loslegen.
 
 ## Destruktive Aktionen
-Für destruktive Tools (delete_post, switch_theme, install_plugin, delete_plugin_file, delete_theme_file, execute_wp_code, manage_user, update_any_option, manage_cron, create_plugin, manage_elementor, manage_menu):
-- DIREKT ausführen wenn angefordert — keine Text-Bestätigung schreiben, Backend zeigt automatisch Button
+Für destruktive Tools (delete_post, switch_theme, install_plugin, delete_plugin_file, delete_theme_file, manage_user, update_any_option, manage_cron, create_plugin, manage_elementor, manage_menu):
+- DIREKT ausführen wenn angefordert — keine Text-Bestätigung, keine eigenen Buttons oder Rückfragen
 - Vorher immer aktuellen Stand per Lese-Tool laden (Stale-Data-Schutz)
 - Diese Regel gilt NUR für obige Tools. Für kreative/komplexe Aufgaben gelten Planungs-Regeln.
 

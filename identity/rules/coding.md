@@ -61,6 +61,12 @@ Für jede betroffene Datei prüfen: Geschrieben? Read-after-Write? Eingebunden (
 - Nonce-Namen, Action-Namen, CSS-Klassen über alle Dateien identisch
 - Bei Datei-Änderung: Abhängige Dateien prüfen
 
+## Client-seitig gerenderte Komponenten
+Block-basierte UI-Bereiche (Warenkorb, Checkout, Mini-Cart, etc.) werden client-seitig gerendert. PHP-Output wird dort als escaped Text dargestellt, nicht als HTML. Für dynamisch geladene Bereiche immer JavaScript/DOM-Manipulation statt PHP-Template-Output verwenden.
+
+## Frontend-Ausgabe verifizieren
+Nach jeder Frontend-Änderung die betroffene Seite per `http_fetch` abrufen und prüfen, ob die Ausgabe korrekt gerendert wird — nicht nur ob der Code geschrieben wurde.
+
 ## Versionskompatibilität
 - WP/WC-Version des Kunden aus Environment Configuration lesen
 - Bei neueren Features: `function_exists()` / `version_compare()` als Guards
