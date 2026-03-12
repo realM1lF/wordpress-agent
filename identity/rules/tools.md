@@ -99,6 +99,11 @@ Vor jeder Aktion (löschen, bearbeiten, aktualisieren): Erst frischen Stand per 
 ## Tool-Fehler & Recovery
 Bei Fehlschlag: Sofort kommunizieren (welches Tool, warum, was trotzdem erreicht). Bei Workaround: Plan A, Problem, Plan B und Konsequenzen erklären. Optionen nennen, auf Nutzer warten.
 
+## Nicht im Kreis drehen
+- Lies dieselbe Datei **nie zweimal hintereinander**. Einmal lesen → dann handeln (`patch_plugin_file` oder `write_plugin_file`).
+- Wenn `patch_plugin_file` fehlschlägt: Datei einmal lesen, neuen Patch mit korrigiertem Search-String versuchen. Scheitert auch der zweite Versuch → `write_plugin_file` zum Neuschreiben nutzen.
+- Allgemein: Wenn du dreimal dasselbe Tool mit denselben Argumenten aufrufst, bist du in einer Schleife. Stopp → anderen Ansatz wählen.
+
 ## Content-Analyse
 Volltext laden (nicht nur Excerpt), mit Pagination bis `has_more=false`. Anzahl gelesener Inhalte transparent nennen.
 

@@ -158,6 +158,35 @@ trait ExecutesToolLoop
                     ];
                     break;
                 } else {
+                    $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
+                    if ($loopNudge !== null) {
+                        error_log('Levi: loop detection triggered for ' . $functionName);
+                        $result = [
+                            'success' => false,
+                            'loop_detected' => true,
+                            'error' => 'Wiederholter Aufruf erkannt. Waehle einen anderen Ansatz.',
+                            'tool' => $functionName,
+                        ];
+                        $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                        $toolResults[] = [
+                            'tool' => $functionName,
+                            'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                            'result' => $result,
+                            'seq' => count($toolResults),
+                            'iteration' => $iteration,
+                        ];
+                        $messages[] = [
+                            'role' => 'tool',
+                            'tool_call_id' => $toolCallId,
+                            'content' => $this->compactToolResultForModel($result),
+                        ];
+                        $messages[] = [
+                            'role' => 'system',
+                            'content' => $loopNudge,
+                        ];
+                        continue;
+                    }
+
                     $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
                 }
 
@@ -166,6 +195,7 @@ trait ExecutesToolLoop
                 }
 
                 $this->trackOwnedPluginFromToolResult($functionName, $functionArgs, $result);
+                $this->registerApprovedContext($functionName, $functionArgs, $result);
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
@@ -384,7 +414,7 @@ trait ExecutesToolLoop
                         );
                     }
                     if ($finalMessage === '') {
-                        $finalMessage = $this->buildToolLoopFallbackMessage($toolResults);
+                        $finalMessage = $this->recoverStreamedContentOrFallback($toolResults);
                     }
                 }
 
@@ -413,7 +443,7 @@ trait ExecutesToolLoop
             }
         }
 
-        $finalMessage = $this->buildToolLoopFallbackMessage($toolResults);
+        $finalMessage = $this->recoverStreamedContentOrFallback($toolResults);
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
         $fallbackPayload = [
@@ -657,6 +687,43 @@ trait ExecutesToolLoop
                     ];
                     break;
                 } else {
+                    $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
+                    if ($loopNudge !== null) {
+                        error_log('Levi: loop detection triggered for ' . $functionName);
+                        $result = [
+                            'success' => false,
+                            'loop_detected' => true,
+                            'error' => 'Wiederholter Aufruf erkannt. Waehle einen anderen Ansatz.',
+                            'tool' => $functionName,
+                        ];
+                        $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                        $toolResults[] = [
+                            'tool' => $functionName,
+                            'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                            'result' => $result,
+                            'seq' => count($toolResults),
+                            'iteration' => $iteration,
+                        ];
+                        $executionTrace[] = [
+                            'iteration' => $iteration,
+                            'step' => count($executionTrace) + 1,
+                            'tool' => $functionName,
+                            'status' => 'loop_detected',
+                            'timestamp' => current_time('mysql'),
+                            'summary' => 'Loop-Detection: wiederholter Aufruf blockiert',
+                        ];
+                        $messages[] = [
+                            'role' => 'tool',
+                            'tool_call_id' => $toolCallId,
+                            'content' => $this->compactToolResultForModel($result),
+                        ];
+                        $messages[] = [
+                            'role' => 'system',
+                            'content' => $loopNudge,
+                        ];
+                        continue;
+                    }
+
                     $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
                 }
 
@@ -665,6 +732,7 @@ trait ExecutesToolLoop
                 }
 
                 $this->trackOwnedPluginFromToolResult($functionName, $functionArgs, $result);
+                $this->registerApprovedContext($functionName, $functionArgs, $result);
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
@@ -842,7 +910,7 @@ trait ExecutesToolLoop
                         );
                     }
                     if ($finalMessage === '') {
-                        $finalMessage = $this->buildToolLoopFallbackMessage($toolResults);
+                        $finalMessage = $this->recoverStreamedContentOrFallback($toolResults);
                     }
                 }
 
@@ -872,7 +940,7 @@ trait ExecutesToolLoop
             }
         }
 
-        $finalMessage = $this->buildToolLoopFallbackMessage($toolResults);
+        $finalMessage = $this->recoverStreamedContentOrFallback($toolResults);
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
         $fallbackPayload = [
@@ -1146,6 +1214,46 @@ trait ExecutesToolLoop
         }
 
         return $value;
+    }
+
+    private function registerApprovedContext(string $toolName, array $args, array $result): void {
+        if (empty($result['success'])) {
+            return;
+        }
+
+        if ($toolName === 'create_plugin') {
+            $slug = sanitize_title((string) ($result['slug'] ?? $args['slug'] ?? $args['plugin_slug'] ?? ''));
+            if ($slug !== '') {
+                $this->toolGuard->approveContext('plugin:' . $slug);
+            }
+        }
+    }
+
+    /**
+     * Detect repetitive tool calls (same tool + same primary arg 3+ times without a write in between).
+     * Returns a system-message nudge string if a loop is detected, null otherwise.
+     */
+    private function detectToolLoop(array $toolResults, string $currentTool, array $currentArgs): ?string {
+        $currentKey = $this->buildToolArgsKey($currentTool, $currentArgs);
+        $consecutiveCount = 0;
+
+        for ($i = count($toolResults) - 1; $i >= 0; $i--) {
+            $prevKey = $toolResults[$i]['args_key'] ?? '';
+            if ($prevKey === $currentKey) {
+                $consecutiveCount++;
+            } else {
+                break;
+            }
+        }
+
+        if ($consecutiveCount < 2) {
+            return null;
+        }
+
+        return '[SYSTEM] Du rufst dasselbe Tool (' . $currentTool . ') wiederholt mit denselben Argumenten auf. '
+            . 'Das deutet auf eine Schleife hin. Waehle einen anderen Ansatz: '
+            . 'Wenn patch_plugin_file fehlgeschlagen ist, nutze write_plugin_file zum Neuschreiben. '
+            . 'Wenn du eine Datei bereits gelesen hast, lies sie nicht nochmal – handele stattdessen.';
     }
 
     private function isSensitiveAuditKey(string $key): bool {
