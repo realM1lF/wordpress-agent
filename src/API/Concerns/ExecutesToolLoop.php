@@ -17,15 +17,12 @@ trait ExecutesToolLoop
         bool $webSearch = false
     ): void {
         $toolResults = [];
-        $pendingConfirmation = null;
         $runtimeSettings = $this->settings->getSettings();
         $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 25));
-        $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
         $mutationNudgeCount = 0;
         $completionGateCount = 0;
-        $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
 
         while ($iteration < $maxIterations) {
             $toolCalls = $messageData['tool_calls'] ?? [];
@@ -58,6 +55,7 @@ trait ExecutesToolLoop
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -78,11 +76,9 @@ trait ExecutesToolLoop
                 $guardResult = $this->toolGuard->evaluate($functionName, $functionArgs);
 
                 error_log(sprintf(
-                    'Levi ToolGuard [streaming]: tool=%s verdict=%s requireConfirm=%s hasConfirm=%s reason=%s',
+                    'Levi ToolGuard [streaming]: tool=%s verdict=%s reason=%s',
                     $functionName,
                     $guardResult['verdict'] ?? 'null',
-                    $requireConfirmation ? 'true' : 'false',
-                    $hasConfirmation ? 'true' : 'false',
                     $guardResult['reason'] ?? '-'
                 ));
 
@@ -97,6 +93,7 @@ trait ExecutesToolLoop
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -120,33 +117,20 @@ trait ExecutesToolLoop
                     'iteration' => $iteration,
                 ]);
 
-                if ($requireConfirmation && $guardResult['verdict'] === ToolGuard::ESCALATE && !$hasConfirmation) {
-                    $actionId = wp_generate_uuid4();
-                    set_transient('levi_pending_' . $actionId, [
-                        'tool_name' => $functionName,
-                        'tool_args' => $functionArgs,
-                        'session_id' => $sessionId,
-                        'user_id' => $userId,
-
-                        'created_at' => time(),
-                    ], 300);
-                    $pendingConfirmation = [
-                        'action_id' => $actionId,
-                        'tool' => $functionName,
-                        'description' => $this->describeToolAction($functionName, $functionArgs),
-                    ];
+                $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
+                if ($loopNudge !== null) {
+                    error_log('Levi: loop detection triggered for ' . $functionName);
                     $result = [
                         'success' => false,
-                        'needs_confirmation' => true,
-                        'action_id' => $actionId,
-                        'error' => $guardResult['reason'] ?? 'Fuer diese Aktion brauche ich eine explizite Bestaetigung.',
+                        'loop_detected' => true,
+                        'error' => 'Wiederholter Aufruf erkannt. Waehle einen anderen Ansatz.',
                         'tool' => $functionName,
                     ];
-
                     $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -156,50 +140,25 @@ trait ExecutesToolLoop
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
                     ];
-                    break;
-                } else {
-                    $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
-                    if ($loopNudge !== null) {
-                        error_log('Levi: loop detection triggered for ' . $functionName);
-                        $result = [
-                            'success' => false,
-                            'loop_detected' => true,
-                            'error' => 'Wiederholter Aufruf erkannt. Waehle einen anderen Ansatz.',
-                            'tool' => $functionName,
-                        ];
-                        $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
-                        $toolResults[] = [
-                            'tool' => $functionName,
-                            'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
-                            'result' => $result,
-                            'seq' => count($toolResults),
-                            'iteration' => $iteration,
-                        ];
-                        $messages[] = [
-                            'role' => 'tool',
-                            'tool_call_id' => $toolCallId,
-                            'content' => $this->compactToolResultForModel($result),
-                        ];
-                        $messages[] = [
-                            'role' => 'system',
-                            'content' => $loopNudge,
-                        ];
-                        continue;
-                    }
-
-                    $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => $loopNudge,
+                    ];
+                    continue;
                 }
+
+                $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
 
                 if ($functionName === 'search_tools' && !empty($result['tools'])) {
                     $this->addDiscoveredTools(array_column($result['tools'], 'name'));
                 }
 
                 $this->trackOwnedPluginFromToolResult($functionName, $functionArgs, $result);
-                $this->registerApprovedContext($functionName, $functionArgs, $result);
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
                     'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                    'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                     'result' => $result,
                     'seq' => count($toolResults),
                     'iteration' => $iteration,
@@ -217,22 +176,6 @@ trait ExecutesToolLoop
                     'tool_call_id' => $toolCallId,
                     'content' => $this->compactToolResultForModel($result),
                 ];
-            }
-
-            if ($pendingConfirmation !== null) {
-                $confirmDesc = $pendingConfirmation['description']
-                    ?? $this->describeToolAction($pendingConfirmation['tool'] ?? '', []);
-                $finalMessage = "Ich moechte: **{$confirmDesc}**\n\nBitte bestaetige ueber den Button. 🔒";
-                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
-                $this->emitSSE('done', [
-                    'session_id' => $sessionId,
-                    'message' => $finalMessage,
-                    'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
-                    'pending_confirmation' => $pendingConfirmation,
-                    'usage' => $this->usageAccumulator,
-                ]);
-                $this->flushUsage($sessionId, $userId);
-                return;
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
@@ -310,7 +253,7 @@ trait ExecutesToolLoop
                 return;
             }
 
-            $this->emitSSE('status', ['message' => 'Levi antwortet...']);
+            $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
 
             $loopMessages = $this->compactMessagesForToolLoop($messages, $iteration);
             $nextResponse = $this->streamContinuation($loopMessages, $this->getToolDefs(), $webSearch);
@@ -349,7 +292,7 @@ trait ExecutesToolLoop
                     }
                 }
 
-                if ($pendingConfirmation === null && $this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
+                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
                     $mutationNudgeCount++;
                     $messages[] = [
                         'role' => 'system',
@@ -375,25 +318,6 @@ trait ExecutesToolLoop
                 $finalMessage = $this->sanitizeAssistantMessageContent(
                     (string) ($messageData['content'] ?? '')
                 );
-
-                if ($pendingConfirmation === null && $this->looksLikeFakeConfirmation($finalMessage)) {
-                    $messages[] = ['role' => 'assistant', 'content' => $finalMessage];
-                    $messages[] = [
-                        'role' => 'system',
-                        'content' => '[SYSTEM] Du hast eine Bestaetigungsanfrage als TEXT geschrieben. Das ist FALSCH. '
-                            . 'Der Nutzer sieht keinen Button und haengt fest. '
-                            . 'Fuehre den destruktiven Tool-Call (delete_post, switch_theme, install_plugin, etc.) JETZT aus. '
-                            . 'Das Backend zeigt dem Nutzer automatisch einen Bestaetigungs-Button.',
-                    ];
-                    $retryResponse = $this->chatWithTracking($messages, $this->getToolDefs(), $heartbeat, $webSearch);
-                    if (!is_wp_error($retryResponse)) {
-                        $retryData = $retryResponse['choices'][0]['message'] ?? [];
-                        if (!empty($retryData['tool_calls'])) {
-                            $messageData = $retryData;
-                            continue;
-                        }
-                    }
-                }
 
                 if ($finalMessage === '') {
                     error_log('Levi: empty AI response after tool loop, nudging for summary');
@@ -433,9 +357,6 @@ trait ExecutesToolLoop
                     'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
                     'truncated' => $this->wasResponseTruncated($nextResponse),
                 ];
-                if ($pendingConfirmation !== null) {
-                    $donePayload['pending_confirmation'] = $pendingConfirmation;
-                }
                 $donePayload['usage'] = $this->usageAccumulator;
                 $this->emitSSE('done', $donePayload);
                 $this->flushUsage($sessionId, $userId);
@@ -451,9 +372,6 @@ trait ExecutesToolLoop
             'message' => $finalMessage,
             'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
         ];
-        if ($pendingConfirmation !== null) {
-            $fallbackPayload['pending_confirmation'] = $pendingConfirmation;
-        }
         $fallbackPayload['usage'] = $this->usageAccumulator;
         $this->emitSSE('done', $fallbackPayload);
         $this->flushUsage($sessionId, $userId);
@@ -515,15 +433,12 @@ trait ExecutesToolLoop
     private function handleToolCalls(array $messageData, array $messages, string $sessionId, int $userId, string $latestUserMessage, bool $webSearch = false): WP_REST_Response {
         $toolResults = [];
         $executionTrace = [];
-        $pendingConfirmation = null;
         $runtimeSettings = $this->settings->getSettings();
         $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 25));
-        $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
         $mutationNudgeCount = 0;
         $completionGateCount = 0;
-        $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
 
         while ($iteration < $maxIterations) {
             $toolCalls = $messageData['tool_calls'] ?? [];
@@ -558,6 +473,7 @@ trait ExecutesToolLoop
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -586,11 +502,9 @@ trait ExecutesToolLoop
                 $guardResult = $this->toolGuard->evaluate($functionName, $functionArgs);
 
                 error_log(sprintf(
-                    'Levi ToolGuard [classic]: tool=%s verdict=%s requireConfirm=%s hasConfirm=%s reason=%s',
+                    'Levi ToolGuard [classic]: tool=%s verdict=%s reason=%s',
                     $functionName,
                     $guardResult['verdict'] ?? 'null',
-                    $requireConfirmation ? 'true' : 'false',
-                    $hasConfirmation ? 'true' : 'false',
                     $guardResult['reason'] ?? '-'
                 ));
 
@@ -605,6 +519,7 @@ trait ExecutesToolLoop
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -641,33 +556,20 @@ trait ExecutesToolLoop
                     ],
                 ];
 
-                if ($requireConfirmation && $guardResult['verdict'] === ToolGuard::ESCALATE && !$hasConfirmation) {
-                    $actionId = wp_generate_uuid4();
-                    set_transient('levi_pending_' . $actionId, [
-                        'tool_name' => $functionName,
-                        'tool_args' => $functionArgs,
-                        'session_id' => $sessionId,
-                        'user_id' => $userId,
-
-                        'created_at' => time(),
-                    ], 300);
-                    $pendingConfirmation = [
-                        'action_id' => $actionId,
-                        'tool' => $functionName,
-                        'description' => $this->describeToolAction($functionName, $functionArgs),
-                    ];
+                $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
+                if ($loopNudge !== null) {
+                    error_log('Levi: loop detection triggered for ' . $functionName);
                     $result = [
                         'success' => false,
-                        'needs_confirmation' => true,
-                        'action_id' => $actionId,
-                        'error' => $guardResult['reason'] ?? 'Fuer diese Aktion brauche ich eine explizite Bestaetigung.',
+                        'loop_detected' => true,
+                        'error' => 'Wiederholter Aufruf erkannt. Waehle einen anderen Ansatz.',
                         'tool' => $functionName,
                     ];
-
                     $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -676,67 +578,34 @@ trait ExecutesToolLoop
                         'iteration' => $iteration,
                         'step' => count($executionTrace) + 1,
                         'tool' => $functionName,
-                        'status' => 'awaiting_confirmation',
+                        'status' => 'loop_detected',
                         'timestamp' => current_time('mysql'),
-                        'summary' => $this->summarizeToolResult($result),
+                        'summary' => 'Loop-Detection: wiederholter Aufruf blockiert',
                     ];
                     $messages[] = [
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
                     ];
-                    break;
-                } else {
-                    $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
-                    if ($loopNudge !== null) {
-                        error_log('Levi: loop detection triggered for ' . $functionName);
-                        $result = [
-                            'success' => false,
-                            'loop_detected' => true,
-                            'error' => 'Wiederholter Aufruf erkannt. Waehle einen anderen Ansatz.',
-                            'tool' => $functionName,
-                        ];
-                        $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
-                        $toolResults[] = [
-                            'tool' => $functionName,
-                            'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
-                            'result' => $result,
-                            'seq' => count($toolResults),
-                            'iteration' => $iteration,
-                        ];
-                        $executionTrace[] = [
-                            'iteration' => $iteration,
-                            'step' => count($executionTrace) + 1,
-                            'tool' => $functionName,
-                            'status' => 'loop_detected',
-                            'timestamp' => current_time('mysql'),
-                            'summary' => 'Loop-Detection: wiederholter Aufruf blockiert',
-                        ];
-                        $messages[] = [
-                            'role' => 'tool',
-                            'tool_call_id' => $toolCallId,
-                            'content' => $this->compactToolResultForModel($result),
-                        ];
-                        $messages[] = [
-                            'role' => 'system',
-                            'content' => $loopNudge,
-                        ];
-                        continue;
-                    }
-
-                    $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => $loopNudge,
+                    ];
+                    continue;
                 }
+
+                $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
 
                 if ($functionName === 'search_tools' && !empty($result['tools'])) {
                     $this->addDiscoveredTools(array_column($result['tools'], 'name'));
                 }
 
                 $this->trackOwnedPluginFromToolResult($functionName, $functionArgs, $result);
-                $this->registerApprovedContext($functionName, $functionArgs, $result);
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
                     'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                    'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                     'result' => $result,
                     'seq' => count($toolResults),
                     'iteration' => $iteration,
@@ -757,22 +626,6 @@ trait ExecutesToolLoop
                     'tool_call_id' => $toolCallId,
                     'content' => $this->compactToolResultForModel($result),
                 ];
-            }
-
-            if ($pendingConfirmation !== null) {
-                $confirmDesc = $pendingConfirmation['description']
-                    ?? $this->describeToolAction($pendingConfirmation['tool'] ?? '', []);
-                $finalMessage = "Ich moechte: **{$confirmDesc}**\n\nBitte bestaetige ueber den Button. 🔒";
-                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
-                $responsePayload = [
-                    'session_id' => $sessionId,
-                    'message' => $finalMessage,
-                    'execution_trace' => $executionTrace,
-                    'pending_confirmation' => $pendingConfirmation,
-                    'usage' => $this->usageAccumulator,
-                ];
-                $this->flushUsage($sessionId, $userId);
-                return new WP_REST_Response($responsePayload, 200);
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
@@ -863,7 +716,7 @@ trait ExecutesToolLoop
                     }
                 }
 
-                if ($pendingConfirmation === null && $this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
+                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
                     $mutationNudgeCount++;
                     $messages[] = [
                         'role' => 'system',
@@ -931,9 +784,6 @@ trait ExecutesToolLoop
                     'truncated' => $this->wasResponseTruncated($nextResponse),
                     'timestamp' => current_time('mysql'),
                 ];
-                if ($pendingConfirmation !== null) {
-                    $responsePayload['pending_confirmation'] = $pendingConfirmation;
-                }
                 $responsePayload['usage'] = $this->usageAccumulator;
                 $this->flushUsage($sessionId, $userId);
                 return new WP_REST_Response($responsePayload, 200);
@@ -950,19 +800,12 @@ trait ExecutesToolLoop
             'execution_trace' => $executionTrace,
             'timestamp' => current_time('mysql'),
         ];
-        if ($pendingConfirmation !== null) {
-            $fallbackPayload['pending_confirmation'] = $pendingConfirmation;
-        }
         $fallbackPayload['usage'] = $this->usageAccumulator;
         $this->flushUsage($sessionId, $userId);
         return new WP_REST_Response($fallbackPayload, 200);
     }
 
     private function summarizeToolResult(array $result): string {
-        if (($result['needs_confirmation'] ?? false) === true) {
-            return 'Warte auf explizite Bestätigung';
-        }
-
         if (($result['success'] ?? false) === true) {
             if (!empty($result['message']) && is_string($result['message'])) {
                 return $result['message'];
@@ -1077,7 +920,7 @@ trait ExecutesToolLoop
 
     private function isDestructiveTool(string $toolName, array $args = []): bool {
         $result = $this->toolGuard->evaluate($toolName, $args);
-        return $result['verdict'] === ToolGuard::ESCALATE || $result['verdict'] === ToolGuard::BLOCK;
+        return $result['verdict'] === ToolGuard::BLOCK;
     }
 
     private function isWriteTool(string $toolName): bool {
@@ -1216,30 +1059,22 @@ trait ExecutesToolLoop
         return $value;
     }
 
-    private function registerApprovedContext(string $toolName, array $args, array $result): void {
-        if (empty($result['success'])) {
-            return;
-        }
-
-        if ($toolName === 'create_plugin') {
-            $slug = sanitize_title((string) ($result['slug'] ?? $args['slug'] ?? $args['plugin_slug'] ?? ''));
-            if ($slug !== '') {
-                $this->toolGuard->approveContext('plugin:' . $slug);
-            }
-        }
-    }
-
     /**
      * Detect repetitive tool calls (same tool + same primary arg 3+ times without a write in between).
      * Returns a system-message nudge string if a loop is detected, null otherwise.
      */
+    private function buildToolCallFingerprint(string $toolName, array $args): string {
+        ksort($args);
+        return $toolName . ':' . md5(json_encode($args));
+    }
+
     private function detectToolLoop(array $toolResults, string $currentTool, array $currentArgs): ?string {
-        $currentKey = $this->buildToolArgsKey($currentTool, $currentArgs);
+        $currentFingerprint = $this->buildToolCallFingerprint($currentTool, $currentArgs);
         $consecutiveCount = 0;
 
         for ($i = count($toolResults) - 1; $i >= 0; $i--) {
-            $prevKey = $toolResults[$i]['args_key'] ?? '';
-            if ($prevKey === $currentKey) {
+            $prevFingerprint = $toolResults[$i]['fingerprint'] ?? '';
+            if ($prevFingerprint === $currentFingerprint) {
                 $consecutiveCount++;
             } else {
                 break;
@@ -1250,7 +1085,7 @@ trait ExecutesToolLoop
             return null;
         }
 
-        return '[SYSTEM] Du rufst dasselbe Tool (' . $currentTool . ') wiederholt mit denselben Argumenten auf. '
+        return '[SYSTEM] Du rufst dasselbe Tool (' . $currentTool . ') wiederholt mit exakt denselben Argumenten auf. '
             . 'Das deutet auf eine Schleife hin. Waehle einen anderen Ansatz: '
             . 'Wenn patch_plugin_file fehlgeschlagen ist, nutze write_plugin_file zum Neuschreiben. '
             . 'Wenn du eine Datei bereits gelesen hast, lies sie nicht nochmal – handele stattdessen.';

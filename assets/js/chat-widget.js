@@ -272,6 +272,7 @@
             if (!text) return;
 
             const messageAttachments = uploadedFiles.length > 0 ? [...uploadedFiles] : null;
+            const msgUsedWebSearch = webSearchActive;
 
             // If editing, remove the old user message and its assistant reply from DOM
             const isEdit = editingMessageEl !== null;
@@ -285,7 +286,7 @@
             }
 
             currentAbortController = new AbortController();
-            addMessage(text, 'user', messageAttachments);
+            addMessage(text, 'user', messageAttachments, undefined, undefined, msgUsedWebSearch);
             input.value = '';
             input.style.height = 'auto';
 
@@ -407,7 +408,7 @@
                     return false;
 
                 case 'stream_end':
-                    typing.clearStream();
+                    typing.clearStream(data.preserve === true);
                     return false;
 
                 case 'heartbeat':
@@ -415,6 +416,7 @@
 
                 case 'done':
                     clearPhaseTimers(phaseTimers);
+                    var persisted = typing.getPersistedContent ? typing.getPersistedContent() : '';
                     typing.complete();
                     setSendingState(false);
                     notifyIfHidden('✅ Levi ist fertig!');
@@ -424,11 +426,12 @@
                         localStorage.setItem(sessionKey, sessionId);
                     }
 
-                    const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
+                    var serverMsg = data.message || '';
+                    var isFallback = serverMsg.indexOf('konnte keinen sauberen') !== -1
+                        || serverMsg.indexOf('nicht ganz fertig') !== -1;
+                    var finalMsg = (isFallback && persisted) ? persisted : serverMsg;
+                    var cleanedMessage = sanitizeAssistantMessage(finalMsg || 'Keine Antwort erhalten');
                     addMessage(cleanedMessage, 'assistant', undefined, undefined, data.usage);
-                    if (data.pending_confirmation) {
-                        appendConfirmationCard(data.pending_confirmation);
-                    }
                     clearSessionFilesQuietly();
                     return true;
 
@@ -498,9 +501,6 @@
 
                 const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                 addMessage(cleanedMessage, 'assistant', undefined, undefined, data.usage);
-                if (data.pending_confirmation) {
-                    appendConfirmationCard(data.pending_confirmation);
-                }
                 clearSessionFilesQuietly();
             })
             .catch(error => {
@@ -847,28 +847,37 @@
                 + parts.join(' · ') + '</span>';
         }
 
-        function addMessage(text, role, attachments, timestamp, usage) {
+        function addMessage(text, role, attachments, timestamp, usage, webSearch) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'levi-message levi-message-' + role;
 
             let inner = '';
-            if (role === 'user' && attachments && attachments.length > 0) {
-                inner += '<div class="levi-message-attachments">';
-                attachments.forEach(function(f) {
-                    const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
-                    const fileType = (f && f.type) ? String(f.type) : '';
-                    const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
-                    const preview = (f && f.preview) ? escapeHtml(f.preview) : '';
-                    let thumb;
-                    if (isImage && preview) {
-                        thumb = '<img src="' + preview + '" class="levi-msg-file-thumb" alt="">';
-                    } else {
-                        const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
-                        thumb = '<span class="dashicons ' + icon + '"></span>';
+            if (role === 'user') {
+                var hasBadges = (attachments && attachments.length > 0) || webSearch;
+                if (hasBadges) {
+                    inner += '<div class="levi-message-attachments">';
+                    if (webSearch) {
+                        inner += '<span class="levi-msg-file levi-msg-web-search">'
+                            + '<span class="dashicons dashicons-search"></span>Web-Suche</span>';
                     }
-                    inner += '<span class="levi-msg-file">' + thumb + name + '</span>';
-                });
-                inner += '</div>';
+                    if (attachments && attachments.length > 0) {
+                        attachments.forEach(function(f) {
+                            const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
+                            const fileType = (f && f.type) ? String(f.type) : '';
+                            const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
+                            const preview = (f && f.preview) ? escapeHtml(f.preview) : '';
+                            let thumb;
+                            if (isImage && preview) {
+                                thumb = '<img src="' + preview + '" class="levi-msg-file-thumb" alt="">';
+                            } else {
+                                const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
+                                thumb = '<span class="dashicons ' + icon + '"></span>';
+                            }
+                            inner += '<span class="levi-msg-file">' + thumb + name + '</span>';
+                        });
+                    }
+                    inner += '</div>';
+                }
             }
             inner += renderMessageContent(text, role);
 
@@ -897,110 +906,6 @@
             }
 
             messages.appendChild(messageDiv);
-            messages.scrollTop = messages.scrollHeight;
-        }
-
-        function appendConfirmationCard(pending) {
-            if (!pending || !pending.action_id) return;
-
-            var card = document.createElement('div');
-            card.className = 'levi-confirmation-card';
-            card.setAttribute('data-action-id', pending.action_id);
-
-            var label = document.createElement('div');
-            label.className = 'levi-confirmation-label';
-            label.textContent = 'Levi möchte: ' + (pending.description || pending.tool || 'Aktion ausführen');
-            card.appendChild(label);
-
-            var btnRow = document.createElement('div');
-            btnRow.className = 'levi-confirmation-buttons';
-
-            var confirmBtn = document.createElement('button');
-            confirmBtn.type = 'button';
-            confirmBtn.className = 'levi-confirm-btn levi-confirm-btn-primary';
-            confirmBtn.textContent = 'Bestätigen';
-
-            var cancelBtn = document.createElement('button');
-            cancelBtn.type = 'button';
-            cancelBtn.className = 'levi-confirm-btn levi-confirm-btn-secondary';
-            cancelBtn.textContent = 'Abbrechen';
-
-            btnRow.appendChild(confirmBtn);
-            btnRow.appendChild(cancelBtn);
-            card.appendChild(btnRow);
-
-            confirmBtn.addEventListener('click', async function() {
-                confirmBtn.disabled = true;
-                cancelBtn.disabled = true;
-                confirmBtn.textContent = 'Wird ausgeführt...';
-                card.classList.add('levi-confirmation-loading');
-
-                var typing = addTypingIndicator();
-                typing.setLabel('Levi führt bestätigte Aktion aus...');
-                setSendingState(true);
-
-                try {
-                    var resp = await fetch(leviAgent.restUrl + 'chat/confirm-action', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-WP-Nonce': leviAgent.nonce,
-                        },
-                        body: JSON.stringify({ action_id: pending.action_id }),
-                    });
-
-                    if (!resp.ok && !resp.body) {
-                        throw new Error('Server error: ' + resp.status);
-                    }
-
-                    var reader = resp.body.getReader();
-                    var decoder = new TextDecoder();
-                    var buffer = '';
-                    var finalHandled = false;
-                    var phaseTimers = {};
-
-                    while (true) {
-                        var chunk = await reader.read();
-                        if (chunk.done) break;
-
-                        buffer += decoder.decode(chunk.value, { stream: true });
-
-                        while (buffer.includes('\n\n')) {
-                            var eventEnd = buffer.indexOf('\n\n');
-                            var eventStr = buffer.substring(0, eventEnd);
-                            buffer = buffer.substring(eventEnd + 2);
-
-                            var lines = eventStr.split('\n');
-                            for (var li = 0; li < lines.length; li++) {
-                                if (!lines[li].startsWith('data: ')) continue;
-                                try {
-                                    var data = JSON.parse(lines[li].substring(6));
-                                    finalHandled = handleSSEEvent(data, typing, phaseTimers) || finalHandled;
-                                } catch (e) {
-                                    console.warn('SSE parse error:', e, lines[li]);
-                                }
-                            }
-                        }
-                    }
-
-                    card.remove();
-                    if (!finalHandled) {
-                        typing.complete();
-                        setSendingState(false);
-                    }
-                } catch (err) {
-                    typing.remove();
-                    card.remove();
-                    setSendingState(false);
-                    addMessage('❌ Bestätigung fehlgeschlagen: ' + err.message, 'assistant');
-                }
-            });
-
-            cancelBtn.addEventListener('click', function() {
-                card.remove();
-            });
-
-            messages.appendChild(card);
             messages.scrollTop = messages.scrollHeight;
         }
 
@@ -1079,6 +984,7 @@
             const setLabel = (label) => {
                 if (labelEl) {
                     labelEl.textContent = label;
+                    messages.scrollTop = messages.scrollHeight;
                 }
             };
 
@@ -1099,10 +1005,27 @@
                 }
             };
 
-            const clearStream = () => {
+            let persistedContent = '';
+
+            const clearStream = (preserve) => {
                 if (isStreaming) {
+                    if (streamBuffer) {
+                        persistedContent = streamBuffer;
+                    }
+
+                    if (preserve && streamBuffer && streamBuffer.trim()) {
+                        var msgDiv = document.createElement('div');
+                        msgDiv.className = 'levi-message levi-message-assistant';
+                        msgDiv.innerHTML = buildAvatarHtml('assistant')
+                            + '<div class="levi-message-main"><div class="levi-message-content">'
+                            + renderMessageContent(streamBuffer, 'assistant')
+                            + '</div></div>';
+                        messages.insertBefore(msgDiv, typingDiv);
+                    }
+
                     isStreaming = false;
                     streamBuffer = '';
+                    if (streamEl) streamEl.remove();
                     streamEl = null;
                     if (typingRow) {
                         contentEl.appendChild(typingRow);
@@ -1112,6 +1035,7 @@
                         contentEl.appendChild(progressTrack);
                         progressTrack.style.display = '';
                     }
+                    messages.scrollTop = messages.scrollHeight;
                 }
             };
 
@@ -1121,6 +1045,7 @@
                 setLabel,
                 appendDelta,
                 clearStream,
+                getPersistedContent: () => persistedContent,
                 complete: () => {
                     typingDiv.classList.add('levi-typing-complete');
                     setTimeout(() => typingDiv.remove(), 200);

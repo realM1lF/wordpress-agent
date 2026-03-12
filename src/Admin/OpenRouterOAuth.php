@@ -182,7 +182,7 @@ class OpenRouterOAuth {
 
         $settings['openrouter_model'] = $settings['openrouter_model'] ?? 'moonshotai/kimi-k2.5';
         $settings['tool_profile'] = $settings['tool_profile'] ?? 'standard';
-        $settings['require_confirmation_destructive'] = $settings['require_confirmation_destructive'] ?? 1;
+        $settings['allow_destructive'] = $settings['allow_destructive'] ?? 0;
         $settings['max_tool_iterations'] = $settings['max_tool_iterations'] ?? 25;
         $settings['history_context_limit'] = $settings['history_context_limit'] ?? 20;
 

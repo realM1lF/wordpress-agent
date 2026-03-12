@@ -9,69 +9,6 @@ use Levi\Agent\Memory\VectorStore;
 
 trait BuildsContext
 {
-    private function buildMessagesForConfirmation(
-        string $sessionId,
-        string $toolName,
-        array $toolArgs,
-        string $compactResult
-    ): array {
-        $messages = [];
-
-        $messages[] = [
-            'role' => 'system',
-            'content' => $this->getSystemPrompt('', $sessionId, false),
-        ];
-
-        $summary = $this->conversationRepo->getLatestSummary($sessionId);
-        if ($summary !== null) {
-            $messages[] = [
-                'role' => 'system',
-                'content' => "[SESSION-ZUSAMMENFASSUNG – aeltere Nachrichten komprimiert]\n\n" . $summary['content'],
-            ];
-        }
-
-        $runtimeSettings = $this->settings->getSettings();
-        $historyLimit = max(10, (int) ($runtimeSettings['history_context_limit'] ?? 20));
-        $history = $this->conversationRepo->getHistory($sessionId, $historyLimit);
-        $lastChatRole = null;
-        foreach ($history as $msg) {
-            if (!in_array($msg['role'], ['user', 'assistant'], true)) {
-                continue;
-            }
-            if ($msg['role'] === $lastChatRole) {
-                if ($lastChatRole === 'user') {
-                    $messages[] = ['role' => 'assistant', 'content' => '[Vorherige Antwort nicht verfuegbar]'];
-                } else {
-                    $messages[] = ['role' => 'user', 'content' => '(Fortsetzen)'];
-                }
-            }
-            $messages[] = ['role' => $msg['role'], 'content' => $msg['content']];
-            $lastChatRole = $msg['role'];
-        }
-
-        $fakeToolCallId = 'confirmed_' . substr(md5($toolName . wp_json_encode($toolArgs)), 0, 12);
-        $messages[] = [
-            'role' => 'assistant',
-            'content' => null,
-            'tool_calls' => [[
-                'id' => $fakeToolCallId,
-                'type' => 'function',
-                'function' => [
-                    'name' => $toolName,
-                    'arguments' => wp_json_encode($toolArgs),
-                ],
-            ]],
-        ];
-
-        $messages[] = [
-            'role' => 'tool',
-            'tool_call_id' => $fakeToolCallId,
-            'content' => $compactResult,
-        ];
-
-        return $this->trimMessagesToBudget($messages, $sessionId);
-    }
-
     private function getLatestUserMessage(string $sessionId): string {
         $history = $this->conversationRepo->getHistory($sessionId, 10);
         for ($i = count($history) - 1; $i >= 0; $i--) {
@@ -149,7 +86,7 @@ trait BuildsContext
     }
 
     /**
-     * Legacy single-string system prompt (used by buildMessagesForConfirmation etc.).
+     * Legacy single-string system prompt.
      */
     private function getSystemPrompt(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): string {
         [$stable, $dynamic] = $this->getSystemPromptParts($query, $sessionId, $includeUploadedContext);

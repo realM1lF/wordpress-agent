@@ -122,7 +122,7 @@ class SetupWizardPage {
         $settings['openrouter_api_key'] = sanitize_text_field($apiKey);
         $settings['openrouter_model'] = 'moonshotai/kimi-k2.5';
         $settings['tool_profile'] = 'standard';
-        $settings['require_confirmation_destructive'] = 1;
+        $settings['allow_destructive'] = 0;
         $settings['max_tool_iterations'] = 30;
         $settings['history_context_limit'] = 20;
 
@@ -139,7 +139,7 @@ class SetupWizardPage {
         $safetyMode = sanitize_key((string) ($_POST['levi_safety_mode'] ?? 'safe'));
 
         $settings = $this->getSettings();
-        $settings['require_confirmation_destructive'] = ($safetyMode === 'fast') ? 0 : 1;
+        $settings['allow_destructive'] = ($safetyMode === 'fast') ? 1 : 0;
         $settings['tool_profile'] = 'standard';
         $settings['max_tool_iterations'] = 30;
         $settings['history_context_limit'] = 20;
@@ -397,7 +397,7 @@ class SetupWizardPage {
 
     private function renderStepSafety(string $saved): void {
         $settings = $this->getSettings();
-        $currentSafety = ((int) ($settings['require_confirmation_destructive'] ?? 1)) === 1 ? 'safe' : 'fast';
+        $currentSafety = empty($settings['allow_destructive']) ? 'safe' : 'fast';
         ?>
         <section class="levi-form-card levi-setup-card">
             <h2><?php esc_html_e('Wie sicher soll Levi arbeiten?', 'levi-agent'); ?></h2>

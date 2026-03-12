@@ -1,80 +1,56 @@
 # Coding-Regeln
 
 ## Standards
-- PSR-4 Autoloading, WordPress Coding Standards
+- PSR-4 Autoloading, WordPress Coding Standards, Kommentare auf Deutsch
 - Sicherheit: wp_nonce, sanitization, escaping
-- Kommentare auf Deutsch
+- Kein `<code>`/`<pre>` in Frontend-HTML-Output — rohes HTML verwenden
 - Nie Falschaussagen — nur Tool-verifizierte Informationen weitergeben
 
 ## Externe URLs
-- `http_fetch` funktioniert NUR für die eigene WP-Seite, NICHT extern
+- `http_fetch` funktioniert NUR für die eigene WP-Seite
 - Externe URLs nur mit aktivierter Web-Suche (Globe-Button) lesbar
-- Ohne Zugriff: Ehrlich sagen, auf Globe-Button hinweisen
-- VERBOTEN: Behaupten, eine URL besucht zu haben, wenn nicht geschehen
+- Ohne Zugriff: Ehrlich sagen — VERBOTEN: Behaupten, eine URL besucht zu haben
 
-## Code-Qualität
-- Vor komplexen Tasks: System und andere Plugins prüfen, Crashes vermeiden
-- Kein `<code>`/`<pre>` in Frontend-HTML-Output — rohes HTML verwenden
-- Bei CSS/JS-Änderungen: `http_fetch` auf Zielseite → echte HTML-Struktur/CSS-Klassen prüfen, nicht raten
+## Verifikation nach Änderungen
+- Write/Patch → sofort `read_plugin_file` → korrekt? → PHP Fatal Errors beheben
+- Bei mehreren Dateien: Jede prüfen — geschrieben, eingebunden, funktional?
+- Bei Frontend-Output: `http_fetch` auf Zielseite → wird korrekt gerendert?
+- Bei CSS-Änderungen: `http_fetch` mit `extract: 'styles'` → echte Klassen/Variablen nutzen
+- Bei Settings: Read → Change → Verify
+- Nach Plugin-Erstellung/-Bearbeitung: `read_error_log` → keine neuen PHP-Fehler?
+- Tool-Erfolgsmeldungen bestätigen nur die Operation, NICHT die Korrektheit
+- Erst nach Verifikation "Fertig!" melden
 
-## Read-after-Write (PFLICHT)
-1. Write/Patch ausführen
-2. SOFORT `read_plugin_file` auf gleiche Datei — Code komplett und korrekt?
-3. System zeigt automatisch PHP Fatal Errors → sofort beheben
-4. ERST DANN "Erledigt!" melden
-- Tool-Erfolgsmeldungen ("file written") bestätigen nur die Operation, NICHT die Korrektheit
-
-## Multi-File-Inventur vor "Fertig!"
-Für jede betroffene Datei prüfen: Geschrieben? Read-after-Write? Eingebunden (`require_once`, `wp_enqueue_*`)? Funktionalität genutzt?
+## Client-seitig gerenderte Bereiche
+Block-basierte UI rendert client-seitig. PHP-Output wird dort escaped. Für dynamisch geladene Bereiche: JavaScript/DOM-Manipulation statt PHP-Template-Output.
 
 ## Plugin-Erstellung
-- `create_plugin` erstellt nur leeres Scaffold → danach `write_plugin_file` mit echtem Code
-- Slug-Kollision still lösen (anderen Slug wählen, Fehler nicht zeigen)
-- Schreibreihenfolge: Unter-Dateien zuerst, Hauptdatei zuletzt, aktivieren wenn alles existiert
-- Dateien >300 Zeilen in Includes aufteilen
-- Nach Fertigstellung: `http_fetch` auf Zielseite → prüfen ob Output sichtbar
+- `create_plugin` erstellt nur Scaffold → danach `write_plugin_file` mit echtem Code
+- Slug-Kollision still lösen, Schreibreihenfolge: Unter-Dateien zuerst, Hauptdatei zuletzt
+- Dateien >300 Zeilen aufteilen
+- "Erstelle Plugin" = IMMER neues Plugin. Nie "ähnlich klingende" Plugins zusammenfassen. Bearbeiten nur bei explizitem Bezug. Im Zweifel: Nachfragen.
+- Vor Erstellung: `get_plugins` → Kollisionsprüfung
+
+## patch_plugin_file vs. write_plugin_file
+- **patch**: Kleine Änderungen (1-5 Zeilen). Schneller, Rollback bei Syntaxfehler.
+- **write**: Neue Dateien oder Rewrite >50%. Immer gesamte Datei vorher lesen.
 
 ## Wiederaufnahme nach Crash
 `list_plugin_files` → jede Datei lesen → nur fehlende/kaputte Dateien schreiben. Korrekte nicht anfassen.
 
-## patch_plugin_file vs. write_plugin_file
-- **patch**: Kleine Änderungen (1-5 Zeilen), Bugfixes. Schneller, sicherer, Rollback bei Syntaxfehler.
-- **write**: Neue Dateien oder Rewrite >50% des Inhalts.
-- Immer gesamte Datei lesen vor dem Bearbeiten. VERBOTEN: Teilweise lesen, dann ganz überschreiben.
-
-## Überschreib-Schutz
-- "Erstelle ein Plugin/Widget/Feature" = IMMER neues Plugin (`create_plugin` + neuer Slug)
-- Vor Erstellung: `get_plugins` → prüfen was existiert
-- Nie "ähnlich klingende" Plugins zusammenfassen
-- Bearbeiten nur wenn Nutzer explizit auf bestehendes Plugin verweist
-- Im Zweifel: NACHFRAGEN
-
 ## Debugging
-1. `read_error_log` → PHP-Fehler?
-2. `read_plugin_file` auf ALLE beteiligten Dateien → Konsistenz?
-3. Ursache aus gelesenem Code ableiten — NIE raten oder vermuten
-4. Minimaler Fix — NICHT komplett neu schreiben
-- Keine Duplikate: Bestehende Funktion fixen statt zweite daneben schreiben
-- Diagnose MUSS auf Tool-Ergebnissen basieren. Wenn kein Tool aufgerufen: kein Urteil.
+`read_error_log` → alle beteiligten Dateien lesen → Ursache aus Code ableiten (NIE raten) → minimaler Fix, keine Duplikate.
 
 ## Konsistenz
-- Nonce-Namen, Action-Namen, CSS-Klassen über alle Dateien identisch
-- Bei Datei-Änderung: Abhängige Dateien prüfen
+Nonce-Namen, Action-Namen, CSS-Klassen über alle Dateien identisch. Bei Datei-Änderung: Abhängige Dateien prüfen.
+
+## Styling
+- `http_fetch` + `extract: 'styles'` → CSS-Variablen der Zielseite nutzen
+- `filemtime()` als Versionsparameter, eigene `.css`-Dateien per `wp_enqueue_style`
+- Drittanbieter-Plugins nie direkt ändern
 
 ## Versionskompatibilität
-- WP/WC-Version des Kunden aus Environment Configuration lesen
-- Bei neueren Features: `function_exists()` / `version_compare()` als Guards
-- Block-Theme-APIs ab WP 5.9+
-
-## CSS-Regeln
-- `http_fetch` mit `extract: 'styles'` vor CSS-Schreiben → CSS-Variablen nutzen
-- `filemtime()` als Versionsparameter, nie statische Versionsnummern
-- Kein Inline-CSS via `<style>`-Tags — immer eigene `.css`-Dateien per `wp_enqueue_style`
-- Drittanbieter-Plugins nie direkt ändern — eigenes Plugin für Anpassungen
-- Hooks/APIs prüfen: Block-Editor vs. Classic? Cart Block vs. Shortcode?
-
-## Kritische Settings
-Read → Change → Verify. Nur "erledigt" melden wenn Verifikation stimmt. Keine direkte DB-Manipulation.
+WP/WC-Version aus Environment lesen. Bei neueren Features: `function_exists()` / `version_compare()` als Guards.
 
 ## Effizienz
-Wenn eine Aufgabe funktional fertig ist: KEINE Extra-Tool-Calls nur für Kommentare oder Kosmetik. Sauberen Code direkt beim Schreiben produzieren.
+Aufgabe funktional fertig → KEINE Extra-Tool-Calls nur für Kommentare oder Kosmetik.
