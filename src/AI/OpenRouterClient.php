@@ -9,6 +9,7 @@ use WP_Error;
 class OpenRouterClient implements AIClientInterface {
     use RetriableApiCall;
     private const API_BASE = 'https://openrouter.ai/api/v1';
+    private const PREFERRED_PROVIDER = 'Baseten';
     private ?string $apiKey;
     private string $model;
     private int $timeout;
@@ -44,6 +45,7 @@ class OpenRouterClient implements AIClientInterface {
             'messages' => $this->applyCacheControl($messages),
             'temperature' => $temperature,
             'max_tokens' => $this->maxTokens,
+            'provider' => $this->getProviderPreferences(),
         ];
 
         if (!empty($tools)) {
@@ -239,6 +241,7 @@ class OpenRouterClient implements AIClientInterface {
             'max_tokens' => $this->maxTokens,
             'stream' => true,
             'stream_options' => ['include_usage' => true],
+            'provider' => $this->getProviderPreferences(),
         ];
 
         if (!empty($tools)) {
@@ -367,6 +370,13 @@ class OpenRouterClient implements AIClientInterface {
         ];
     }
 
+    private function getProviderPreferences(): array {
+        return [
+            'order' => [self::PREFERRED_PROVIDER],
+            'allow_fallbacks' => true,
+        ];
+    }
+
     public function getAvailableModels(): array|WP_Error {
         if (!$this->apiKey) {
             return new WP_Error('not_configured', 'OpenRouter API key not configured');
@@ -394,13 +404,13 @@ class OpenRouterClient implements AIClientInterface {
     }
 
     public function testConnection(): array|WP_Error {
-        // Simple test with a cheap model
         $testPayload = [
-            'model' => 'moonshotai/kimi-k2.5',
+            'model' => $this->model,
             'messages' => [
                 ['role' => 'user', 'content' => 'Say "OK" and nothing else.']
             ],
             'max_tokens' => 10,
+            'provider' => $this->getProviderPreferences(),
         ];
 
         $response = wp_remote_post(self::API_BASE . '/chat/completions', [

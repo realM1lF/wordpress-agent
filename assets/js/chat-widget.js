@@ -41,6 +41,67 @@
         const webSearchBtn = document.getElementById('levi-chat-web-search-btn');
         let titleInterval = null;
         let titleOriginal = null;
+        const widget = document.getElementById('levi-chat-widget');
+
+        function parseRgb(str) {
+            if (!str || str === 'transparent' || str === 'rgba(0, 0, 0, 0)') return null;
+            const m = str.match(/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/);
+            if (!m) return null;
+            const a = m[4] !== undefined ? parseFloat(m[4]) : 1;
+            if (a < 0.1) return null;
+            return { r: parseFloat(m[1]) / 255, g: parseFloat(m[2]) / 255, b: parseFloat(m[3]) / 255 };
+        }
+
+        function srgbLuminance(c) {
+            const lin = v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+            return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+        }
+
+        function detectBackgroundBrightness() {
+            if (!widget || !window_) return;
+            const prevVis = window_.style.visibility;
+            const prevToggleVis = toggle.style.visibility;
+            window_.style.visibility = 'hidden';
+            toggle.style.visibility = 'hidden';
+
+            const rect = window_.getBoundingClientRect();
+            const cols = 5, rows = 7;
+            let darkCount = 0, total = 0;
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const x = rect.left + (rect.width * (c + 0.5)) / cols;
+                    const y = rect.top + (rect.height * (r + 0.5)) / rows;
+                    const el = document.elementFromPoint(x, y);
+                    if (!el) { total++; continue; }
+
+                    let rgb = null;
+                    let node = el;
+                    while (node && node !== document.documentElement) {
+                        rgb = parseRgb(getComputedStyle(node).backgroundColor);
+                        if (rgb) break;
+                        node = node.parentElement;
+                    }
+
+                    total++;
+                    if (rgb && srgbLuminance(rgb) < 0.4) darkCount++;
+                }
+            }
+
+            window_.style.visibility = prevVis || '';
+            toggle.style.visibility = prevToggleVis || '';
+
+            const darkRatio = total > 0 ? darkCount / total : 0;
+            const isDark = darkRatio >= 0.85;
+            widget.classList.toggle('levi-chat-light', !isDark);
+        }
+
+        let resizeTimer = null;
+        window.addEventListener('resize', function() {
+            if (window_.style.display === 'none') return;
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(detectBackgroundBrightness, 500);
+        });
 
         function startTitleWorking() {
             if (titleInterval) return;
@@ -83,6 +144,7 @@
             window_.style.display = isOpen ? 'flex' : 'none';
             localStorage.setItem(openKey, isOpen ? '1' : '0');
             if (isOpen) {
+                requestAnimationFrame(detectBackgroundBrightness);
                 input.focus();
             }
         }
@@ -103,6 +165,9 @@
             }
             if (expand) {
                 expand.title = enabled ? 'Standardgröße' : 'Full Width';
+            }
+            if (window_.style.display !== 'none') {
+                requestAnimationFrame(detectBackgroundBrightness);
             }
         }
 
@@ -176,6 +241,13 @@
             });
         }
 
+        // Auto-resize textarea as content grows (up to max-height)
+        function autoResizeInput() {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+        }
+        input.addEventListener('input', autoResizeInput);
+
         // Send message on Enter (Shift+Enter for new line)
         input.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -215,6 +287,7 @@
             currentAbortController = new AbortController();
             addMessage(text, 'user', messageAttachments);
             input.value = '';
+            input.style.height = 'auto';
 
             // Clear attachments from input area (consumed by this message)
             if (messageAttachments) {
@@ -988,7 +1061,7 @@
                 '<div class="levi-message-main"><div class="levi-message-content levi-typing">' +
                 '<div class="levi-typing-row">' +
                 '<span></span><span></span><span></span>' +
-                '<small class="levi-typing-label"></small>' +
+                '<small class="levi-typing-label">Levi verarbeitet die Anfrage...</small>' +
                 '</div>' +
                 '<div class="levi-chat-progress-track levi-chat-progress-indeterminate"><div class="levi-chat-progress-shimmer"></div></div>' +
                 '</div></div>';

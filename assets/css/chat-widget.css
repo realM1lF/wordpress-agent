@@ -41,20 +41,25 @@
     right: 0;
     width: 420px;
     height: 620px;
-    background: #0b1220;
+    background: linear-gradient(135deg, hsla(240, 6%, 6%, 0.25) 0%, hsla(240, 6%, 6%, 0.12) 100%);
     color: #e5e7eb;
-    border: 1px solid #1f2937;
+    border: 1px solid hsla(0, 0%, 100%, 0.07);
     border-radius: 14px;
-    box-shadow: 0 18px 48px rgba(2, 6, 23, 0.6);
+    box-shadow:
+        inset 0 1px 0 0 hsla(0, 0%, 100%, 0.1),
+        inset 1px 0 0 0 hsla(0, 0%, 100%, 0.05),
+        0 18px 48px rgba(2, 6, 23, 0.6);
+    -webkit-backdrop-filter: blur(28px) saturate(1.5);
+    backdrop-filter: blur(28px) saturate(1.5);
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }
 
 .levi-chat-header {
-    background: #111827;
+    background: hsla(240, 6%, 6%, 0.50);
     color: #f9fafb;
-    border-bottom: 1px solid #1f2937;
+    border-bottom: 1px solid hsla(0, 0%, 100%, 0.06);
     padding: 14px 16px;
     display: flex;
     justify-content: space-between;
@@ -131,6 +136,7 @@
 .levi-chat-close {
     font-size: 24px;
     padding: 0;
+    margin-top: -3px;
 }
 
 .levi-chat-expand:hover,
@@ -149,7 +155,7 @@
     flex: 1;
     overflow-y: auto;
     padding: 18px 16px;
-    background: #0b1220;
+    background: transparent;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -187,8 +193,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: #1e293b;
-    border: 1px solid #334155;
+    background: hsla(240, 10%, 10%, 0.5);
+    border: 1px solid hsla(0, 0%, 100%, 0.08);
     color: #f8fafc;
     font-size: 12px;
     font-weight: 700;
@@ -200,7 +206,7 @@
 }
 
 .levi-message-avatar-user {
-    background: #1f2937;
+    background: hsla(240, 10%, 10%, 0.5);
 }
 
 .levi-message-avatar-image {
@@ -246,8 +252,8 @@
 }
 
 .levi-message-assistant .levi-message-content {
-    background: #111827;
-    border: 1px solid #243145;
+    background: hsla(240, 6%, 6%, 0.35);
+    border: 1px solid hsla(0, 0%, 100%, 0.06);
     color: #e5e7eb;
     border-bottom-left-radius: 6px;
 }
@@ -296,8 +302,8 @@
     margin: 0.5em 0;
     padding: 10px 12px;
     border-radius: 8px;
-    background: #0f172a;
-    border: 1px solid #1f2937;
+    background: hsla(240, 10%, 3%, 0.5);
+    border: 1px solid hsla(0, 0%, 100%, 0.05);
     overflow-x: auto;
 }
 
@@ -314,7 +320,7 @@
 .levi-message-assistant .levi-message-content blockquote {
     margin: 0.4em 0;
     padding: 6px 12px;
-    border-left: 3px solid #334155;
+    border-left: 3px solid hsla(0, 0%, 100%, 0.1);
     color: #d1d5db;
 }
 
@@ -351,14 +357,14 @@
 
 .levi-message-assistant .levi-message-content th,
 .levi-message-assistant .levi-message-content td {
-    border: 1px solid #1f2937;
+    border: 1px solid hsla(0, 0%, 100%, 0.06);
     padding: 5px 8px;
     text-align: left;
     color: #e5e7eb;
 }
 
 .levi-message-assistant .levi-message-content th {
-    background: #1e293b;
+    background: hsla(240, 10%, 10%, 0.5);
     color: #f9fafb;
     font-weight: 600;
 }
@@ -369,8 +375,8 @@
 }
 
 .levi-message-assistant .levi-message-content :not(pre) > code {
-    background: #0f172a;
-    border: 1px solid #1f2937;
+    background: hsla(240, 10%, 3%, 0.5);
+    border: 1px solid hsla(0, 0%, 100%, 0.05);
     padding: 1px 4px;
     border-radius: 4px;
 }
@@ -382,8 +388,8 @@
 
 .levi-chat-input-area {
     padding: 10px 12px;
-    background: #111827;
-    border-top: 1px solid #1f2937;
+    background: hsla(240, 6%, 6%, 0.50);
+    border-top: 1px solid hsla(0, 0%, 100%, 0.06);
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -411,9 +417,9 @@
     align-items: center;
     gap: 6px;
     max-width: 180px;
-    border: 1px solid #334155;
+    border: 1px solid hsla(0, 0%, 100%, 0.08);
     border-radius: 8px;
-    background: #0f172a;
+    background: hsla(240, 10%, 4%, 0.5);
     padding: 4px 8px 4px 4px;
     font-size: 11px;
     color: #d1d5db;
@@ -485,8 +491,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #334155;
-    background: #0f172a;
+    border: 1px solid hsla(0, 0%, 100%, 0.08);
+    background: hsla(240, 10%, 4%, 0.5);
     color: #94a3b8;
     border-radius: 8px;
     cursor: pointer;
@@ -494,7 +500,7 @@
 }
 
 .levi-chat-upload-btn:hover {
-    background: #1e293b;
+    background: hsla(240, 10%, 10%, 0.6);
     color: #a78bfa;
 }
 
@@ -525,8 +531,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #334155;
-    background: #0f172a;
+    border: 1px solid hsla(0, 0%, 100%, 0.08);
+    background: hsla(240, 10%, 4%, 0.5);
     color: #94a3b8;
     border-radius: 8px;
     cursor: pointer;
@@ -534,7 +540,7 @@
 }
 
 .levi-chat-web-search-btn:hover {
-    background: #1e293b;
+    background: hsla(240, 10%, 10%, 0.6);
     color: #60a5fa;
 }
 
@@ -558,14 +564,18 @@
 
 .levi-chat-input {
     flex: 1;
-    border: 1px solid #334155;
+    border: 1px solid hsla(0, 0%, 100%, 0.08);
     border-radius: 8px;
     padding: 10px 12px;
     resize: none;
     font-size: 15px;
     font-weight: 500;
-    background: #0f172a;
+    background: hsla(240, 10%, 4%, 0.55);
     color: #e5e7eb;
+    overflow-y: auto;
+    min-height: 42px;
+    max-height: 150px;
+    transition: height 0.1s ease;
 }
 
 .levi-chat-input:focus {
@@ -575,37 +585,37 @@
 }
 
 .levi-chat-input:disabled {
-    background: #0d1525;
+    background: hsla(240, 10%, 4%, 0.4);
     color: #475569;
-    border-color: #1e293b;
+    border-color: hsla(0, 0%, 100%, 0.04);
     cursor: not-allowed;
     opacity: 1;
     -webkit-text-fill-color: #475569;
 }
 
 .levi-chat-input:disabled::placeholder {
-    color: #334155;
+    color: hsla(0, 0%, 100%, 0.12);
 }
 
 .levi-chat-send:disabled {
-    background: #1e293b;
+    background: hsla(240, 10%, 10%, 0.4);
     color: #334155;
     cursor: not-allowed;
     opacity: 1;
 }
 
 .levi-chat-upload-btn:disabled {
-    background: #0d1525;
+    background: hsla(240, 10%, 4%, 0.3);
     color: #334155;
-    border-color: #1e293b;
+    border-color: hsla(0, 0%, 100%, 0.04);
     cursor: not-allowed;
     opacity: 1;
 }
 
 .levi-chat-web-search-btn:disabled {
-    background: #0d1525;
+    background: hsla(240, 10%, 4%, 0.3);
     color: #334155;
-    border-color: #1e293b;
+    border-color: hsla(0, 0%, 100%, 0.04);
     cursor: not-allowed;
     opacity: 1;
 }
@@ -645,6 +655,7 @@
     max-width: none;
     border-radius: 10px;
     z-index: 1000000;
+    background: linear-gradient(135deg, hsla(240, 6%, 6%, 0.35) 0%, hsla(240, 6%, 6%, 0.20) 100%);
 }
 
 .levi-chat-window-fullwidth .levi-chat-messages {
@@ -951,6 +962,7 @@
         bottom: 10px;
         width: auto;
         height: auto;
+        background: linear-gradient(135deg, hsla(240, 6%, 6%, 0.35) 0%, hsla(240, 6%, 6%, 0.20) 100%);
     }
 
     .levi-message-content {
@@ -959,5 +971,269 @@
 
     .levi-message-user .levi-message-content {
         max-width: min(48ch, 100%);
+    }
+}
+
+/* ═══════════════════════════════════════════════
+   Light-Glass Theme (auto-applied via JS sampling)
+   Scoped under .levi-chat-light on the widget root.
+   ═══════════════════════════════════════════════ */
+
+.levi-chat-light .levi-chat-window {
+    background: linear-gradient(135deg, hsla(0, 0%, 100%, 0.35) 0%, hsla(0, 0%, 100%, 0.20) 100%);
+    color: hsl(240, 10%, 10%);
+    border-color: hsla(240, 6%, 70%, 0.4);
+    box-shadow:
+        inset 0 1px 0 0 hsla(0, 0%, 100%, 0.5),
+        inset 1px 0 0 0 hsla(0, 0%, 100%, 0.3),
+        0 18px 48px rgba(0, 0, 0, 0.12);
+}
+
+.levi-chat-light .levi-chat-header {
+    background: hsla(0, 0%, 100%, 0.50);
+    color: hsl(240, 10%, 10%);
+    border-bottom-color: hsla(240, 6%, 70%, 0.3);
+}
+
+.levi-chat-light .levi-chat-title {
+    color: hsl(240, 10%, 10%);
+}
+
+.levi-chat-light .levi-chat-close,
+.levi-chat-light .levi-chat-expand,
+.levi-chat-light .levi-chat-clear {
+    color: hsl(240, 10%, 25%);
+}
+
+.levi-chat-light .levi-chat-alpha-badge {
+    color: hsl(35, 80%, 38%);
+    background-color: hsla(40, 90%, 50%, 0.1);
+    border-color: hsla(40, 90%, 50%, 0.3);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content {
+    background: hsla(0, 0%, 100%, 0.40);
+    border-color: hsla(240, 6%, 70%, 0.35);
+    color: hsl(240, 10%, 10%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content h1,
+.levi-chat-light .levi-message-assistant .levi-message-content h2,
+.levi-chat-light .levi-message-assistant .levi-message-content h3,
+.levi-chat-light .levi-message-assistant .levi-message-content h4,
+.levi-chat-light .levi-message-assistant .levi-message-content h5,
+.levi-chat-light .levi-message-assistant .levi-message-content h6,
+.levi-chat-light .levi-message-assistant .levi-message-content strong,
+.levi-chat-light .levi-message-assistant .levi-message-content b {
+    color: hsl(240, 10%, 5%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content p,
+.levi-chat-light .levi-message-assistant .levi-message-content li {
+    color: hsl(240, 10%, 15%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content a {
+    color: hsl(263, 70%, 50%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content pre {
+    background: hsla(240, 5%, 92%, 0.7);
+    border-color: hsl(240, 6%, 85%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content code {
+    color: hsl(240, 10%, 15%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content :not(pre) > code {
+    background: hsla(240, 5%, 92%, 0.7);
+    border-color: hsl(240, 6%, 85%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content blockquote {
+    border-left-color: hsla(240, 6%, 70%, 0.5);
+    color: hsl(240, 5%, 35%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content th,
+.levi-chat-light .levi-message-assistant .levi-message-content td {
+    border-color: hsl(240, 6%, 85%);
+    color: hsl(240, 10%, 15%);
+}
+
+.levi-chat-light .levi-message-assistant .levi-message-content th {
+    background: hsla(240, 5%, 92%, 0.7);
+    color: hsl(240, 10%, 5%);
+}
+
+.levi-chat-light .levi-message-avatar {
+    background: hsla(240, 5%, 92%, 0.6);
+    border-color: hsla(240, 6%, 70%, 0.4);
+    color: hsl(240, 10%, 25%);
+}
+
+.levi-chat-light .levi-message-avatar-user {
+    background: hsla(240, 5%, 92%, 0.6);
+}
+
+.levi-chat-light .levi-session-hint {
+    border-top-color: hsla(240, 6%, 70%, 0.25);
+    color: hsl(240, 5%, 45%);
+}
+
+.levi-chat-light .levi-session-alert {
+    background: hsla(40, 90%, 50%, 0.08);
+    border-color: hsla(40, 90%, 50%, 0.3);
+    color: hsl(35, 80%, 38%);
+}
+
+.levi-chat-light .levi-chat-input-area {
+    background: hsla(0, 0%, 100%, 0.50);
+    border-top-color: hsla(240, 6%, 70%, 0.3);
+}
+
+.levi-chat-light .levi-chat-input {
+    background: hsla(240, 5%, 96%, 0.6);
+    color: hsl(240, 10%, 10%);
+    border-color: hsla(240, 6%, 70%, 0.4);
+}
+
+.levi-chat-light .levi-chat-input:focus {
+    border-color: hsl(263, 70%, 58%);
+    box-shadow: 0 0 0 2px hsla(263, 70%, 58%, 0.2);
+}
+
+.levi-chat-light .levi-chat-input:disabled {
+    background: hsla(240, 5%, 96%, 0.4);
+    color: hsl(240, 5%, 55%);
+    border-color: hsla(240, 6%, 70%, 0.2);
+    -webkit-text-fill-color: hsl(240, 5%, 55%);
+}
+
+.levi-chat-light .levi-chat-input:disabled::placeholder {
+    color: hsl(240, 5%, 65%);
+}
+
+.levi-chat-light .levi-chat-input::placeholder {
+    color: hsl(240, 5%, 50%);
+}
+
+.levi-chat-light .levi-chat-upload-btn,
+.levi-chat-light .levi-chat-web-search-btn {
+    background: hsla(240, 5%, 96%, 0.5);
+    border-color: hsla(240, 6%, 70%, 0.4);
+    color: hsl(240, 5%, 40%);
+}
+
+.levi-chat-light .levi-chat-upload-btn:hover {
+    background: hsla(240, 5%, 92%, 0.7);
+    color: hsl(263, 70%, 50%);
+}
+
+.levi-chat-light .levi-chat-web-search-btn:hover {
+    background: hsla(240, 5%, 92%, 0.7);
+    color: hsl(217, 91%, 55%);
+}
+
+.levi-chat-light .levi-chat-web-search-btn.levi-web-search-active {
+    background: hsla(217, 91%, 55%, 0.1);
+    border-color: hsl(217, 91%, 55%);
+    color: hsl(217, 91%, 45%);
+}
+
+.levi-chat-light .levi-chat-upload-btn:disabled,
+.levi-chat-light .levi-chat-web-search-btn:disabled {
+    background: hsla(240, 5%, 96%, 0.3);
+    color: hsl(240, 5%, 70%);
+    border-color: hsla(240, 6%, 70%, 0.2);
+}
+
+.levi-chat-light .levi-chat-send:disabled {
+    background: hsla(240, 5%, 88%, 0.5);
+    color: hsl(240, 5%, 70%);
+}
+
+.levi-chat-light .levi-chat-file-chip {
+    background: hsla(240, 5%, 96%, 0.6);
+    border-color: hsla(240, 6%, 70%, 0.4);
+    color: hsl(240, 10%, 25%);
+}
+
+.levi-chat-light .levi-chat-file-chip .dashicons {
+    color: hsl(263, 70%, 50%);
+}
+
+.levi-chat-light .levi-chat-file-chip-remove {
+    color: hsl(240, 5%, 50%);
+}
+
+.levi-chat-light .levi-chat-file-chip-remove:hover {
+    color: hsl(0, 72%, 51%);
+}
+
+.levi-chat-light .levi-typing span {
+    background: hsl(240, 5%, 65%);
+}
+
+.levi-chat-light .levi-typing-label {
+    color: hsl(240, 5%, 45%);
+}
+
+.levi-chat-light .levi-stream-content {
+    color: hsl(240, 10%, 15%);
+}
+
+.levi-chat-light .levi-stream-content ~ .levi-typing-row {
+    border-top-color: hsla(240, 6%, 70%, 0.25);
+}
+
+.levi-chat-light .levi-stream-content + .levi-stream-content {
+    border-top-color: hsla(240, 6%, 70%, 0.2);
+}
+
+.levi-chat-light .levi-chat-progress-track {
+    background: hsla(240, 5%, 70%, 0.3);
+}
+
+.levi-chat-light .levi-confirmation-card {
+    background: hsla(263, 70%, 58%, 0.08);
+    border-color: hsla(263, 70%, 58%, 0.3);
+}
+
+.levi-chat-light .levi-confirmation-label {
+    color: hsl(240, 10%, 15%);
+}
+
+.levi-chat-light .levi-confirm-btn-secondary {
+    background: hsla(240, 5%, 92%, 0.6);
+    color: hsl(240, 10%, 15%);
+    border-color: hsla(240, 6%, 70%, 0.4);
+}
+
+.levi-chat-light .levi-confirm-btn-secondary:hover:not(:disabled) {
+    background: hsla(240, 5%, 88%, 0.8);
+}
+
+.levi-chat-light .levi-message-time {
+    color: hsla(240, 10%, 10%, 0.4);
+}
+
+.levi-chat-light .levi-usage-badge {
+    color: hsla(263, 70%, 50%, 0.5);
+}
+
+.levi-chat-light .levi-usage-badge:hover {
+    color: hsla(263, 70%, 50%, 0.8);
+}
+
+.levi-chat-light .levi-chat-window-fullwidth {
+    background: linear-gradient(135deg, hsla(0, 0%, 100%, 0.45) 0%, hsla(0, 0%, 100%, 0.28) 100%);
+}
+
+@media (max-width: 900px) {
+    .levi-chat-light .levi-chat-window,
+    .levi-chat-light .levi-chat-window-fullwidth {
+        background: linear-gradient(135deg, hsla(0, 0%, 100%, 0.50) 0%, hsla(0, 0%, 100%, 0.35) 100%);
     }
 }
