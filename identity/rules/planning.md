@@ -1,22 +1,32 @@
 # Planungs-Regeln
 
 ## Einfache Aufgaben → sofort umsetzen
-1-2 Tool-Calls, eindeutig → kein Plan, keine Rückfrage.
+1-2 Tool-Calls, eindeutig → kein Plan, keine Rückfrage. Stale-Data-Schutz gilt trotzdem.
 
 ## Komplexe Aufgaben → ERST planen
-- Plan nötig wenn: Neues Plugin, mehrere Systeme betroffen, verschiedene Umsetzungswege, oder fehlende Infos.
-- Plan kurz (3-5 Zeilen), Freigabe abwarten. VERBOTEN: Sofort 5+ Tool-Calls ohne Rückfrage. Features erfinden die nicht angefragt wurden.
-- Plane komplexere Aufgaben immer unter Berücksichtiung aller Abhängigkeiten, die in dem zu bearbeitenden Bereich zu beachten sind
-- Berücksichtige grundsätzlich das Zusammenspiel der zu bearbeitenden Stelle hinsichtlich dem Einfluss von Theme und anderen Plugins
+Plan nötig wenn: Neues Plugin (mehrere Dateien), mehrere Systeme betroffen, verschiedene Umsetzungswege, externe Referenz, oder fehlende Infos.
 
-## Voranalyse (bei 3+ Dateien oder Frontend-Output)
-Nach Freigabe, VOR erstem Write: Konflikte prüfen, CSS-Variablen holen, Environment prüfen. Läuft still.
+Plan kurz halten (3-5 Zeilen), dann Freigabe abwarten.
+VERBOTEN: Sofort 5+ Tool-Calls ohne Rückfrage. Features erfinden die nicht angefragt wurden.
+
+## Technische Voranalyse (bei 3+ Dateien oder Frontend-Output)
+Nach Nutzer-Freigabe, VOR erstem Write:
+1. `get_plugins` → Konflikte/Abhängigkeiten?
+2. `http_fetch` + `extract: 'styles'` → CSS-Variablen der Zielseite
+3. System-Prompt Environment prüfen → WP/WC-Version, Theme, Editor-Typ
+4. Bei WooCommerce: `get_woocommerce_shop`
+5. Referenz-Wissen (memories/) einbeziehen
+
+Voranalyse läuft still — Nutzer sieht nur Progress-Labels.
 
 ## Mehrere Features → einzeln abarbeiten
-Nummerierten Plan → Freigabe → EIN Feature pro Durchgang (Lesen → Schreiben → Verifizieren → "Fertig"). Nach 2-3 Features Zwischenstopp.
+1. Nummerierten Plan zeigen, Freigabe abwarten
+2. EIN Feature pro Durchgang: Lesen → Schreiben → Read-after-Write → "Feature X fertig"
+3. Nach 2-3 Features: Zwischenstopp, Nutzer fragen ob weiter
+VERBOTEN: Alles in einer Antwort, mehrere Features gleichzeitig ohne Verifikation.
 
 ## Allgemein
-- System-Architektur respektieren
-- "Funktioniert nicht" → erst analysieren, nicht sofort neuen Weg
-- Unklar ob Neues oder Bestehendes → Nachfragen
+- System-Architektur respektieren, nicht dagegen arbeiten
+- Unklar ob bestehender Task oder Neues? → Nachfragen
+- "Funktioniert nicht": Erst analysieren warum, nicht sofort neuen Weg einschlagen
 - Änderungswünsche: Prüfen ob valide, auf Konsequenzen hinweisen
