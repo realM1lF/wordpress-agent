@@ -9,7 +9,7 @@ class ListPluginFilesTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'List files and directories inside a plugin. Useful to inspect plugin structure before editing code.';
+        return 'List files and directories inside a plugin. Useful to inspect plugin structure before editing code. IMPORTANT: Use the exact directory name from wp-content/plugins as plugin_slug (e.g., "akismet" not "akismet-anti-spam").';
     }
 
     public function getParameters(): array {
@@ -72,8 +72,20 @@ class ListPluginFilesTool implements ToolInterface {
         }
 
         $pluginRoot = trailingslashit(WP_PLUGIN_DIR) . $slug;
+        
+        // If exact directory doesn't exist, try fuzzy matching
         if (!is_dir($pluginRoot)) {
-            return ['success' => false, 'error' => 'Plugin directory does not exist.'];
+            $fuzzyMatch = $this->findSimilarPluginDirectory($slug);
+            if ($fuzzyMatch !== null) {
+                $pluginRoot = $fuzzyMatch;
+                $slug = basename($fuzzyMatch);
+            } else {
+                return [
+                    'success' => false, 
+                    'error' => 'Plugin directory does not exist.',
+                    'suggestion' => 'Use get_plugins first to find the correct plugin_slug (directory name).',
+                ];
+            }
         }
 
         $startDir = $relativeDir === '' ? $pluginRoot : $pluginRoot . '/' . $relativeDir;
@@ -108,6 +120,47 @@ class ListPluginFilesTool implements ToolInterface {
             'max_pages' => (int) ceil($total / $perPage),
             'entries' => $pagedEntries,
         ];
+    }
+
+    /**
+     * Try to find a similar plugin directory when exact match fails.
+     * Handles common slug normalization differences (hyphens, underscores, etc.)
+     */
+    private function findSimilarPluginDirectory(string $requestedSlug): ?string {
+        if (!is_dir(WP_PLUGIN_DIR)) {
+            return null;
+        }
+        
+        $entries = scandir(WP_PLUGIN_DIR);
+        if ($entries === false) {
+            return null;
+        }
+        
+        $normalizedRequested = $this->normalizeSlug($requestedSlug);
+        
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..' || !is_dir(WP_PLUGIN_DIR . '/' . $entry)) {
+                continue;
+            }
+            
+            // Exact match already handled, skip
+            if ($entry === $requestedSlug) {
+                continue;
+            }
+            
+            if ($this->normalizeSlug($entry) === $normalizedRequested) {
+                return WP_PLUGIN_DIR . '/' . $entry;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Normalize a slug for comparison (remove hyphens, underscores, lowercase)
+     */
+    private function normalizeSlug(string $slug): string {
+        return strtolower(str_replace(['-', '_'], '', $slug));
     }
 
     private function walk(string $dir, string $pluginRootReal, array &$entries, int $depth, int $maxDepth, bool $includeHidden): void {

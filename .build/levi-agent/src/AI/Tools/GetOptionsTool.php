@@ -21,8 +21,13 @@ class GetOptionsTool implements ToolInterface {
         'posts_per_page',
         'posts_per_rss',
         'rss_use_excerpt',
+        'show_on_front',
+        'page_on_front',
+        'page_for_posts',
         'blog_charset',
         'active_theme',
+        'stylesheet',
+        'template',
     ];
 
     public function getName(): string {

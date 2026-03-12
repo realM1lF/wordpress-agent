@@ -54,7 +54,7 @@ class ConversationRepository {
 
         $sql = $wpdb->prepare(
             "SELECT * FROM {$this->tableConversations} 
-             WHERE session_id = %s 
+             WHERE session_id = %s AND role != 'summary'
              ORDER BY created_at ASC 
              LIMIT %d",
             $sessionId,
@@ -62,6 +62,69 @@ class ConversationRepository {
         );
 
         return $wpdb->get_results($sql, ARRAY_A) ?: [];
+    }
+
+    /**
+     * Save a rolling summary that covers messages up to $coveredUpToId.
+     * Replaces any previous summary for this session.
+     */
+    public function saveSummary(string $sessionId, int $userId, string $summaryContent, int $coveredUpToId): int {
+        global $wpdb;
+
+        $wpdb->delete(
+            $this->tableConversations,
+            ['session_id' => $sessionId, 'role' => 'summary'],
+            ['%s', '%s']
+        );
+
+        $result = $wpdb->insert(
+            $this->tableConversations,
+            [
+                'session_id' => $sessionId,
+                'user_id' => $userId,
+                'role' => 'summary',
+                'content' => $summaryContent,
+                'context_hash' => (string) $coveredUpToId,
+                'created_at' => current_time('mysql'),
+            ],
+            ['%s', '%d', '%s', '%s', '%s', '%s']
+        );
+
+        return $result ? $wpdb->insert_id : 0;
+    }
+
+    /**
+     * Get the latest summary for a session (if any).
+     * Returns null if no summary exists.
+     * The context_hash field stores the ID of the last message covered by the summary.
+     */
+    public function getLatestSummary(string $sessionId): ?array {
+        global $wpdb;
+
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$this->tableConversations}
+             WHERE session_id = %s AND role = 'summary'
+             ORDER BY created_at DESC
+             LIMIT 1",
+            $sessionId
+        ), ARRAY_A);
+
+        return is_array($row) ? $row : null;
+    }
+
+    /**
+     * Get message count for a session (excluding summaries).
+     */
+    public function getMessageCount(string $sessionId): int {
+        global $wpdb;
+
+        $count = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->tableConversations}
+             WHERE session_id = %s AND role != 'summary'",
+            $sessionId
+        ));
+
+        return (int) ($count ?? 0);
     }
 
     public function getSessionMessages(string $sessionId): array {
@@ -102,6 +165,37 @@ class ConversationRepository {
         );
 
         return $wpdb->get_results($sql, ARRAY_A) ?: [];
+    }
+
+    /**
+     * Delete the last user message and its assistant reply (if any) from a session.
+     * Used when the user edits their last message.
+     */
+    public function deleteLastUserAssistantPair(string $sessionId): void {
+        global $wpdb;
+
+        $lastTwo = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, role FROM {$this->tableConversations}
+             WHERE session_id = %s
+             ORDER BY created_at DESC, id DESC
+             LIMIT 2",
+            $sessionId
+        ), ARRAY_A);
+
+        if (empty($lastTwo)) {
+            return;
+        }
+
+        $idsToDelete = [];
+        foreach ($lastTwo as $row) {
+            if (in_array($row['role'], ['user', 'assistant'], true)) {
+                $idsToDelete[] = (int) $row['id'];
+            }
+        }
+
+        foreach ($idsToDelete as $id) {
+            $wpdb->delete($this->tableConversations, ['id' => $id], ['%d']);
+        }
     }
 
     public function deleteSession(string $sessionId): bool {

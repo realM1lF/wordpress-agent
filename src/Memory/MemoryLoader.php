@@ -54,7 +54,7 @@ class MemoryLoader {
                 $this->vectorStore->unmarkFileLoaded($path);
             }
 
-            $result = $this->processFile($path, 'identity');
+            $result = $this->processFile($path, 'identity', $filename);
             if (is_wp_error($result)) {
                 $errors[] = $filename . ': ' . $result->get_error_message();
             } else {
@@ -78,7 +78,7 @@ class MemoryLoader {
                 $this->vectorStore->unmarkFileLoaded($path);
             }
 
-            $result = $this->processFile($path, 'reference');
+            $result = $this->processFile($path, 'reference', $filename);
             if (is_wp_error($result)) {
                 $errors[] = $filename . ': ' . $result->get_error_message();
             } else {
@@ -99,7 +99,7 @@ class MemoryLoader {
      */
     public function loadIdentityFiles(): array {
         $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
-        $files = ['soul.md', 'rules.md', 'knowledge.md'];
+        $files = $this->getAllIdentityFiles();
         
         $loaded = [];
         $errors = [];
@@ -115,7 +115,7 @@ class MemoryLoader {
             $this->vectorStore->clearFileVectors($file, 'identity');
             $this->vectorStore->unmarkFileLoaded($path);
 
-            $result = $this->processFile($path, 'identity');
+            $result = $this->processFile($path, 'identity', $file);
             
             if (is_wp_error($result)) {
                 $errors[] = $file . ': ' . $result->get_error_message();
@@ -147,7 +147,7 @@ class MemoryLoader {
             $this->vectorStore->clearFileVectors($filename, 'reference');
             $this->vectorStore->unmarkFileLoaded($filePath);
 
-            $result = $this->processFile($filePath, 'reference');
+            $result = $this->processFile($filePath, 'reference', $filename);
             
             if (is_wp_error($result)) {
                 $errors[] = $filename . ': ' . $result->get_error_message();
@@ -233,7 +233,7 @@ class MemoryLoader {
     /**
      * Process a single file with batch processing and resume support
      */
-    private function processFile(string $filePath, string $memoryType): array|WP_Error {
+    private function processFile(string $filePath, string $memoryType, ?string $sourceFileOverride = null): array|WP_Error {
         $content = file_get_contents($filePath);
         
         if ($content === false) {
@@ -243,8 +243,7 @@ class MemoryLoader {
         $chunks = $this->splitIntoChunks($content);
         $totalChunks = count($chunks);
         
-        // Check for resume: get highest already-stored chunk index
-        $sourceFile = basename($filePath);
+        $sourceFile = $sourceFileOverride ?? basename($filePath);
         $highestStoredIndex = $this->vectorStore->getHighestChunkIndex($sourceFile, $memoryType);
         $resumeFromIndex = $highestStoredIndex + 1;
         
@@ -576,7 +575,7 @@ class MemoryLoader {
         ];
 
         $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
-        foreach (['soul.md', 'rules.md', 'knowledge.md'] as $file) {
+        foreach ($this->getAllIdentityFiles() as $file) {
             $path = $identityDir . $file;
             if (file_exists($path)) {
                 $hash = $this->vectorStore->getFileHash($path) . ':' . self::CHUNK_VERSION;
@@ -615,13 +614,30 @@ class MemoryLoader {
     }
 
     /**
-     * Get list of existing identity file names (soul.md, rules.md, knowledge.md)
+     * Get the full list of identity file paths (relative to identity/).
+     * Includes both the base files and any modular rule files.
+     */
+    private function getAllIdentityFiles(): array {
+        $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
+        $files = ['soul.md', 'rules.md', 'knowledge.md'];
+
+        $rulesDir = $identityDir . 'rules/';
+        if (is_dir($rulesDir)) {
+            foreach (glob($rulesDir . '*.md') as $path) {
+                $files[] = 'rules/' . basename($path);
+            }
+        }
+
+        return $files;
+    }
+
+    /**
+     * Get list of existing identity file names (for stats display).
      */
     private function getIdentityFileNames(): array {
         $identityDir = LEVI_AGENT_PLUGIN_DIR . 'identity/';
-        $candidates = ['soul.md', 'rules.md', 'knowledge.md'];
         $found = [];
-        foreach ($candidates as $file) {
+        foreach ($this->getAllIdentityFiles() as $file) {
             if (file_exists($identityDir . $file)) {
                 $found[] = $file;
             }

@@ -32,12 +32,7 @@ class ExecuteWPCodeTool implements ToolInterface {
     }
 
     public function checkPermission(): bool {
-        if (!current_user_can('manage_options')) {
-            return false;
-        }
-
-        $settings = get_option('levi_agent_settings', []);
-        return !empty($settings['enable_code_execution']);
+        return current_user_can('manage_options');
     }
 
     public function execute(array $params): array {
@@ -117,7 +112,7 @@ class ExecuteWPCodeTool implements ToolInterface {
 
         if (str_contains($codeLower, 'file_put_contents') || str_contains($codeLower, 'fwrite')) {
             if (!str_contains($codeLower, 'wp_content') && !str_contains($codeLower, 'wp_upload_dir')) {
-                return 'Direct file writing detected. Use write_plugin_file or write_theme_file tools instead.';
+                return 'Direct file writing detected. Use patch_plugin_file, write_plugin_file or write_theme_file tools instead.';
             }
         }
 

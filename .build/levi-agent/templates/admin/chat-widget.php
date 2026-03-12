@@ -5,7 +5,13 @@
     </button>
     <div class="levi-chat-window" id="levi-chat-window" style="display: none;">
         <div class="levi-chat-header">
-            <span class="levi-chat-title">🤖 Levi Assistant <span class="levi-chat-alpha-badge">ALPHA</span></span>
+            <span class="levi-chat-title">
+                <span class="levi-chat-title-avatar-frame" aria-hidden="true">
+                    <img src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>" alt="" class="levi-chat-title-avatar">
+                </span>
+                Levi Assistant
+                <span class="levi-chat-alpha-badge">ALPHA</span>
+            </span>
             <div class="levi-chat-header-actions">
                 <button class="levi-chat-expand" id="levi-chat-expand" title="Full Width">
                     <span class="dashicons dashicons-editor-expand"></span>
@@ -18,28 +24,33 @@
         </div>
         <div class="levi-chat-messages" id="levi-chat-messages">
             <div class="levi-message levi-message-assistant">
-                <div class="levi-message-content">
-                    Hallo <?php echo esc_html(wp_get_current_user()->display_name); ?>! 👋<br>
-                    Ich bin dein WordPress KI-Assistent. Wie kann ich dir helfen?
+                <div class="levi-message-avatar levi-message-avatar-assistant">
+                    <img src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>" alt="Levi" class="levi-message-avatar-image" loading="lazy" decoding="async" onerror="this.style.display='none'; this.parentElement.classList.add('levi-avatar-fallback-visible');">
+                    <span class="levi-message-avatar-fallback">L</span>
+                </div>
+                <div class="levi-message-main">
+                    <div class="levi-message-content">
+                        Hallo <?php echo esc_html(wp_get_current_user()->display_name); ?>! 👋<br>
+                        Ich bin dein WordPress KI-Assistent. Wie kann ich dir helfen?
+                    </div>
                 </div>
             </div>
         </div>
         <div class="levi-chat-input-area">
-            <div class="levi-chat-upload-row">
-                <button id="levi-chat-upload-btn" class="levi-chat-upload-btn" type="button" title="Datei hochladen (.txt, .md)">
-                    <span class="dashicons dashicons-paperclip"></span>
-                    <span>Datei</span>
-                </button>
-                <button id="levi-chat-clear-files-btn" class="levi-chat-clear-files-btn" type="button" title="Uploads aus Kontext entfernen" style="display: none;">
-                    <span class="dashicons dashicons-dismiss"></span>
-                    <span>Uploads löschen</span>
-                </button>
-                <input id="levi-chat-file-input" type="file" accept=".txt,.md,text/plain,text/markdown" multiple hidden>
-                <div id="levi-chat-upload-status" class="levi-chat-upload-status"></div>
+            <div id="levi-chat-attachments" class="levi-chat-attachments" style="display:none;">
+                <div id="levi-chat-file-list" class="levi-chat-file-list"></div>
+                <button id="levi-chat-clear-files-btn" class="levi-chat-clear-files-btn" type="button" title="Alle entfernen">×</button>
             </div>
-            <div id="levi-chat-context-hint" class="levi-chat-context-hint"></div>
-            <div id="levi-chat-file-list" class="levi-chat-file-list"></div>
             <div class="levi-chat-input-row">
+                <button id="levi-chat-upload-btn" class="levi-chat-upload-btn" type="button" title="Datei oder Bild anhängen">
+                    <span class="dashicons dashicons-paperclip"></span>
+                </button>
+                <input id="levi-chat-file-input" type="file" accept=".txt,.md,.csv,.json,.xml,.log,.jpg,.jpeg,.png,.gif,.webp,text/plain,text/markdown,text/csv,application/json,image/*" multiple hidden>
+                <?php if ((new \Levi\Agent\Admin\SettingsPage())->isWebSearchEnabled()): ?>
+                <button id="levi-chat-web-search-btn" class="levi-chat-web-search-btn" type="button" title="<?php esc_attr_e('Web-Suche für diese Nachricht aktivieren', 'levi-agent'); ?>">
+                    <span class="dashicons dashicons-admin-site-alt3"></span>
+                </button>
+                <?php endif; ?>
                 <textarea 
                     id="levi-chat-input" 
                     class="levi-chat-input" 
@@ -48,6 +59,9 @@
                 ></textarea>
                 <button id="levi-chat-send" class="levi-chat-send">
                     <span class="dashicons dashicons-arrow-right-alt2"></span>
+                </button>
+                <button id="levi-chat-stop" class="levi-chat-stop" style="display:none;" title="Abbrechen">
+                    <span class="dashicons dashicons-no"></span>
                 </button>
             </div>
         </div>

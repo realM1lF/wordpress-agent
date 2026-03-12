@@ -12,10 +12,11 @@ class OpenRouterClient implements AIClientInterface {
     private int $timeout;
     private int $maxTokens;
 
-    public function __construct() {
+    public function __construct(?string $modelOverride = null) {
         $settings = new SettingsPage();
         $this->apiKey = $settings->getApiKeyForProvider('openrouter');
-        $this->model = $settings->getModelForProvider('openrouter');
+        // Use override model if provided, otherwise use default
+        $this->model = $modelOverride ?? $settings->getModelForProvider('openrouter');
         $allSettings = $settings->getSettings();
         $this->timeout = max(1, (int) ($allSettings['ai_timeout'] ?? 120));
         $this->maxTokens = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
@@ -25,14 +26,19 @@ class OpenRouterClient implements AIClientInterface {
         return $this->apiKey !== null;
     }
 
-    public function chat(array $messages, array $tools = [], ?callable $heartbeat = null): array|WP_Error {
+    public function chat(array $messages, array $tools = [], ?callable $heartbeat = null, bool $webSearch = false): array|WP_Error {
         if (!$this->apiKey) {
             return new WP_Error('not_configured', 'OpenRouter API key not configured');
         }
 
+        $model = $this->model;
+        if ($webSearch) {
+            $model .= ':online';
+        }
+
         $temperature = $this->resolveTemperature($messages);
         $payload = [
-            'model' => $this->model,
+            'model' => $model,
             'messages' => $messages,
             'temperature' => $temperature,
             'max_tokens' => $this->maxTokens,
@@ -161,7 +167,7 @@ class OpenRouterClient implements AIClientInterface {
             'Authorization' => 'Bearer ' . $this->apiKey,
             'Content-Type' => 'application/json',
             'HTTP-Referer' => get_site_url(),
-            'X-Title' => 'Mohami WordPress Agent',
+            'X-Title' => 'Levi WordPress Agent',
         ];
     }
 
@@ -236,7 +242,7 @@ class OpenRouterClient implements AIClientInterface {
                 'Authorization: Bearer ' . $this->apiKey,
                 'Content-Type: application/json',
                 'HTTP-Referer: ' . get_site_url(),
-                'X-Title: Mohami WordPress Agent',
+                'X-Title: Levi WordPress Agent',
                 'Accept: text/event-stream',
             ],
             CURLOPT_RETURNTRANSFER => false,

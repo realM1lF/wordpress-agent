@@ -86,6 +86,87 @@ class Registry {
     }
 
     /**
+     * Get the OpenAI function-calling definition for a single tool.
+     */
+    public function getDefinitionForTool(string $toolName): ?array {
+        $tool = $this->get($toolName);
+        if ($tool === null || !$tool->checkPermission()) {
+            return null;
+        }
+
+        $rawParams = $tool->getParameters();
+        $properties = [];
+        foreach ($rawParams as $name => $config) {
+            $properties[$name] = array_intersect_key($config, array_flip(['type', 'description', 'enum', 'items']));
+        }
+
+        return [
+            'type' => 'function',
+            'function' => [
+                'name' => $tool->getName(),
+                'description' => $tool->getDescription(),
+                'parameters' => [
+                    'type' => 'object',
+                    'properties' => $properties,
+                    'required' => $this->getRequiredParameters($rawParams),
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * Search tools by query (BM25-like scoring on name + description).
+     * Excludes search_tools itself from results.
+     *
+     * @return array<array{name: string, description: string, score: float}>
+     */
+    public function searchTools(string $query, int $limit = 5): array {
+        $query = mb_strtolower(trim($query));
+        if ($query === '') {
+            return [];
+        }
+
+        $queryWords = array_filter(preg_split('/[\s_\-]+/', $query));
+        if (empty($queryWords)) {
+            return [];
+        }
+
+        $scored = [];
+        foreach ($this->tools as $tool) {
+            if (!$tool->checkPermission() || $tool->getName() === 'search_tools') {
+                continue;
+            }
+
+            $name = mb_strtolower($tool->getName());
+            $desc = mb_strtolower($tool->getDescription());
+
+            $score = 0.0;
+            foreach ($queryWords as $word) {
+                if (mb_strlen($word) < 2) {
+                    continue;
+                }
+                if (str_contains($name, $word)) {
+                    $score += 3.0;
+                }
+                if (str_contains($desc, $word)) {
+                    $score += 1.0;
+                }
+            }
+
+            if ($score > 0) {
+                $scored[] = [
+                    'name' => $tool->getName(),
+                    'description' => $tool->getDescription(),
+                    'score' => $score,
+                ];
+            }
+        }
+
+        usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
+        return array_slice($scored, 0, $limit);
+    }
+
+    /**
      * Execute a tool by name
      */
     public function execute(string $name, array $params): array {
@@ -118,12 +199,12 @@ class Registry {
     /**
      * Register tools based on the active profile.
      *
-     * minimal  = read-only / diagnostic tools (safe for non-technical users)
-     * standard = minimal + all write tools (default for most users)
-     * full     = standard + power tools like execute_wp_code / http_fetch
+     * minimal  = read-only core tools (~12, safe for non-technical users)
+     * standard = core read + common write (~26, covers 95% of daily tasks)
+     * full     = everything incl. niche/advanced tools (~44, for power users)
      */
     private function registerDefaultTools(): void {
-        $readTools = [
+        $coreReadTools = [
             new GetPostsTool(),
             new GetPostTool(),
             new GetPagesTool(),
@@ -135,55 +216,55 @@ class Registry {
             new ReadPluginFileTool(),
             new ListThemeFilesTool(),
             new ReadThemeFileTool(),
-            new DiscoverContentTypesTool(),
-            new DiscoverRestApiTool(),
             new ReadErrorLogTool(),
-            new WooCommerceProductTool(),
-            new WooCommerceShopTool(),
-            new ElementorReadTool(),
-            new HttpFetchTool(),
         ];
 
-        $writeTools = [
+        $commonWriteTools = [
             new CreatePostTool(),
             new UpdatePostTool(),
             new CreatePageTool(),
-            new UpdateOptionTool(),
-            new UpdateAnyOptionTool(),
             new DeletePostTool(),
             new InstallPluginTool(),
-            new SwitchThemeTool(),
-            new ManageUserTool(),
             new CreatePluginTool(),
             new WritePluginFileTool(),
             new PatchPluginFileTool(),
             new DeletePluginFileTool(),
-            new WriteThemeFileTool(),
-            new CreateThemeTool(),
-            new DeleteThemeFileTool(),
             new PostMetaTool(),
+            new UpdateOptionTool(),
+            new UploadMediaTool(),
+            new ManageMenuTool(),
             new ManageTaxonomyTool(),
+            new HttpFetchTool(),
+            new DiscoverContentTypesTool(),
+            new DiscoverRestApiTool(),
+            new WooCommerceProductTool(),
+            new WooCommerceShopTool(),
             new WooCommerceManageTool(),
+            new ElementorReadTool(),
             new ElementorBuildTool(),
             new ElementorManageTool(),
-            new ManageMenuTool(),
+            new ManageUserTool(),
             new ManageCronTool(),
-            new UploadMediaTool(),
+            new UpdateAnyOptionTool(),
+            new SwitchThemeTool(),
+            new CreateThemeTool(),
+            new WriteThemeFileTool(),
+            new DeleteThemeFileTool(),
             new StoreSessionImageTool(),
         ];
 
-        $powerTools = [
+        $advancedTools = [
             new ExecuteWPCodeTool(),
         ];
 
-        $tools = $readTools;
+        $tools = $coreReadTools;
 
         if ($this->profile === self::PROFILE_STANDARD || $this->profile === self::PROFILE_FULL) {
-            $tools = array_merge($tools, $writeTools);
+            $tools = array_merge($tools, $commonWriteTools);
         }
 
         if ($this->profile === self::PROFILE_FULL) {
-            $tools = array_merge($tools, $powerTools);
+            $tools = array_merge($tools, $advancedTools);
         }
 
         foreach ($tools as $tool) {
@@ -199,15 +280,15 @@ class Registry {
         return [
             self::PROFILE_MINIMAL => [
                 'label'       => 'Minimal (nur lesen)',
-                'description' => 'Nur Lese- und Diagnose-Tools. Levi kann nichts veraendern – ideal zum Kennenlernen.',
+                'description' => 'Nur Lese-Tools (~12). Levi kann nichts veraendern – ideal zum Kennenlernen.',
             ],
             self::PROFILE_STANDARD => [
                 'label'       => 'Standard',
-                'description' => 'Lesen + Schreiben. Levi kann Inhalte, Plugins und Themes erstellen und bearbeiten.',
+                'description' => 'Lesen + Schreiben (~26 Tools). Inhalte, Plugins, Menues – deckt 95% des Alltags ab.',
             ],
             self::PROFILE_FULL => [
                 'label'       => 'Voll (Entwickler)',
-                'description' => 'Alle Tools inkl. PHP-Code-Ausfuehrung und HTTP-Fetch. Nur fuer erfahrene Nutzer.',
+                'description' => 'Alle Tools (~44) inkl. User-Management, Cron, WooCommerce, Elementor, PHP-Ausfuehrung.',
             ],
         ];
     }

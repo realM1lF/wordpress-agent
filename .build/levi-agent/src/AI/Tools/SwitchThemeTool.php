@@ -34,6 +34,7 @@ class SwitchThemeTool implements ToolInterface {
             return [
                 'success' => false,
                 'error' => "Theme '$theme' not found.",
+                'suggestion' => 'Use get_themes to list installed themes and find the correct slug.',
             ];
         }
 

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Levi AI Agent
  * Description: KI-Mitarbeiter für WordPress - inspiriert von Mohami
- * Version: 0.7.1
+ * Version: 0.7.2
  * Author: realM1lF
  * License: GPL v2
  * Text Domain: levi-agent
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LEVI_AGENT_VERSION', '0.7.1');
+define('LEVI_AGENT_VERSION', '0.7.2');
 define('LEVI_AGENT_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LEVI_AGENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -53,9 +53,11 @@ add_action('plugins_loaded', function() {
     global $wpdb;
     $table = $wpdb->prefix . 'levi_conversations';
     $auditTable = $wpdb->prefix . 'levi_audit_log';
+    $usageTable = $wpdb->prefix . 'levi_usage_log';
     if (
         $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table
         || $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $auditTable)) !== $auditTable
+        || $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $usageTable)) !== $usageTable
     ) {
         require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
         Tables::create();

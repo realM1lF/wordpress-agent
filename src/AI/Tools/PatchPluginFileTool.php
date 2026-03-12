@@ -2,7 +2,11 @@
 
 namespace Levi\Agent\AI\Tools;
 
+use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
+
 class PatchPluginFileTool implements ToolInterface {
+
+    use SanitizesHtmlOutput;
 
     public function getName(): string {
         return 'patch_plugin_file';
@@ -145,6 +149,8 @@ class PatchPluginFileTool implements ToolInterface {
             ];
         }
 
+        [$content, $strippedCount] = $this->stripCodeTagsFromOutput($content, $relativePath);
+
         if ($content === $originalContent) {
             return [
                 'success' => true,
@@ -202,6 +208,11 @@ class PatchPluginFileTool implements ToolInterface {
         }
         if (!empty($jsLint['warning'] ?? '')) {
             $result['js_warning'] = $jsLint['warning'];
+        }
+
+        if ($strippedCount > 0) {
+            $result['stripped_tags'] = $strippedCount;
+            $result['strip_notice'] = "$strippedCount <code>/<pre>-Tag(s) wurden automatisch entfernt.";
         }
 
         $codeTagCheck = $this->detectCodeTagsInOutput($content, $relativePath);
@@ -362,37 +373,4 @@ class PatchPluginFileTool implements ToolInterface {
         return ['valid' => true];
     }
 
-    private function detectCodeTagsInOutput(string $content, string $relativePath): ?string {
-        $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
-        if ($ext !== 'php') {
-            return null;
-        }
-
-        if (stripos($content, '<code') === false && stripos($content, '</code>') === false) {
-            return null;
-        }
-
-        $found = false;
-
-        if (preg_match('/(?:return|echo|print)\s+[\'"].*?<\/?code[\s>]/is', $content)) {
-            $found = true;
-        }
-
-        if (!$found && preg_match('/[\'"].*?<\/?code[\s>].*?[\'"]\s*[;.]/is', $content)) {
-            $found = true;
-        }
-
-        if (!$found && preg_match('/<<<[\'"]?(?:HTML|EOT|HEREDOC|EOF)[\'"]?\s*\n.*?<\/?code[\s>].*?\n\w+;/is', $content)) {
-            $found = true;
-        }
-
-        if (!$found) {
-            return null;
-        }
-
-        return 'ACHTUNG: Die Datei enthaelt <code>-Tags in HTML-Output-Strings. '
-            . '<code>-Tags verhindern, dass CSS-Styles greifen und zeigen Inhalte als Monospace-Text an. '
-            . 'Entferne alle <code> und </code> Tags aus dem HTML-Output sofort mit patch_plugin_file. '
-            . 'HTML-Elemente wie <div>, <h3>, <span> sind Render-Output, kein "Code zum Anzeigen".';
-    }
 }

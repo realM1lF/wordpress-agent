@@ -6,32 +6,166 @@ use WP_Error;
 
 class StateSnapshotService {
     public const EVENT_HOOK = 'levi_agent_daily_state_snapshot';
+    public const MEMORY_SYNC_HOOK = 'levi_agent_daily_memory_sync';
+    public const DOCS_FETCH_HOOK = 'levi_daily_docs_fetch_and_sync';
+    public const EVENT_SNAPSHOT_HOOK = 'levi_agent_event_snapshot';
     private const META_OPTION = 'levi_agent_state_snapshot_meta';
     private const LAST_OPTION = 'levi_agent_state_snapshot_last';
+    private const MEMORY_SYNC_OPTION = 'levi_agent_memory_sync_meta';
+    private const EVENT_DEBOUNCE_KEY = 'levi_snapshot_event_debounce';
 
     public function __construct() {
         add_action('init', [$this, 'ensureSchedule']);
         add_action(self::EVENT_HOOK, [$this, 'runDailySync']);
+        add_action(self::MEMORY_SYNC_HOOK, [self::class, 'runMemorySync']);
+        add_action(self::MEMORY_SYNC_HOOK . '_initial', [self::class, 'runInitialSync']);
+        add_action(self::DOCS_FETCH_HOOK, [self::class, 'runDocsFetchAndSync']);
+        add_action('admin_init', [$this, 'maybeRunOverdueTasks']);
+
+        add_action(self::EVENT_SNAPSHOT_HOOK, [$this, 'runDailySync']);
+        add_action('activated_plugin', [self::class, 'scheduleSnapshotUpdate']);
+        add_action('deactivated_plugin', [self::class, 'scheduleSnapshotUpdate']);
+        add_action('switch_theme', [self::class, 'scheduleSnapshotUpdate']);
     }
 
     public function ensureSchedule(): void {
-        if (!wp_next_scheduled(self::EVENT_HOOK)) {
-            wp_schedule_event(self::calculateNextRunTimestamp(), 'daily', self::EVENT_HOOK);
+        // State snapshot at 12:00
+        $snapshotNextRun = self::calculateNextRunTimestamp(12, 0);
+        $timestamp = wp_next_scheduled(self::EVENT_HOOK);
+        if ($timestamp !== false) {
+            wp_unschedule_event($timestamp, self::EVENT_HOOK);
+        }
+        wp_schedule_event($snapshotNextRun, 'daily', self::EVENT_HOOK);
+
+        // Docs fetch + memory sync at 04:00
+        $docsNextRun = self::calculateNextRunTimestamp(4, 0);
+        $timestamp = wp_next_scheduled(self::DOCS_FETCH_HOOK);
+        if ($timestamp !== false) {
+            wp_unschedule_event($timestamp, self::DOCS_FETCH_HOOK);
+        }
+        wp_schedule_event($docsNextRun, 'daily', self::DOCS_FETCH_HOOK);
+
+        // Unschedule the old standalone memory sync hook (migrated into docs fetch)
+        $timestamp = wp_next_scheduled(self::MEMORY_SYNC_HOOK);
+        if ($timestamp !== false) {
+            wp_unschedule_event($timestamp, self::MEMORY_SYNC_HOOK);
+        }
+    }
+
+    /**
+     * On admin page loads, nudge WP-Cron if our events are overdue.
+     * Also triggers a one-time initial docs fetch + memory sync after first activation.
+     */
+    public function maybeRunOverdueTasks(): void {
+        if (wp_doing_ajax() || !current_user_can('manage_options')) {
+            return;
+        }
+
+        $now = time();
+
+        foreach ([self::EVENT_HOOK, self::DOCS_FETCH_HOOK] as $hook) {
+            $nextScheduled = wp_next_scheduled($hook);
+            if ($nextScheduled !== false && $nextScheduled <= $now) {
+                spawn_cron();
+                return;
+            }
+        }
+
+        if (get_option('levi_initial_memory_sync_done', false) === false) {
+            update_option('levi_initial_memory_sync_done', 'pending', false);
+            wp_schedule_single_event(time(), self::MEMORY_SYNC_HOOK . '_initial');
+            spawn_cron();
+            return;
+        }
+
+        $this->maybeRetryPartialSync();
+    }
+
+    private function maybeRetryPartialSync(): void {
+        if (get_transient('levi_partial_retry_lock')) {
+            return;
+        }
+
+        $retries = (int) get_option('levi_partial_sync_retries', 0);
+        if ($retries >= 6) {
+            return;
+        }
+
+        $needsRetry = false;
+        $syncMeta = get_option(self::MEMORY_SYNC_OPTION, []);
+
+        if (!empty($syncMeta['has_partials'])) {
+            $needsRetry = true;
+        }
+
+        if (!$needsRetry) {
+            if (get_transient('levi_changes_check_cooldown')) {
+                return;
+            }
+            set_transient('levi_changes_check_cooldown', '1', 15 * MINUTE_IN_SECONDS);
+
+            $loader = new MemoryLoader();
+            $changes = $loader->checkForChanges();
+            if (!empty($changes['identity']) || !empty($changes['reference'])) {
+                $needsRetry = true;
+            }
+        }
+
+        if (!$needsRetry) {
+            return;
+        }
+
+        update_option('levi_partial_sync_retries', $retries + 1, false);
+        set_transient('levi_partial_retry_lock', time(), 10 * MINUTE_IN_SECONDS);
+
+        if (!wp_next_scheduled(self::MEMORY_SYNC_HOOK)) {
+            wp_schedule_single_event(time(), self::MEMORY_SYNC_HOOK);
+        }
+        spawn_cron();
+    }
+
+    /**
+     * Schedule a snapshot update with debounce (max 1 per 5 minutes).
+     * Uses wp_schedule_single_event with a 5-second delay so WordPress
+     * has finished updating its internal state before we capture.
+     */
+    public static function scheduleSnapshotUpdate(): void {
+        if (get_transient(self::EVENT_DEBOUNCE_KEY)) {
+            return;
+        }
+        set_transient(self::EVENT_DEBOUNCE_KEY, '1', 5 * MINUTE_IN_SECONDS);
+
+        if (!wp_next_scheduled(self::EVENT_SNAPSHOT_HOOK)) {
+            wp_schedule_single_event(time() + 5, self::EVENT_SNAPSHOT_HOOK);
         }
     }
 
     public static function scheduleEvent(): void {
         if (!wp_next_scheduled(self::EVENT_HOOK)) {
-            wp_schedule_event(self::calculateNextRunTimestamp(), 'daily', self::EVENT_HOOK);
+            wp_schedule_event(self::calculateNextRunTimestamp(12, 0), 'daily', self::EVENT_HOOK);
+        }
+        if (!wp_next_scheduled(self::DOCS_FETCH_HOOK)) {
+            wp_schedule_event(self::calculateNextRunTimestamp(4, 0), 'daily', self::DOCS_FETCH_HOOK);
         }
     }
 
     public static function unscheduleEvent(): void {
-        $timestamp = wp_next_scheduled(self::EVENT_HOOK);
-        while ($timestamp !== false) {
-            wp_unschedule_event($timestamp, self::EVENT_HOOK);
-            $timestamp = wp_next_scheduled(self::EVENT_HOOK);
+        $hooks = [
+            self::EVENT_HOOK,
+            self::MEMORY_SYNC_HOOK,
+            self::MEMORY_SYNC_HOOK . '_initial',
+            self::DOCS_FETCH_HOOK,
+            self::EVENT_SNAPSHOT_HOOK,
+        ];
+        foreach ($hooks as $hook) {
+            $timestamp = wp_next_scheduled($hook);
+            while ($timestamp !== false) {
+                wp_unschedule_event($timestamp, $hook);
+                $timestamp = wp_next_scheduled($hook);
+            }
         }
+        delete_option('levi_initial_memory_sync_done');
+        delete_transient(self::EVENT_DEBOUNCE_KEY);
     }
 
     public function runDailySync(): void {
@@ -93,6 +227,117 @@ class StateSnapshotService {
         return self::getLastMeta();
     }
 
+    /**
+     * Fetch docs from the internet, then incrementally sync changed files into SQLite.
+     * Runs daily at 04:00 via WordPress cron.
+     */
+    public static function runDocsFetchAndSync(): void {
+        @set_time_limit(600);
+
+        $fetcher = new DocsFetcher();
+        $fetchResult = $fetcher->fetchAll();
+
+        self::runMemorySync();
+    }
+
+    /**
+     * Initial sync on first activation: fetch docs first, then sync.
+     */
+    public static function runInitialSync(): void {
+        update_option('levi_initial_memory_sync_done', 'done', false);
+        self::runDocsFetchAndSync();
+    }
+
+    /**
+     * Sync memory files (identity + reference) into the vector database.
+     * Uses incremental approach: only re-embeds files that have changed.
+     */
+    public static function runMemorySync(): void {
+        update_option('levi_initial_memory_sync_done', 'done', false);
+        @set_time_limit(300);
+
+        $vectorStore = new VectorStore();
+        if (!$vectorStore->isAvailable()) {
+            update_option(self::MEMORY_SYNC_OPTION, [
+                'synced_at' => current_time('mysql'),
+                'status' => 'skipped',
+                'reason' => 'VectorStore not available (SQLite3 missing or data dir not writable).',
+            ], false);
+            return;
+        }
+
+        $loader = new MemoryLoader();
+        $changes = $loader->checkForChanges();
+        $hasChanges = !empty($changes['identity']) || !empty($changes['reference']);
+
+        if (!$hasChanges) {
+            update_option(self::MEMORY_SYNC_OPTION, [
+                'synced_at' => current_time('mysql'),
+                'status' => 'unchanged',
+                'message' => 'All memory files already loaded and up to date.',
+            ], false);
+            return;
+        }
+
+        $results = $loader->reloadChangedFiles();
+        $hasPartials = self::detectPartials($results);
+
+        update_option(self::MEMORY_SYNC_OPTION, [
+            'synced_at' => current_time('mysql'),
+            'status' => empty($results['errors']) ? 'synced' : 'synced_with_errors',
+            'changed_identity' => $results['changed_identity'],
+            'changed_reference' => $results['changed_reference'],
+            'loaded' => count($results['loaded']),
+            'errors' => $results['errors'],
+            'has_partials' => $hasPartials,
+        ], false);
+
+        if (!$hasPartials) {
+            delete_option('levi_partial_sync_retries');
+        }
+    }
+
+    /**
+     * Update sync meta after a manual reload (AJAX). Ensures "Last sync" shows correctly.
+     */
+    public static function updateSyncMetaFromReload(array $results): void {
+        $hasPartials = self::detectPartials($results);
+
+        update_option(self::MEMORY_SYNC_OPTION, [
+            'synced_at' => current_time('mysql'),
+            'status' => empty($results['errors']) ? 'synced' : 'synced_with_errors',
+            'changed_identity' => $results['changed_identity'] ?? [],
+            'changed_reference' => $results['changed_reference'] ?? [],
+            'loaded' => count($results['loaded'] ?? []),
+            'errors' => $results['errors'] ?? [],
+            'has_partials' => $hasPartials,
+        ], false);
+
+        if (!$hasPartials) {
+            delete_option('levi_partial_sync_retries');
+        }
+    }
+
+    /**
+     * Check reload results for incomplete (partial) file syncs.
+     */
+    private static function detectPartials(array $results): bool {
+        foreach (($results['loaded'] ?? []) as $fileResult) {
+            if (is_array($fileResult) && empty($fileResult['complete'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Get last memory sync metadata.
+     */
+    public static function getLastMemorySyncMeta(): array {
+        $meta = get_option(self::MEMORY_SYNC_OPTION, []);
+        return is_array($meta) ? $meta : [];
+    }
+
     public static function getLastMeta(): array {
         $meta = get_option(self::META_OPTION, []);
         return is_array($meta) ? $meta : [];
@@ -133,7 +378,17 @@ class StateSnapshotService {
             '- Important: This is a daily baseline only. Changes may have happened after this snapshot. For risky actions, verify live before executing.',
         ];
 
+        $lastData = get_option(self::LAST_OPTION, []);
+        $snapshot = is_array($lastData['snapshot'] ?? null) ? $lastData['snapshot'] : [];
+        $envLines = self::formatEnvironmentContext($snapshot);
+        if (!empty($envLines)) {
+            $lines[] = '';
+            $lines[] = '## Environment Configuration';
+            $lines = array_merge($lines, $envLines);
+        }
+
         if ($diff !== '') {
+            $lines[] = '';
             $lines[] = '- Last recorded daily diff:';
             $lines[] = $diff;
         }
@@ -141,10 +396,10 @@ class StateSnapshotService {
         return implode("\n", $lines);
     }
 
-    private static function calculateNextRunTimestamp(): int {
+    private static function calculateNextRunTimestamp(int $hour = 12, int $minute = 0): int {
         $timezone = wp_timezone();
         $now = new \DateTimeImmutable('now', $timezone);
-        $next = $now->setTime(0, 7, 0);
+        $next = $now->setTime($hour, $minute, 0);
         if ($next <= $now) {
             $next = $next->modify('+1 day');
         }
@@ -195,6 +450,7 @@ class StateSnapshotService {
                 'stylesheet' => $theme->get_stylesheet(),
                 'name' => (string) $theme->get('Name'),
                 'version' => (string) $theme->get('Version'),
+                'is_block_theme' => function_exists('wp_is_block_theme') && wp_is_block_theme(),
             ],
             'plugins' => $plugins,
             'counts' => [
@@ -202,6 +458,7 @@ class StateSnapshotService {
                 'plugins_active' => count(array_filter($plugins, fn($p) => !empty($p['active']))),
             ],
             'settings' => $settings,
+            'environment' => $this->collectEnvironmentInfo($activePlugins),
         ];
     }
 
@@ -272,6 +529,26 @@ class StateSnapshotService {
             }
         }
 
+        $prevEnv = $previous['environment'] ?? [];
+        $currEnv = $current['environment'] ?? [];
+        if (!empty($currEnv)) {
+            foreach (['editor', 'widgets'] as $envKey) {
+                if (($prevEnv[$envKey] ?? '') !== ($currEnv[$envKey] ?? '')) {
+                    $changes[] = sprintf('Environment changed: %s (%s -> %s)', $envKey, (string) ($prevEnv[$envKey] ?? 'unknown'), (string) ($currEnv[$envKey] ?? 'unknown'));
+                }
+            }
+            if ((bool) ($prevEnv['woocommerce_active'] ?? false) !== (bool) ($currEnv['woocommerce_active'] ?? false)) {
+                $changes[] = 'WooCommerce activation changed: ' . (!empty($currEnv['woocommerce_active']) ? 'activated' : 'deactivated');
+            }
+            $prevWcPages = $prevEnv['woocommerce_pages'] ?? [];
+            $currWcPages = $currEnv['woocommerce_pages'] ?? [];
+            foreach ($currWcPages as $page => $type) {
+                if (($prevWcPages[$page] ?? '') !== $type) {
+                    $changes[] = sprintf('WooCommerce page type changed: %s (%s -> %s)', $page, (string) ($prevWcPages[$page] ?? 'unknown'), $type);
+                }
+            }
+        }
+
         if (empty($changes)) {
             return 'No structural changes detected since previous snapshot.';
         }
@@ -312,6 +589,119 @@ class StateSnapshotService {
         }
 
         return true;
+    }
+
+    /**
+     * Format environment info from a stored snapshot into human-readable prompt lines.
+     * @return string[]
+     */
+    private static function formatEnvironmentContext(array $snapshot): array {
+        $env = $snapshot['environment'] ?? [];
+        if (empty($env) || !is_array($env)) {
+            return [];
+        }
+
+        $lines = [];
+
+        $wpVersion = (string) ($snapshot['wp_version'] ?? 'unknown');
+        $lines[] = '- WordPress: ' . $wpVersion;
+
+        $isBlockTheme = !empty($snapshot['active_theme']['is_block_theme']);
+        $themeName = (string) ($snapshot['active_theme']['name'] ?? 'unknown');
+        $lines[] = '- Theme: ' . $themeName . ' (' . ($isBlockTheme ? 'Block-Theme / FSE' : 'Classic Theme') . ')';
+        $lines[] = '- Editor: ' . (($env['editor'] ?? 'gutenberg') === 'classic' ? 'Classic Editor' : 'Gutenberg (Block Editor)');
+        $lines[] = '- Widgets: ' . (($env['widgets'] ?? 'block') === 'block' ? 'Block-basiert' : 'Classic Widgets');
+
+        if (!empty($env['woocommerce_active'])) {
+            $wcVersion = defined('WC_VERSION') ? WC_VERSION : 'unknown';
+            $lines[] = '- WooCommerce: ' . $wcVersion;
+            $wcPages = $env['woocommerce_pages'] ?? [];
+            if (!empty($wcPages) && is_array($wcPages)) {
+                $pageLabels = ['cart' => 'Warenkorb', 'checkout' => 'Checkout', 'myaccount' => 'Mein Konto'];
+                foreach ($wcPages as $key => $type) {
+                    $label = $pageLabels[$key] ?? $key;
+                    $typeLabel = match ($type) {
+                        'block' => 'WooCommerce Block (klassische Hooks wie woocommerce_before_cart feuern NICHT)',
+                        'shortcode' => 'Classic Shortcode (klassische Hooks funktionieren)',
+                        'not_set' => 'Seite nicht konfiguriert',
+                        'not_found' => 'Konfigurierte Seite nicht gefunden',
+                        default => 'unbekannt',
+                    };
+                    $lines[] = "  - $label: $typeLabel";
+                }
+            }
+        } else {
+            $lines[] = '- WooCommerce: nicht aktiv';
+        }
+
+        if (!empty($env['elementor_active'])) {
+            $lines[] = '- Elementor: aktiv';
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Detect how key WordPress features are configured (blocks vs. classic, editor type, etc.).
+     * Helps the AI choose the right hooks and APIs for implementation.
+     */
+    private function collectEnvironmentInfo(array $activePluginFiles): array {
+        $env = [];
+
+        $env['editor'] = in_array('classic-editor/classic-editor.php', $activePluginFiles, true)
+            ? 'classic'
+            : 'gutenberg';
+
+        $env['widgets'] = function_exists('wp_use_widgets_block_editor') && wp_use_widgets_block_editor()
+            ? 'block'
+            : 'classic';
+
+        $env['woocommerce_active'] = in_array('woocommerce/woocommerce.php', $activePluginFiles, true);
+
+        if ($env['woocommerce_active'] && function_exists('wc_get_page_id')) {
+            $env['woocommerce_pages'] = $this->detectWooCommercePageTypes();
+        }
+
+        $env['elementor_active'] = in_array('elementor/elementor.php', $activePluginFiles, true);
+
+        return $env;
+    }
+
+    /**
+     * Check whether key WooCommerce pages use blocks or classic shortcodes.
+     * @return array<string, string> e.g. ['cart' => 'block', 'checkout' => 'shortcode']
+     */
+    private function detectWooCommercePageTypes(): array {
+        $pages = [];
+        $wcPages = [
+            'cart' => 'woocommerce/cart',
+            'checkout' => 'woocommerce/checkout',
+            'myaccount' => 'woocommerce/my-account',
+        ];
+
+        foreach ($wcPages as $key => $blockName) {
+            $pageId = wc_get_page_id($key);
+            if ($pageId <= 0) {
+                $pages[$key] = 'not_set';
+                continue;
+            }
+
+            $post = get_post($pageId);
+            if (!$post) {
+                $pages[$key] = 'not_found';
+                continue;
+            }
+
+            if (has_block($blockName, $post)) {
+                $pages[$key] = 'block';
+            } elseif (has_shortcode($post->post_content, 'woocommerce_' . $key)) {
+                $pages[$key] = 'shortcode';
+            } else {
+                $pages[$key] = 'unknown';
+            }
+        }
+
+        return $pages;
     }
 
     /**

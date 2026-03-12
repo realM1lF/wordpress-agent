@@ -2,18 +2,21 @@
 /**
  * Plugin Name: Levi AI Agent
  * Description: KI-Mitarbeiter für WordPress - inspiriert von Mohami
- * Version: 0.1.0
+ * Version: 0.7.1
  * Author: realM1lF
  * License: GPL v2
  * Text Domain: levi-agent
  * Domain Path: /languages
+ * Requires PHP: 8.1
+ * Requires at least: 6.0
+ * Tested up to: 6.7
  */
 
 if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LEVI_AGENT_VERSION', '0.1.0');
+define('LEVI_AGENT_VERSION', '0.7.1');
 define('LEVI_AGENT_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LEVI_AGENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -43,14 +46,23 @@ if (file_exists(LEVI_AGENT_PLUGIN_DIR . 'vendor/autoload.php')) {
 // Main Plugin Class
 use Levi\Agent\Core\Plugin;
 use Levi\Agent\Memory\StateSnapshotService;
+use Levi\Agent\Database\Tables;
 
 // Ensure DB tables exist (runs before Plugin init - fixes missed activation hook)
 add_action('plugins_loaded', function() {
     global $wpdb;
     $table = $wpdb->prefix . 'levi_conversations';
-    if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+    $auditTable = $wpdb->prefix . 'levi_audit_log';
+    if (
+        $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table
+        || $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $auditTable)) !== $auditTable
+    ) {
         require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
-        Levi\Agent\Database\Tables::create();
+        Tables::create();
+    }
+
+    if (!wp_next_scheduled('levi_cleanup_audit_log')) {
+        wp_schedule_event(time() + DAY_IN_SECONDS, 'daily', 'levi_cleanup_audit_log');
     }
 }, 1);
 
@@ -63,8 +75,11 @@ add_action('plugins_loaded', function() {
 // Activation hook
 register_activation_hook(__FILE__, function() {
     require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
-    Levi\Agent\Database\Tables::create();
+    Tables::create();
     StateSnapshotService::scheduleEvent();
+    if (!wp_next_scheduled('levi_cleanup_audit_log')) {
+        wp_schedule_event(time() + DAY_IN_SECONDS, 'daily', 'levi_cleanup_audit_log');
+    }
 
     // Trigger one-time setup wizard redirect after activation.
     update_option('levi_setup_wizard_pending', 1);
@@ -76,4 +91,15 @@ register_activation_hook(__FILE__, function() {
 // Deactivation hook
 register_deactivation_hook(__FILE__, function() {
     StateSnapshotService::unscheduleEvent();
+    wp_clear_scheduled_hook('levi_cleanup_audit_log');
 });
+
+add_action('levi_cleanup_audit_log', function() {
+    require_once LEVI_AGENT_PLUGIN_DIR . 'src/Database/Tables.php';
+    Tables::cleanupAuditLog(7);
+});
+
+// WP-CLI commands
+if (defined('WP_CLI') && WP_CLI) {
+    \WP_CLI::add_command('levi test', \Levi\Agent\Testing\TestCommand::class);
+}

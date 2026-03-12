@@ -38,6 +38,12 @@ FORMAT:
 **Wichtige Details:** [Konkrete Werte, IDs, Einstellungen die nicht verloren gehen dürfen]
 PROMPT;
 
+    private const COMPACT_MODEL_DEFAULTS = [
+        'openrouter' => 'google/gemini-2.5-flash-lite',
+        'openai' => 'gpt-4.1-mini',
+        'anthropic' => 'claude-sonnet-4-20250514',
+    ];
+
     /**
      * Summarize older messages that would otherwise be dropped from context.
      *
@@ -75,15 +81,8 @@ PROMPT;
         ];
 
         try {
-            $client = $this->createClient();
-            if ($client === null) {
-                error_log('Levi SessionSummarizer: No AI client available');
-                return null;
-            }
-
-            $response = $client->chat($messages);
-            if (is_wp_error($response)) {
-                error_log('Levi SessionSummarizer error: ' . $response->get_error_message());
+            $response = $this->chatWithFallback($messages);
+            if ($response === null) {
                 return null;
             }
 
@@ -98,6 +97,46 @@ PROMPT;
             error_log('Levi SessionSummarizer exception: ' . $e->getMessage());
             return null;
         }
+    }
+
+    /**
+     * Try compact model first, fall back to primary model on failure.
+     */
+    private function chatWithFallback(array $messages): ?array {
+        $settings = new SettingsPage();
+        $provider = $settings->getProvider();
+
+        if ($settings->getApiKeyForProvider($provider) === null) {
+            error_log('Levi SessionSummarizer: No API key for provider ' . $provider);
+            return null;
+        }
+
+        $compactModel = $this->getCompactModel($settings, $provider);
+        $compactClient = AIClientFactory::createWithModel($provider, $compactModel);
+        $response = $compactClient->chat($messages);
+
+        if (!is_wp_error($response)) {
+            return $response;
+        }
+
+        $compactError = $response->get_error_message();
+        error_log('Levi SessionSummarizer: compact model failed (' . ($compactModel ?? 'default') . '): ' . $compactError);
+
+        // Fallback to primary model (only if compact model was different)
+        $primaryModel = $settings->getModelForProvider($provider);
+        if ($compactModel !== null && $compactModel !== $primaryModel) {
+            error_log('Levi SessionSummarizer: falling back to primary model (' . ($primaryModel ?? 'default') . ')');
+            $primaryClient = AIClientFactory::createWithModel($provider, $primaryModel);
+            $fallbackResponse = $primaryClient->chat($messages);
+
+            if (!is_wp_error($fallbackResponse)) {
+                return $fallbackResponse;
+            }
+
+            error_log('Levi SessionSummarizer: primary fallback also failed: ' . $fallbackResponse->get_error_message());
+        }
+
+        return null;
     }
 
     private function formatMessagesForSummary(array $messages): string {
@@ -122,31 +161,18 @@ PROMPT;
     }
 
     /**
-     * Use a fast/cheap model for summarization to minimize cost and latency.
+     * Resolve the model to use for compaction/summarization.
+     * Priority: explicit setting > provider default > null (use provider's default model).
      */
-    private function createClient(): ?AIClientInterface {
-        $settings = new SettingsPage();
-        $provider = $settings->getProvider();
-
-        if ($settings->getApiKeyForProvider($provider) === null) {
-            return null;
-        }
-
-        $summaryModel = $this->getSummaryModel($settings, $provider);
-        return AIClientFactory::createWithModel($provider, $summaryModel);
-    }
-
-    private function getSummaryModel(SettingsPage $settings, string $provider): ?string {
+    private function getCompactModel(SettingsPage $settings, string $provider): ?string {
         $allSettings = $settings->getSettings();
-        $summaryModel = trim((string) ($allSettings['summary_model'] ?? ''));
-        if ($summaryModel !== '') {
-            return $summaryModel;
+
+        // Check new key first, then legacy key for backwards compat
+        $model = trim((string) ($allSettings['compact_model'] ?? $allSettings['summary_model'] ?? ''));
+        if ($model !== '') {
+            return $model;
         }
 
-        if ($provider === 'openrouter') {
-            return 'google/gemini-2.0-flash-001';
-        }
-
-        return null;
+        return self::COMPACT_MODEL_DEFAULTS[$provider] ?? null;
     }
 }

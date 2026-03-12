@@ -3,7 +3,19 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [0.7.1] – 2026-03-10
+## [0.7.2] – 2026-03-11
+- **Session-Learnings deutlich verbessert:** Levi merkt sich jetzt nur noch zeitlose Regeln und Präferenzen – keine Systemzustände („DDEV aktiv“, „Theme XY“), kein allgemeines WordPress-Wissen und keine Prompt-Beispiele mehr. Nutzt dafür Kimi 2.5 statt eines Billig-Modells. Erfasst sowohl explizite Wünsche als auch implizite Präferenzen aus Korrekturen.
+- **Kein „database is locked“ mehr:** Die SQLite-Vector-DB nutzt jetzt WAL-Mode und einen 5-Sekunden-Busy-Timeout. Learnings-Extraktion und Chat können parallel laufen, ohne sich gegenseitig zu blockieren.
+- **Prompt-Caching nur für Anthropic:** Kimi 2.5 auf OpenRouter nutzt eigenes implizites Caching – der vorherige Anthropic-spezifische Ansatz wurde entfernt, damit Kimi korrekt cachen kann.
+- **Stream-Text bleibt sichtbar:** Wenn Levi mit Tools arbeitet, verschwindet seine vorherige Antwort nicht mehr – sie bleibt lesbar, darunter erscheint „Levi arbeitet…“.
+- **Continuation nach Tools: robuster und ehrlich:** Wenn die Zusammenfassung nach einer Tool-Ausführung wegen Timeout fehlschlägt, versucht Levi es erneut mit kleinerem Payload (ohne Tool-Definitionen). Ein Ehrlichkeits-Guard verhindert, dass Levi Ergebnisse erfindet, wenn Tools gerade nicht verfügbar sind – er sagt dann ehrlich, was erledigt wurde und was noch offen ist.
+- **„Levi antwortet…“ bleibt sichtbar:** Der Status-Text verschwindet nicht mehr vorzeitig bei Timeouts; „Levi versucht es erneut…“ erscheint während des Retrys.
+
+## [0.7.1] – 2026-03-11
+- **Levi antwortet deutlich schneller:** Drei Performance-Optimierungen sorgen dafür, dass Levi spürbar weniger Zeit pro Anfrage braucht:
+  - **Prompt Caching:** Der stabile Teil von Levis Identität (soul, rules, knowledge) wird jetzt als eigener System-Prompt-Block gesendet, der von Anbietern wie Anthropic und OpenAI gecacht werden kann. Bei Folgenachrichten werden diese ~18K Tokens nicht erneut verarbeitet.
+  - **Modulare Regeln:** Die Regeldatei (vorher ~14K Tokens in einem Stück) ist jetzt in 7 thematische Module aufgeteilt (core, tools, coding, planning, woocommerce, elementor, cron). Bei einfachen Anfragen (z.B. "Hallo" oder "Welche Plugins habe ich?") lädt Levi nur die relevanten Module — das spart bis zu 10K Tokens pro Anfrage.
+  - **History-Komprimierung in Tool-Loops:** Ab der 2. Iteration in einer Tool-Kette wird die Chat-Historie auf die letzten Nachrichten gekürzt. System-Prompts und Tool-Ergebnisse bleiben vollständig erhalten, aber ältere Konversationsnachrichten werden weggelassen.
 - **`<code>`- und `<pre>`-Tags werden automatisch entfernt:** Beim Schreiben und Patchen von Plugin- und Theme-Dateien entfernt Levi diese Tags jetzt automatisch aus dem HTML-Output, bevor die Datei gespeichert wird. So greifen CSS-Styles zuverlässig und Frontend-Inhalte werden nicht mehr als Monospace-Text angezeigt.
 - **Tab-Benachrichtigungen bei Hintergrund-Tab:** Wenn du in einem anderen Tab arbeitest, zeigt der Browser-Tab-Titel den Levi-Status an: „Levi arbeitet…“ (mit animierten Punkten) während Levi tüftelt, „Levi ist fertig!“ wenn er fertig ist, und „Levi braucht Hilfe“ bei Fehlern. Sobald du zurück zum Tab wechselst, wird der normale Titel wiederhergestellt.
 - **Beiträge vs. Seiten – keine Verwechslung mehr:** Levi hat manchmal Beiträge und Seiten verwechselt (z.B. `get_pages` statt `get_posts` aufgerufen). Das System erkennt das jetzt automatisch und korrigiert Levi, sodass er das richtige Tool nutzt. Zusätzlich sind die Tool-Beschreibungen und Regeln klarer formuliert.

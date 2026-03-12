@@ -9,19 +9,25 @@ class InstallPluginTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Install and activate a WordPress plugin from the repository.';
+        return 'Install, activate, or bulk-update WordPress plugins. '
+            . 'Use action "install" (default) to install a specific plugin by slug. '
+            . 'Use action "update_outdated" to check for and install all available plugin updates — perfect for automated cron tasks.';
     }
 
     public function getParameters(): array {
         return [
+            'action' => [
+                'type' => 'string',
+                'description' => 'Action to perform. "install" (default) to install a specific plugin, "update_outdated" to update all plugins with available updates.',
+                'enum' => ['install', 'update_outdated'],
+            ],
             'plugin_slug' => [
                 'type' => 'string',
-                'description' => 'Plugin slug (e.g., "wordpress-seo" for Yoast)',
-                'required' => true,
+                'description' => 'Plugin slug (e.g., "wordpress-seo" for Yoast). Required for action "install".',
             ],
             'activate' => [
                 'type' => 'boolean',
-                'description' => 'Activate after install',
+                'description' => 'Activate after install (for action "install")',
                 'default' => true,
             ],
         ];
@@ -32,7 +38,16 @@ class InstallPluginTool implements ToolInterface {
     }
 
     public function execute(array $params): array {
-        $slug = sanitize_file_name($params['plugin_slug']);
+        $action = (string) ($params['action'] ?? 'install');
+
+        if ($action === 'update_outdated') {
+            return $this->updateOutdated();
+        }
+
+        $slug = sanitize_file_name($params['plugin_slug'] ?? '');
+        if ($slug === '') {
+            return ['success' => false, 'error' => 'plugin_slug is required for action "install".'];
+        }
         $activate = $params['activate'] ?? true;
 
         if (!function_exists('plugins_api')) {
@@ -83,6 +98,7 @@ class InstallPluginTool implements ToolInterface {
             return [
                 'success' => false,
                 'error' => 'Plugin not found: ' . $api->get_error_message(),
+                'suggestion' => 'Check the exact plugin slug on wordpress.org/plugins/{slug}. Use get_plugins to see already installed plugins.',
             ];
         }
 
@@ -124,6 +140,60 @@ class InstallPluginTool implements ToolInterface {
             'version' => $api->version,
             'activated' => $activate,
             'message' => $activate ? 'Plugin installed and activated.' : 'Plugin installed.',
+        ];
+    }
+
+    private function updateOutdated(): array {
+        if (!function_exists('wp_update_plugins')) {
+            require_once ABSPATH . 'wp-includes/update.php';
+        }
+        if (!class_exists('\Plugin_Upgrader')) {
+            require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+            require_once ABSPATH . 'wp-admin/includes/class-plugin-upgrader.php';
+        }
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        WP_Filesystem();
+
+        wp_update_plugins();
+
+        $updateData = get_site_transient('update_plugins');
+        if (empty($updateData->response)) {
+            return [
+                'success' => true,
+                'updated' => [],
+                'total' => 0,
+                'message' => 'All plugins are up to date.',
+            ];
+        }
+
+        $updated = [];
+        $failed = [];
+        $upgrader = new \Plugin_Upgrader(new \WP_Ajax_Upgrader_Skin());
+
+        foreach ($updateData->response as $pluginFile => $pluginInfo) {
+            $pluginData = get_plugin_data(WP_PLUGIN_DIR . '/' . $pluginFile, false, false);
+            $name = $pluginData['Name'] ?? $pluginFile;
+            $oldVersion = $pluginData['Version'] ?? '?';
+            $newVersion = $pluginInfo->new_version ?? '?';
+
+            $result = $upgrader->upgrade($pluginFile);
+
+            if (is_wp_error($result) || $result === false) {
+                $error = is_wp_error($result) ? $result->get_error_message() : 'Unknown error';
+                $failed[] = ['plugin' => $name, 'file' => $pluginFile, 'error' => $error];
+            } else {
+                $updated[] = ['plugin' => $name, 'file' => $pluginFile, 'from' => $oldVersion, 'to' => $newVersion];
+            }
+        }
+
+        return [
+            'success' => true,
+            'updated' => $updated,
+            'failed' => $failed,
+            'total_updated' => count($updated),
+            'total_failed' => count($failed),
+            'message' => count($updated) . ' plugin(s) updated' . (count($failed) > 0 ? ', ' . count($failed) . ' failed' : '') . '.',
         ];
     }
 }

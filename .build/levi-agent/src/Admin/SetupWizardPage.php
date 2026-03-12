@@ -17,7 +17,7 @@ class SetupWizardPage {
 
     public function addMenuPage(): void {
         add_submenu_page(
-            'options-general.php',
+            'levi-agent-settings',
             'Levi Setup',
             'Levi Setup',
             'manage_options',
@@ -37,7 +37,7 @@ class SetupWizardPage {
 
     public function enqueueAssets(): void {
         $screen = get_current_screen();
-        if (!$screen || $screen->id !== 'settings_page_' . $this->pageSlug) {
+        if (!$screen || !str_contains($screen->id, $this->pageSlug)) {
             return;
         }
 
@@ -72,7 +72,7 @@ class SetupWizardPage {
         }
 
         update_option('levi_setup_wizard_pending', 0);
-        wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=1'));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=1'));
         exit;
     }
 
@@ -104,7 +104,7 @@ class SetupWizardPage {
 
         $apiKey = trim((string) ($_POST['levi_openrouter_api_key'] ?? ''));
         if ($apiKey === '') {
-            wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2&error=missing_key'));
+            wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=2&error=missing_key'));
             exit;
         }
 
@@ -114,16 +114,15 @@ class SetupWizardPage {
         $settings['openrouter_api_key'] = sanitize_text_field($apiKey);
         $settings['openrouter_model'] = 'moonshotai/kimi-k2.5';
         $settings['tool_profile'] = 'standard';
-        $settings['force_exhaustive_reads'] = 1;
         $settings['require_confirmation_destructive'] = 1;
-        $settings['max_tool_iterations'] = 12;
+        $settings['max_tool_iterations'] = 25;
         $settings['history_context_limit'] = 50;
 
         $this->saveSettings($settings);
 
         update_option('levi_plan_tier', 'pro');
 
-        wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=3&saved=pro'));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=3&saved=pro'));
         exit;
     }
 
@@ -142,13 +141,10 @@ class SetupWizardPage {
         }
 
         if ($thoroughness === 'high') {
-            $settings['force_exhaustive_reads'] = 1;
             $settings['history_context_limit'] = 80;
         } elseif ($thoroughness === 'low') {
-            $settings['force_exhaustive_reads'] = 0;
             $settings['history_context_limit'] = 30;
         } else {
-            $settings['force_exhaustive_reads'] = 1;
             $settings['history_context_limit'] = 50;
         }
 
@@ -159,11 +155,11 @@ class SetupWizardPage {
         }
 
         if ($speed === 'fast') {
-            $settings['max_tool_iterations'] = 6;
+            $settings['max_tool_iterations'] = 15;
         } elseif ($speed === 'careful') {
-            $settings['max_tool_iterations'] = 16;
+            $settings['max_tool_iterations'] = 30;
         } else {
-            $settings['max_tool_iterations'] = 10;
+            $settings['max_tool_iterations'] = 25;
         }
 
         $this->saveSettings($settings);
@@ -174,7 +170,7 @@ class SetupWizardPage {
             'speed' => $speed,
         ]);
 
-        wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=4&saved=tuning'));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=4&saved=tuning'));
         exit;
     }
 
@@ -185,16 +181,7 @@ class SetupWizardPage {
         update_option('levi_setup_wizard_pending', 0);
         update_option('levi_setup_completed_at', current_time('mysql'));
 
-        $snapshotStatus = 'skipped';
-        try {
-            $service = new StateSnapshotService();
-            $meta = $service->runManualSync();
-            $snapshotStatus = (string) ($meta['status'] ?? 'done');
-        } catch (\Throwable $e) {
-            $snapshotStatus = 'error';
-        }
-
-        wp_safe_redirect(admin_url('options-general.php?page=' . $this->pageSlug . '&step=4&done=1&snapshot=' . urlencode($snapshotStatus)));
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=4&done=1'));
         exit;
     }
 
@@ -261,14 +248,24 @@ class SetupWizardPage {
             <header class="levi-settings-header">
                 <div class="levi-header-content">
                     <div class="levi-logo">
-                        <span class="levi-logo-icon">🤖</span>
+                        <span class="levi-logo-icon levi-logo-icon-avatar" aria-hidden="true">
+                            <span class="levi-logo-avatar-frame">
+                                <img
+                                    src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>"
+                                    alt=""
+                                    class="levi-logo-avatar"
+                                    loading="lazy"
+                                    decoding="async"
+                                >
+                            </span>
+                        </span>
                         <div class="levi-logo-text">
                             <h1><?php echo esc_html('Levi Einrichtungsassistent'); ?></h1>
                             <span class="levi-version"><?php echo esc_html(sprintf('Schritt %d von 4', $step)); ?></span>
                         </div>
                     </div>
                     <div>
-                        <a class="levi-btn levi-btn-secondary levi-btn-small" href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-settings')); ?>"><?php echo esc_html('Assistent überspringen →'); ?></a>
+                        <a class="levi-btn levi-btn-secondary levi-btn-small" href="<?php echo esc_url(admin_url('admin.php?page=levi-agent-settings')); ?>"><?php echo esc_html('Assistent überspringen →'); ?></a>
                     </div>
                 </div>
             </header>
@@ -291,49 +288,87 @@ class SetupWizardPage {
                         <p><?php _e('Auf den nächsten Seiten führen wir dich sicher durch die Einrichtung.', 'levi-agent'); ?></p>
 
                         <div class="levi-form-actions">
-                            <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Los geht\'s', 'levi-agent'); ?></a>
+                            <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Los geht\'s', 'levi-agent'); ?></a>
                         </div>
                     </section>
                 <?php endif; ?>
 
                 <?php if ($step === 2): ?>
                     <section class="levi-form-card levi-setup-card">
-                        <h2><?php _e('Schritt 2: API-Key', 'levi-agent'); ?></h2>
-                        <p><?php _e('Levi nutzt OpenRouter mit Kimi K2.5 als KI-Modell. Erstelle einen API-Key auf openrouter.ai — die Kosten werden direkt von deinem OpenRouter-Konto abgebucht.', 'levi-agent'); ?></p>
+                        <h2><?php _e('Schritt 2: Mit OpenRouter verbinden', 'levi-agent'); ?></h2>
+                        <p><?php _e('Levi nutzt OpenRouter mit Kimi K2.5 als KI-Modell. Verbinde dein OpenRouter-Konto — die Kosten werden direkt von deinem Konto abgebucht.', 'levi-agent'); ?></p>
 
-                        <div class="levi-setup-info-box">
-                            <strong><?php _e('So bekommst du deinen Key:', 'levi-agent'); ?></strong>
-                            <ol class="levi-setup-list levi-setup-list-numbered">
-                                <li><?php _e('Gehe zu', 'levi-agent'); ?> <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a></li>
-                                <li><?php _e('Erstelle einen Account (Google/GitHub Login)', 'levi-agent'); ?></li>
-                                <li><?php _e('Lade Credits auf (mind. 5 $) und erstelle einen API-Key', 'levi-agent'); ?></li>
-                                <li><?php _e('Füge den Key unten ein — fertig!', 'levi-agent'); ?></li>
-                            </ol>
+                        <div style="margin: 12px 0 16px; padding: 10px 14px; background: rgba(124, 58, 237, 0.08); border-left: 4px solid var(--levi-accent, #7c3aed); border-radius: 4px; font-size: 13px; color: var(--levi-text-secondary, #94a3b8);">
+                            <strong style="color: var(--levi-text-primary, #f1f5f9);"><?php _e('Typische Kosten:', 'levi-agent'); ?></strong>
+                            <?php _e('Ca. 0,01–0,05 $ pro Nachricht bei einfachen Fragen. Bei komplexen Aufgaben wie Plugin-Entwicklung werden deutlich mehr Tokens verbraucht (ca. 0,10–0,50 $ pro Nachricht), da Levi Code generiert, prüft und mehrere Tool-Aufrufe durchführt. Standard-Modell Kimi K2.5: 0,60$/3,00$ pro 1M Tokens — eines der günstigsten Modelle.', 'levi-agent'); ?>
+                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(124, 58, 237, 0.15);">
+                                <strong style="color: var(--levi-text-primary, #f1f5f9); font-size: 14px;"><?php _e('5$ Guthaben reichen für den Einstieg locker aus!', 'levi-agent'); ?></strong>
+                            </div>
                         </div>
 
-                        <?php if ($error === 'missing_key'): ?>
-                            <div class="levi-notice levi-notice-error">
-                                <p><?php _e('Bitte gib einen API-Key ein.', 'levi-agent'); ?></p>
+                        <?php
+                        $oauth = new OpenRouterOAuth();
+                        $isOAuthConnected = $oauth->isOAuthConnected();
+                        ?>
+
+                        <?php if ($isOAuthConnected): ?>
+                            <div class="levi-notice levi-notice-success" style="margin-bottom: 16px;">
+                                <p><span class="dashicons dashicons-yes-alt" style="color: #46b450;"></span> <?php _e('Erfolgreich mit OpenRouter verbunden!', 'levi-agent'); ?></p>
                             </div>
-                        <?php endif; ?>
-
-                        <form method="post" action="">
-                            <?php wp_nonce_field('levi_setup_wizard_step2'); ?>
-                            <input type="hidden" name="levi_setup_action" value="save_pro_setup">
-
-                            <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_openrouter_api_key"><?php _e('OpenRouter API-Key', 'levi-agent'); ?></label>
-                                <input id="levi_openrouter_api_key" name="levi_openrouter_api_key" type="password" class="levi-form-input" placeholder="sk-or-..." required>
-                                <p class="levi-form-help"><?php _e('Dein Key wird sicher gespeichert und nur an OpenRouter gesendet.', 'levi-agent'); ?></p>
-                            </div>
-
-                            <p class="levi-form-help"><?php _e('Modell: Kimi K2.5 (Moonshot)', 'levi-agent'); ?></p>
-
                             <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=1')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
-                                <button type="submit" class="levi-btn levi-btn-primary"><?php _e('Weiter', 'levi-agent'); ?></button>
+                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=1')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=3&saved=pro')); ?>"><?php _e('Weiter', 'levi-agent'); ?></a>
                             </div>
-                        </form>
+
+                        <?php else: ?>
+                            <?php
+                            $oauthUrl = $oauth->getAuthUrl('wizard');
+                            ?>
+
+                            <?php if (!empty($_GET['oauth_error'])): ?>
+                                <div class="levi-notice levi-notice-error" style="margin-bottom: 16px;">
+                                    <p><?php _e('Verbindung fehlgeschlagen. Bitte versuche es erneut oder nutze einen manuellen API-Key.', 'levi-agent'); ?></p>
+                                </div>
+                            <?php endif; ?>
+
+                            <?php if ($error === 'missing_key'): ?>
+                                <div class="levi-notice levi-notice-error">
+                                    <p><?php _e('Bitte gib einen API-Key ein.', 'levi-agent'); ?></p>
+                                </div>
+                            <?php endif; ?>
+
+                            <div style="text-align: center; margin: 24px 0;">
+                                <a href="<?php echo esc_url($oauthUrl); ?>" class="levi-btn levi-btn-primary" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-size: 15px; padding: 12px 24px;">
+                                    <span class="dashicons dashicons-admin-links"></span>
+                                    <?php _e('Mit OpenRouter verbinden', 'levi-agent'); ?>
+                                </a>
+                                <p class="levi-form-help" style="margin-top: 12px;">
+                                    <?php _e('Du wirst zu OpenRouter weitergeleitet, um dein Konto zu verbinden. Erstelle dort ggf. ein Konto und lade mind. 5$ Credits auf.', 'levi-agent'); ?>
+                                </p>
+                            </div>
+
+                            <div style="margin: 20px 0; display: flex; align-items: center; gap: 12px;">
+                                <hr style="flex: 1; border: none; border-top: 1px solid #ddd;">
+                                <span style="color: #999; font-size: 13px;"><?php _e('oder manuell eingeben', 'levi-agent'); ?></span>
+                                <hr style="flex: 1; border: none; border-top: 1px solid #ddd;">
+                            </div>
+
+                            <form method="post" action="">
+                                <?php wp_nonce_field('levi_setup_wizard_step2'); ?>
+                                <input type="hidden" name="levi_setup_action" value="save_pro_setup">
+
+                                <div class="levi-form-group">
+                                    <label class="levi-form-label" for="levi_openrouter_api_key"><?php _e('OpenRouter API-Key', 'levi-agent'); ?></label>
+                                    <input id="levi_openrouter_api_key" name="levi_openrouter_api_key" type="password" class="levi-form-input" placeholder="sk-or-..." required>
+                                    <p class="levi-form-help"><?php _e('Hole deinen Key auf', 'levi-agent'); ?> <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a></p>
+                                </div>
+
+                                <div class="levi-form-actions">
+                                    <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=1')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                    <button type="submit" class="levi-btn levi-btn-primary"><?php _e('Weiter', 'levi-agent'); ?></button>
+                                </div>
+                            </form>
+                        <?php endif; ?>
                     </section>
                 <?php endif; ?>
 
@@ -372,36 +407,36 @@ class SetupWizardPage {
                             </div>
 
                             <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_thoroughness"><?php _e('Wie gründlich soll Levi lesen?', 'levi-agent'); ?></label>
+                                <label class="levi-form-label" for="levi_thoroughness"><?php _e('Wie viel Chat-Verlauf soll Levi berücksichtigen?', 'levi-agent'); ?></label>
                                 <select id="levi_thoroughness" name="levi_thoroughness" class="levi-form-select">
-                                    <option value="low" <?php selected($tuning['thoroughness'], 'low'); ?>><?php _e('Schnell — liest nur das Nötigste', 'levi-agent'); ?></option>
-                                    <option value="balanced" <?php selected($tuning['thoroughness'], 'balanced'); ?>><?php _e('Ausgewogen (empfohlen) — guter Kompromiss', 'levi-agent'); ?></option>
-                                    <option value="high" <?php selected($tuning['thoroughness'], 'high'); ?>><?php _e('Sehr gründlich — liest mehr Inhalte, braucht länger', 'levi-agent'); ?></option>
+                                    <option value="low" <?php selected($tuning['thoroughness'], 'low'); ?>><?php _e('Wenig (30 Nachrichten)', 'levi-agent'); ?></option>
+                                    <option value="balanced" <?php selected($tuning['thoroughness'], 'balanced'); ?>><?php _e('Mittel (50 Nachrichten, empfohlen)', 'levi-agent'); ?></option>
+                                    <option value="high" <?php selected($tuning['thoroughness'], 'high'); ?>><?php _e('Viel (80 Nachrichten)', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Beeinflusst, wie viel Kontext Levi bei jeder Anfrage berücksichtigt.', 'levi-agent'); ?></p>
+                                <p class="levi-form-help"><?php _e('Levi lädt die letzten X Nachrichten aus eurem Chat als Kontext. Mehr = besseres Gedächtnis, aber langsamere Antworten.', 'levi-agent'); ?></p>
                             </div>
 
                             <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_safety_mode"><?php _e('Wie vorsichtig soll Levi bei Änderungen sein?', 'levi-agent'); ?></label>
+                                <label class="levi-form-label" for="levi_safety_mode"><?php _e('Bestätigung vor kritischen Aktionen?', 'levi-agent'); ?></label>
                                 <select id="levi_safety_mode" name="levi_safety_mode" class="levi-form-select">
-                                    <option value="strict" <?php selected($tuning['safety'], 'strict'); ?>><?php _e('Sicher — fragt vor dem Löschen/Ändern nach', 'levi-agent'); ?></option>
-                                    <option value="standard" <?php selected($tuning['safety'], 'standard'); ?>><?php _e('Standard — weniger Nachfragen, schneller', 'levi-agent'); ?></option>
+                                    <option value="strict" <?php selected($tuning['safety'], 'strict'); ?>><?php _e('Ja — Levi fragt vor dem Löschen oder Ändern', 'levi-agent'); ?></option>
+                                    <option value="standard" <?php selected($tuning['safety'], 'standard'); ?>><?php _e('Nein — Levi führt direkt aus', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Im sicheren Modus bestätigt Levi jede Lösch- oder Änderungs-Aktion mit dir.', 'levi-agent'); ?></p>
+                                <p class="levi-form-help"><?php _e('Wenn aktiv, fragt Levi bei destruktiven Aktionen (Löschen, Theme-Wechsel, Plugin-Installation) erst nach deiner Bestätigung.', 'levi-agent'); ?></p>
                             </div>
 
                             <div class="levi-form-group">
-                                <label class="levi-form-label" for="levi_speed_mode"><?php _e('Wie schnell soll Levi antworten?', 'levi-agent'); ?></label>
+                                <label class="levi-form-label" for="levi_speed_mode"><?php _e('Wie viele Arbeitsschritte pro Anfrage?', 'levi-agent'); ?></label>
                                 <select id="levi_speed_mode" name="levi_speed_mode" class="levi-form-select">
-                                    <option value="fast" <?php selected($tuning['speed'], 'fast'); ?>><?php _e('Schnell — weniger Schritte, kürzere Antworten', 'levi-agent'); ?></option>
-                                    <option value="balanced" <?php selected($tuning['speed'], 'balanced'); ?>><?php _e('Ausgewogen (empfohlen)', 'levi-agent'); ?></option>
-                                    <option value="careful" <?php selected($tuning['speed'], 'careful'); ?>><?php _e('Sorgfältig — mehr Schritte, gründlichere Ergebnisse', 'levi-agent'); ?></option>
+                                    <option value="fast" <?php selected($tuning['speed'], 'fast'); ?>><?php _e('Wenig (15 Schritte)', 'levi-agent'); ?></option>
+                                    <option value="balanced" <?php selected($tuning['speed'], 'balanced'); ?>><?php _e('Standard (25 Schritte, empfohlen)', 'levi-agent'); ?></option>
+                                    <option value="careful" <?php selected($tuning['speed'], 'careful'); ?>><?php _e('Viel (30 Schritte)', 'levi-agent'); ?></option>
                                 </select>
-                                <p class="levi-form-help"><?php _e('Bestimmt, wie viele Tool-Schritte Levi pro Anfrage ausführen darf.', 'levi-agent'); ?></p>
+                                <p class="levi-form-help"><?php _e('Jede Tool-Aktion (Seite lesen, Plugin schreiben, etc.) zählt als ein Schritt. Komplexe Aufgaben brauchen mehr Schritte.', 'levi-agent'); ?></p>
                             </div>
 
                             <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=2')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
                                 <button type="submit" class="levi-btn levi-btn-primary"><?php _e('Einstellungen übernehmen', 'levi-agent'); ?></button>
                             </div>
                         </form>
@@ -421,38 +456,165 @@ class SetupWizardPage {
                         <?php if ($done): ?>
                             <div class="levi-setup-payment-state is-active">
                                 <strong><?php _e('Levi ist eingerichtet!', 'levi-agent'); ?></strong>
-                                <p><?php echo esc_html(sprintf('Snapshot-Status: %s', $this->translateSnapshotStatus($snapshot !== '' ? $snapshot : 'done'))); ?></p>
-                                <?php if ($planTier !== ''): ?>
-                                    <p><?php echo esc_html(sprintf('Aktiver Plan: %s', 'Pro')); ?></p>
-                                <?php endif; ?>
                             </div>
-
                             <div class="levi-form-actions">
-                                <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('options-general.php?page=levi-agent-settings')); ?>"><?php _e('Zu den Einstellungen', 'levi-agent'); ?></a>
+                                <a class="levi-btn levi-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=levi-agent-settings')); ?>"><?php _e('Zu den Einstellungen', 'levi-agent'); ?></a>
                                 <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url()); ?>" onclick="setTimeout(function(){ var t = document.getElementById('levi-chat-toggle'); if(t) t.click(); }, 500); return true;"><?php _e('Chat öffnen', 'levi-agent'); ?></a>
                             </div>
                         <?php else: ?>
-                            <p><?php _e('Zum Abschluss erstellt Levi einen Snapshot deiner WordPress-Instanz. Damit kennt er deine Seite, Plugins und Einstellungen.', 'levi-agent'); ?></p>
-                            <p class="levi-form-help levi-hint"><?php _e('Das kann einige Sekunden dauern. Bitte die Seite nicht schließen.', 'levi-agent'); ?></p>
+                            <p><?php _e('Levi lädt jetzt seine Wissensdatenbank herunter und bereitet sie vor. Das kann je nach Server 4-8 Minuten dauern.', 'levi-agent'); ?></p>
+                            <p class="levi-form-help levi-hint"><?php _e('Bitte die Seite nicht schließen, bis alle Schritte abgeschlossen sind.', 'levi-agent'); ?></p>
 
-                            <form method="post" action="" id="levi-setup-complete-form">
+                            <div id="levi-wizard-sync" class="levi-wizard-sync">
+                                <div class="levi-wizard-sync-step" data-phase="fetch_docs">
+                                    <span class="levi-wizard-sync-icon" aria-hidden="true">⏳</span>
+                                    <span class="levi-wizard-sync-label"><?php _e('Dokumentation herunterladen (WordPress, WooCommerce, Elementor)', 'levi-agent'); ?></span>
+                                    <span class="levi-wizard-sync-status"></span>
+                                </div>
+                                <div class="levi-wizard-sync-step" data-phase="sync_memory">
+                                    <span class="levi-wizard-sync-icon" aria-hidden="true">⏳</span>
+                                    <span class="levi-wizard-sync-label"><?php _e('Wissensdatenbank aufbauen', 'levi-agent'); ?></span>
+                                    <span class="levi-wizard-sync-status"></span>
+                                </div>
+                                <div class="levi-wizard-sync-step" data-phase="snapshot">
+                                    <span class="levi-wizard-sync-icon" aria-hidden="true">⏳</span>
+                                    <span class="levi-wizard-sync-label"><?php _e('Website-Snapshot erstellen', 'levi-agent'); ?></span>
+                                    <span class="levi-wizard-sync-status"></span>
+                                </div>
+                            </div>
+
+                            <div id="levi-wizard-sync-error" class="levi-notice levi-notice-error" style="display:none;">
+                                <p id="levi-wizard-sync-error-msg"></p>
+                            </div>
+
+                            <div class="levi-form-actions">
+                                <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=3')); ?>" id="levi-wizard-back-btn"><?php _e('Zurück', 'levi-agent'); ?></a>
+                                <button type="button" class="levi-btn levi-btn-primary" id="levi-wizard-start-btn"><?php _e('Levi jetzt starten', 'levi-agent'); ?></button>
+                            </div>
+
+                            <form method="post" action="" id="levi-wizard-complete-form" style="display:none;">
                                 <?php wp_nonce_field('levi_setup_wizard_step5'); ?>
                                 <input type="hidden" name="levi_setup_action" value="complete_setup">
-                                <div class="levi-form-actions">
-                                    <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=' . $this->pageSlug . '&step=3')); ?>"><?php _e('Zurück', 'levi-agent'); ?></a>
-                                    <button type="submit" class="levi-btn levi-btn-primary" id="levi-setup-complete-btn"><?php _e('Levi jetzt starten', 'levi-agent'); ?></button>
-                                </div>
                             </form>
+
                             <script>
-                            (function(){
-                                var form = document.getElementById('levi-setup-complete-form');
-                                if (!form) return;
-                                form.addEventListener('submit', function() {
-                                    var btn = document.getElementById('levi-setup-complete-btn');
-                                    if (btn) {
-                                        btn.disabled = true;
-                                        btn.textContent = '<?php echo esc_js('Levi wird initialisiert…'); ?>';
+                            (function() {
+                                var ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
+                                var nonce = <?php echo wp_json_encode(wp_create_nonce('levi_admin_nonce')); ?>;
+                                var startBtn = document.getElementById('levi-wizard-start-btn');
+                                var backBtn = document.getElementById('levi-wizard-back-btn');
+                                var syncContainer = document.getElementById('levi-wizard-sync');
+                                var errorBox = document.getElementById('levi-wizard-sync-error');
+                                var errorMsg = document.getElementById('levi-wizard-sync-error-msg');
+                                var completeForm = document.getElementById('levi-wizard-complete-form');
+
+                                if (!startBtn) return;
+
+                                function setStepState(phase, state, statusText) {
+                                    var el = syncContainer.querySelector('[data-phase="' + phase + '"]');
+                                    if (!el) return;
+                                    var icon = el.querySelector('.levi-wizard-sync-icon');
+                                    var status = el.querySelector('.levi-wizard-sync-status');
+                                    if (state === 'running') {
+                                        icon.textContent = '⏳';
+                                        el.classList.add('is-running');
+                                        el.classList.remove('is-done', 'is-error');
+                                    } else if (state === 'done') {
+                                        icon.textContent = '✅';
+                                        el.classList.add('is-done');
+                                        el.classList.remove('is-running', 'is-error');
+                                    } else if (state === 'error') {
+                                        icon.textContent = '❌';
+                                        el.classList.add('is-error');
+                                        el.classList.remove('is-running', 'is-done');
                                     }
+                                    if (statusText) status.textContent = statusText;
+                                }
+
+                                function showError(msg) {
+                                    errorMsg.textContent = msg;
+                                    errorBox.style.display = '';
+                                }
+
+                                function runPhase(phase) {
+                                    return new Promise(function(resolve, reject) {
+                                        setStepState(phase, 'running', '');
+                                        var fd = new FormData();
+                                        fd.append('action', 'levi_wizard_sync');
+                                        fd.append('nonce', nonce);
+                                        fd.append('phase', phase);
+
+                                        var xhr = new XMLHttpRequest();
+                                        xhr.open('POST', ajaxUrl, true);
+                                        xhr.timeout = 600000;
+                                        xhr.onload = function() {
+                                            try {
+                                                var resp = JSON.parse(xhr.responseText);
+                                                if (resp.success) {
+                                                    resolve(resp.data);
+                                                } else {
+                                                    reject(resp.data || 'Unbekannter Fehler');
+                                                }
+                                            } catch(e) {
+                                                reject('Ungültige Server-Antwort');
+                                            }
+                                        };
+                                        xhr.onerror = function() { reject('Netzwerkfehler'); };
+                                        xhr.ontimeout = function() { reject('Zeitüberschreitung — bitte erneut versuchen'); };
+                                        xhr.send(fd);
+                                    });
+                                }
+
+                                async function runAllPhases() {
+                                    startBtn.disabled = true;
+                                    startBtn.textContent = <?php echo wp_json_encode(__('Levi wird initialisiert…', 'levi-agent')); ?>;
+                                    backBtn.style.display = 'none';
+                                    errorBox.style.display = 'none';
+
+                                    try {
+                                        // Phase 1: Fetch docs
+                                        var fetchResult = await runPhase('fetch_docs');
+                                        var sources = fetchResult.result && fetchResult.result.sources ? fetchResult.result.sources : {};
+                                        var fetchInfo = Object.keys(sources).length + ' Quellen geladen';
+                                        setStepState('fetch_docs', 'done', fetchInfo);
+
+                                        // Phase 2: Sync memory (with retry for partials)
+                                        var maxRetries = 5;
+                                        var attempt = 0;
+                                        var totalVectors = 0;
+                                        while (attempt < maxRetries) {
+                                            var syncResult = await runPhase('sync_memory');
+                                            var loaded = syncResult.results && syncResult.results.loaded ? syncResult.results.loaded : {};
+                                            for (var f in loaded) {
+                                                if (loaded[f] && loaded[f].vectors) totalVectors += (loaded[f].new_vectors || 0);
+                                            }
+                                            if (!syncResult.has_partials) break;
+                                            attempt++;
+                                            setStepState('sync_memory', 'running', 'Fortsetzen… (Durchlauf ' + (attempt + 1) + ')');
+                                        }
+                                        var syncInfo = totalVectors + ' Vektoren erstellt';
+                                        if (syncResult.has_partials) {
+                                            syncInfo += ' (wird im Hintergrund fortgesetzt)';
+                                        }
+                                        setStepState('sync_memory', syncResult.has_partials ? 'error' : 'done', syncInfo);
+
+                                        // Phase 3: Snapshot
+                                        await runPhase('snapshot');
+                                        setStepState('snapshot', 'done', '');
+
+                                        // All done — submit the completion form
+                                        completeForm.submit();
+
+                                    } catch(err) {
+                                        showError(typeof err === 'string' ? err : 'Ein Fehler ist aufgetreten. Bitte versuche es erneut.');
+                                        startBtn.disabled = false;
+                                        startBtn.textContent = <?php echo wp_json_encode(__('Sync fortsetzen', 'levi-agent')); ?>;
+                                        backBtn.style.display = '';
+                                    }
+                                }
+
+                                startBtn.addEventListener('click', function() {
+                                    runAllPhases();
                                 });
                             })();
                             </script>

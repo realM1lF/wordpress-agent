@@ -140,6 +140,8 @@ class Registry {
             new ReadErrorLogTool(),
             new WooCommerceProductTool(),
             new WooCommerceShopTool(),
+            new ElementorReadTool(),
+            new HttpFetchTool(),
         ];
 
         $writeTools = [
@@ -154,6 +156,7 @@ class Registry {
             new ManageUserTool(),
             new CreatePluginTool(),
             new WritePluginFileTool(),
+            new PatchPluginFileTool(),
             new DeletePluginFileTool(),
             new WriteThemeFileTool(),
             new CreateThemeTool(),
@@ -161,14 +164,16 @@ class Registry {
             new PostMetaTool(),
             new ManageTaxonomyTool(),
             new WooCommerceManageTool(),
+            new ElementorBuildTool(),
+            new ElementorManageTool(),
             new ManageMenuTool(),
             new ManageCronTool(),
             new UploadMediaTool(),
+            new StoreSessionImageTool(),
         ];
 
         $powerTools = [
             new ExecuteWPCodeTool(),
-            new HttpFetchTool(),
         ];
 
         $tools = $readTools;

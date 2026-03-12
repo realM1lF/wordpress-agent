@@ -115,7 +115,11 @@ class ManageMenuTool implements ToolInterface {
 
         $items = wp_get_nav_menu_items($menuId);
         if ($items === false) {
-            return ['success' => false, 'error' => 'Menu not found.'];
+            return [
+                'success' => false,
+                'error' => 'Menu not found.',
+                'suggestion' => 'Use action "list" to see available menus and their IDs.',
+            ];
         }
 
         $result = [];
@@ -243,7 +247,11 @@ class ManageMenuTool implements ToolInterface {
 
         $sidebarsWidgets = wp_get_sidebars_widgets();
         if (!isset($sidebarsWidgets[$sidebarId])) {
-            return ['success' => false, 'error' => 'Sidebar not found.'];
+            return [
+                'success' => false,
+                'error' => 'Sidebar not found.',
+                'suggestion' => 'Use action "list" to see available sidebars and their IDs.',
+            ];
         }
 
         $widgets = [];

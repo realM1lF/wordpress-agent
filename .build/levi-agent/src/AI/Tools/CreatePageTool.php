@@ -73,11 +73,15 @@ class CreatePageTool implements ToolInterface {
             update_post_meta($pageId, '_wp_page_template', sanitize_text_field($params['template']));
         }
 
+        $created = get_post($pageId);
+        $actualTitle = $created ? $created->post_title : $params['title'];
+        $actualStatus = $created ? $created->post_status : 'draft';
+
         return [
             'success' => true,
             'page_id' => $pageId,
-            'title' => $params['title'],
-            'status' => 'draft',
+            'title' => $actualTitle,
+            'status' => $actualStatus,
             'edit_url' => get_edit_post_link($pageId, 'raw'),
             'preview_url' => get_preview_post_link($pageId),
             'message' => 'Page created as draft. Review before publishing.',

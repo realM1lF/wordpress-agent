@@ -9,7 +9,10 @@ class CreatePluginTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Create a new WordPress plugin scaffold (directory + main plugin file), optionally activate it.';
+        return 'Create a NEW WordPress plugin scaffold (directory + main plugin file), optionally activate it. '
+            . 'This tool ONLY creates new plugins — it will refuse if a plugin with the same slug already exists. '
+            . 'To modify an existing plugin, use patch_plugin_file (small changes) or write_plugin_file (full rewrite). '
+            . 'Always choose a unique slug that does not collide with existing plugins.';
     }
 
     public function getParameters(): array {
@@ -42,11 +45,6 @@ class CreatePluginTool implements ToolInterface {
                 'description' => 'Activate plugin after creating files',
                 'default' => false,
             ],
-            'overwrite' => [
-                'type' => 'boolean',
-                'description' => 'Overwrite existing main plugin file if it exists',
-                'default' => false,
-            ],
             'allow_wporg_slug_collision' => [
                 'type' => 'boolean',
                 'description' => 'Allow using a slug that already exists on wordpress.org',
@@ -66,7 +64,6 @@ class CreatePluginTool implements ToolInterface {
         $author = sanitize_text_field($params['author'] ?? wp_get_current_user()->display_name);
         $version = sanitize_text_field($params['version'] ?? '0.1.0');
         $activate = (bool) ($params['activate'] ?? false);
-        $overwrite = (bool) ($params['overwrite'] ?? false);
         $allowWpOrgSlugCollision = (bool) ($params['allow_wporg_slug_collision'] ?? false);
 
         if ($slug === '' || $name === '') {
@@ -103,30 +100,20 @@ class CreatePluginTool implements ToolInterface {
                 'error' => 'WordPress filesystem is not available.',
             ];
         }
-        $hadMainFile = $filesystem->exists($mainFile);
-        $previousMainContent = null;
-        if ($hadMainFile) {
-            $previousMainContent = $filesystem->get_contents($mainFile);
-            if (!is_string($previousMainContent)) {
-                return [
-                    'success' => false,
-                    'error' => 'Could not read existing main plugin file for safety backup.',
-                ];
-            }
+
+        if ($filesystem->exists($mainFile)) {
+            return [
+                'success' => false,
+                'error' => "A plugin with slug '$slug' already exists. Choose a different, unique slug for the new plugin. "
+                    . "If you want to modify the existing plugin, use write_plugin_file instead.",
+                'existing_plugin' => $pluginBasename,
+            ];
         }
 
         if (!$filesystem->is_dir($pluginDir) && !$filesystem->mkdir($pluginDir, FS_CHMOD_DIR, true)) {
             return [
                 'success' => false,
                 'error' => 'Could not create plugin directory.',
-            ];
-        }
-
-        if ($filesystem->exists($mainFile) && !$overwrite) {
-            return [
-                'success' => false,
-                'error' => 'Main plugin file already exists. Set overwrite=true to replace it.',
-                'plugin_file' => $pluginBasename,
             ];
         }
 
@@ -154,11 +141,7 @@ class CreatePluginTool implements ToolInterface {
         }
         $lint = $this->validatePhpSyntax($mainFile);
         if (($lint['valid'] ?? false) !== true) {
-            if ($hadMainFile && is_string($previousMainContent)) {
-                $filesystem->put_contents($mainFile, $previousMainContent, FS_CHMOD_FILE);
-            } else {
-                $filesystem->delete($mainFile, false, 'f');
-            }
+            $filesystem->delete($mainFile, false, 'f');
             return [
                 'success' => false,
                 'error' => 'Create reverted: PHP syntax check failed for main plugin file. ' . ($lint['error'] ?? 'Unknown lint error.'),
@@ -188,9 +171,10 @@ class CreatePluginTool implements ToolInterface {
             'plugin_file' => $pluginBasename,
             'path' => $mainFile,
             'activated' => $activated,
+            'created_new' => true,
             'message' => $activated
-                ? 'Plugin scaffold created and activated.'
-                : 'Plugin scaffold created.',
+                ? 'New plugin scaffold created and activated.'
+                : 'New plugin scaffold created (not activated).',
         ];
         if (!empty($lint['warning'])) {
             $result['warning'] = $lint['warning'];

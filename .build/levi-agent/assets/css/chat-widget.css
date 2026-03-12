@@ -1,10 +1,10 @@
-/* Levi Chat Widget Styles (modern dark) */
+/* Levi Chat Widget Styles (modern dark – purple accent) */
 .levi-chat-widget {
     position: fixed;
     bottom: 30px;
     right: 30px;
     z-index: 999999;
-    font-family: "Courier New", Courier, monospace;
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
     font-size: 15px;
     font-weight: 500;
 }
@@ -13,7 +13,7 @@
     width: 60px;
     height: 60px;
     border-radius: 50%;
-    background: linear-gradient(145deg, #1f6feb, #1446a0);
+    background: linear-gradient(145deg, #7c3aed, #5b21b6);
     color: #f8fafc;
     border: none;
     cursor: pointer;
@@ -26,7 +26,7 @@
 
 .levi-chat-toggle:hover {
     transform: scale(1.05);
-    box-shadow: 0 10px 28px rgba(2, 6, 23, 0.55);
+    box-shadow: 0 10px 28px rgba(2, 6, 23, 0.55), 0 0 20px rgba(124, 58, 237, 0.25);
 }
 
 .levi-chat-toggle .dashicons {
@@ -76,7 +76,28 @@
     gap: 8px;
 }
 
+.levi-chat-title-avatar-frame {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    padding: 1px;
+    background: linear-gradient(145deg, #8b5cf6, #4c1d95);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(2, 6, 23, 0.45);
+}
+
+.levi-chat-title-avatar {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 6px;
+    background: #020617;
+}
+
 .levi-chat-alpha-badge {
+    --tw-text-opacity: 1;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -86,9 +107,9 @@
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.4px;
-    color: #f8fafc;
-    background: linear-gradient(135deg, #f97316, #ef4444);
-    border: 1px solid rgba(248, 250, 252, 0.2);
+    color: rgb(250 204 21 / var(--tw-text-opacity, 1));
+    background-color: rgb(234 179 8 / 0.1);
+    border: 1px solid rgb(234 179 8 / 0.35);
     box-shadow: 0 0 0 1px rgba(2, 6, 23, 0.2) inset;
 }
 
@@ -139,16 +160,70 @@
     width: 100%;
     max-width: 920px;
     display: flex;
+    align-items: flex-end;
+    gap: 8px;
 }
 
 .levi-message-user {
-    justify-content: flex-end;
+    flex-direction: row-reverse;
     align-self: flex-end;
 }
 
 .levi-message-assistant {
-    justify-content: flex-start;
     align-self: flex-start;
+}
+
+.levi-message-main {
+    position: relative;
+    max-width: 100%;
+}
+
+.levi-message-avatar {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    border-radius: 9px;
+    overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #f8fafc;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.levi-message-avatar-assistant {
+    background: linear-gradient(145deg, #8b5cf6, #5b21b6);
+    border-color: rgba(167, 139, 250, 0.65);
+}
+
+.levi-message-avatar-user {
+    background: #1f2937;
+}
+
+.levi-message-avatar-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.levi-message-avatar-fallback {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+}
+
+.levi-message-avatar .levi-message-avatar-image + .levi-message-avatar-fallback {
+    display: none;
+}
+
+.levi-avatar-fallback-visible .levi-message-avatar-fallback {
+    display: inline-flex;
 }
 
 .levi-message-content {
@@ -163,10 +238,11 @@
 
 .levi-message-user .levi-message-content {
     max-width: min(56ch, 100%);
-    background: #2563eb;
-    color: #eff6ff;
+    background: #7c3aed;
+    color: #f5f3ff;
     border-bottom-right-radius: 6px;
-    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+    box-shadow: 0 6px 18px rgba(124, 58, 237, 0.35);
+    padding-right: 32px;
 }
 
 .levi-message-assistant .levi-message-content {
@@ -242,6 +318,30 @@
     color: #d1d5db;
 }
 
+.levi-session-hint {
+    display: block;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.8em;
+    font-weight: 400;
+    color: rgba(229, 231, 235, 0.65);
+    line-height: 1.4;
+}
+
+.levi-session-alert {
+    display: block;
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    border-radius: 6px;
+    font-size: 0.75em;
+    font-weight: 500;
+    color: rgba(250, 204, 21, 0.95);
+    line-height: 1.35;
+}
+
 .levi-message-assistant .levi-message-content table {
     border-collapse: collapse;
     width: 100%;
@@ -276,87 +376,54 @@
 }
 
 .levi-message-assistant .levi-message-content a {
-    color: #60a5fa;
+    color: #a78bfa;
     text-decoration: underline;
 }
 
 .levi-chat-input-area {
-    padding: 12px;
+    padding: 10px 12px;
     background: #111827;
     border-top: 1px solid #1f2937;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
 }
 
-.levi-chat-upload-row {
+/* Attachments bar */
+.levi-chat-attachments {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-
-.levi-chat-upload-btn,
-.levi-chat-clear-files-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    border: 1px solid #334155;
-    background: #0f172a;
-    color: #d1d5db;
-    border-radius: 6px;
-    height: 32px;
-    padding: 0 10px;
-    cursor: pointer;
-}
-
-.levi-chat-upload-btn:hover,
-.levi-chat-clear-files-btn:hover {
-    background: #1e293b;
-}
-
-.levi-chat-clear-files-btn .dashicons {
-    font-size: 14px;
-    width: 14px;
-    height: 14px;
-}
-
-.levi-chat-upload-btn .dashicons {
-    font-size: 15px;
-    width: 15px;
-    height: 15px;
-}
-
-.levi-chat-upload-status {
-    font-size: 12px;
-    color: #94a3b8;
-    min-height: 18px;
-    text-align: right;
-    margin-left: auto;
-}
-
-.levi-chat-context-hint {
-    font-size: 12px;
-    color: #7dd3fc;
-    min-height: 16px;
+    gap: 6px;
+    padding: 4px 0;
+    min-height: 0;
 }
 
 .levi-chat-file-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
 }
 
 .levi-chat-file-chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    max-width: 180px;
     border: 1px solid #334155;
-    border-radius: 999px;
+    border-radius: 8px;
     background: #0f172a;
-    padding: 4px 10px;
-    font-size: 12px;
+    padding: 4px 8px 4px 4px;
+    font-size: 11px;
     color: #d1d5db;
+}
+
+.levi-chat-file-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 .levi-chat-file-chip-remove {
@@ -364,9 +431,10 @@
     background: transparent;
     color: #94a3b8;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 12px;
     line-height: 1;
-    padding: 0;
+    padding: 0 0 0 2px;
+    flex-shrink: 0;
 }
 
 .levi-chat-file-chip-remove:hover {
@@ -374,15 +442,118 @@
 }
 
 .levi-chat-file-chip .dashicons {
-    font-size: 13px;
-    width: 13px;
-    height: 13px;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    color: #a78bfa;
+    flex-shrink: 0;
+}
+
+.levi-chat-file-chip-thumb {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.levi-chat-clear-files-btn {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+    border-radius: 4px;
+}
+
+.levi-chat-clear-files-btn:hover {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+}
+
+/* Upload button */
+.levi-chat-upload-btn {
+    margin: auto 0;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #94a3b8;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+}
+
+.levi-chat-upload-btn:hover {
+    background: #1e293b;
+    color: #a78bfa;
+}
+
+.levi-chat-upload-btn.levi-uploading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.levi-chat-upload-btn.levi-uploading .dashicons {
+    animation: levi-spin 0.8s linear infinite;
+}
+
+@keyframes levi-spin {
+    to { transform: rotate(360deg); }
+}
+
+.levi-chat-upload-btn .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.levi-chat-web-search-btn {
+    margin: auto 0;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #94a3b8;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.levi-chat-web-search-btn:hover {
+    background: #1e293b;
     color: #60a5fa;
+}
+
+.levi-chat-web-search-btn.levi-web-search-active {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: #3b82f6;
+    color: #60a5fa;
+}
+
+.levi-chat-web-search-btn .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
 }
 
 .levi-chat-input-row {
     display: flex;
-    gap: 10px;
+    align-items: flex-end;
+    gap: 8px;
 }
 
 .levi-chat-input {
@@ -399,14 +570,51 @@
 
 .levi-chat-input:focus {
     outline: none;
-    border-color: #60a5fa;
-    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25);
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.25);
+}
+
+.levi-chat-input:disabled {
+    background: #0d1525;
+    color: #475569;
+    border-color: #1e293b;
+    cursor: not-allowed;
+    opacity: 1;
+    -webkit-text-fill-color: #475569;
+}
+
+.levi-chat-input:disabled::placeholder {
+    color: #334155;
+}
+
+.levi-chat-send:disabled {
+    background: #1e293b;
+    color: #334155;
+    cursor: not-allowed;
+    opacity: 1;
+}
+
+.levi-chat-upload-btn:disabled {
+    background: #0d1525;
+    color: #334155;
+    border-color: #1e293b;
+    cursor: not-allowed;
+    opacity: 1;
+}
+
+.levi-chat-web-search-btn:disabled {
+    background: #0d1525;
+    color: #334155;
+    border-color: #1e293b;
+    cursor: not-allowed;
+    opacity: 1;
 }
 
 .levi-chat-send {
+    margin: auto 0;
     width: 44px;
     height: 44px;
-    background: #2563eb;
+    background: #7c3aed;
     color: #f8fafc;
     border: none;
     border-radius: 8px;
@@ -417,7 +625,7 @@
 }
 
 .levi-chat-send:hover {
-    background: #1d4ed8;
+    background: #6d28d9;
 }
 
 .levi-chat-send .dashicons {
@@ -485,11 +693,11 @@
 .levi-chat-progress-fill {
     width: 0;
     height: 100%;
-    background: linear-gradient(90deg, #38bdf8, #3b82f6);
+    background: linear-gradient(90deg, #a78bfa, #7c3aed);
     transition: width 0.28s ease;
 }
 
-/* Indeterminate progress: honest "working" indicator, no fake percentage */
+/* Indeterminate progress */
 .levi-chat-progress-indeterminate {
     position: relative;
 }
@@ -500,7 +708,7 @@
     left: 0;
     height: 100%;
     width: 40%;
-    background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.6), rgba(59, 130, 246, 0.8), transparent);
+    background: linear-gradient(90deg, transparent, rgba(167, 139, 250, 0.6), rgba(124, 58, 237, 0.8), transparent);
     border-radius: 999px;
     animation: levi-progress-shimmer 1.8s ease-in-out infinite;
 }
@@ -508,7 +716,7 @@
 .levi-typing-complete .levi-chat-progress-shimmer {
     animation: none;
     width: 100%;
-    background: linear-gradient(90deg, #38bdf8, #3b82f6);
+    background: linear-gradient(90deg, #a78bfa, #7c3aed);
     transition: width 0.2s ease;
 }
 
@@ -520,6 +728,168 @@
 @keyframes levi-typing {
     0%, 60%, 100% { transform: translateY(0); }
     30% { transform: translateY(-10px); }
+}
+
+/* Stop button */
+.levi-chat-stop {
+    margin: auto 0;
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+.levi-chat-stop:hover {
+    background: #dc2626;
+}
+.levi-chat-stop .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+/* Attachments shown inside user message bubble */
+.levi-message-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.levi-msg-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px 3px 3px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    font-size: 11px;
+    color: rgba(239, 246, 255, 0.85);
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.levi-msg-file .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+.levi-msg-file-thumb {
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+/* Edit button on user messages */
+.levi-message-edit-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 24px;
+    height: 24px;
+    background: rgba(0, 0, 0, 0.2);
+    border: none;
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    padding: 0;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    font-size: 14px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.levi-message-edit-btn::before {
+    margin: 0;
+}
+.levi-message-user .levi-message-main:hover .levi-message-edit-btn {
+    opacity: 1;
+}
+.levi-message-edit-btn:hover {
+    color: #fff;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.levi-message-time {
+    display: block;
+    font-size: 10px;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.35);
+    margin-top: 4px;
+    user-select: none;
+}
+.levi-message-user .levi-message-time {
+    text-align: right;
+}
+
+/* Confirmation Card (Dark Chat Theme) */
+.levi-confirmation-card {
+    margin: 8px 16px 8px 52px;
+    padding: 12px 16px;
+    background: rgba(124, 58, 237, 0.12);
+    border: 1px solid rgba(139, 92, 246, 0.4);
+    border-radius: 12px;
+    animation: levi-fade-in 0.2s ease;
+}
+.levi-confirmation-label {
+    font-size: 13px;
+    color: #e5e7eb;
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+.levi-confirmation-buttons {
+    display: flex;
+    gap: 8px;
+}
+.levi-confirm-btn {
+    padding: 6px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: opacity 0.15s, background 0.15s;
+}
+.levi-confirm-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.levi-confirm-btn-primary {
+    background: #7c3aed;
+    color: #fff;
+}
+.levi-confirm-btn-primary:hover:not(:disabled) {
+    background: #6d28d9;
+}
+.levi-confirm-btn-secondary {
+    background: rgba(255, 255, 255, 0.12);
+    color: #e5e7eb;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.levi-confirm-btn-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.18);
+}
+.levi-confirmation-loading .levi-confirmation-label {
+    opacity: 0.6;
+}
+@keyframes levi-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 900px) {
@@ -540,3 +910,4 @@
     .levi-message-user .levi-message-content {
         max-width: min(48ch, 100%);
     }
+}

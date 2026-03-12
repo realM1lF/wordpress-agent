@@ -53,6 +53,39 @@
             });
         });
 
+        // OAuth disconnect button
+        $('#levi-oauth-disconnect').on('click', function() {
+            var confirmMsg = (leviSettings.i18n && leviSettings.i18n.confirmDisconnect)
+                ? leviSettings.i18n.confirmDisconnect
+                : 'Disconnect from OpenRouter? You will need to reconnect or enter an API key manually.';
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+            var $btn = $(this);
+            $btn.prop('disabled', true).addClass('levi-loading');
+
+            $.ajax({
+                url: leviSettings.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'levi_oauth_disconnect',
+                    nonce: leviSettings.nonce,
+                },
+                success: function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data && response.data.message ? response.data.message : 'Error');
+                        $btn.prop('disabled', false).removeClass('levi-loading');
+                    }
+                },
+                error: function() {
+                    alert('Request failed');
+                    $btn.prop('disabled', false).removeClass('levi-loading');
+                }
+            });
+        });
+
         // Sync changed memory files button
         $('#levi-reload-memories').on('click', function() {
             const $btn = $(this);

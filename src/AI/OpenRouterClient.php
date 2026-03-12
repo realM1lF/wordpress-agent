@@ -3,9 +3,11 @@
 namespace Levi\Agent\AI;
 
 use Levi\Agent\Admin\SettingsPage;
+use Levi\Agent\AI\Concerns\RetriableApiCall;
 use WP_Error;
 
 class OpenRouterClient implements AIClientInterface {
+    use RetriableApiCall;
     private const API_BASE = 'https://openrouter.ai/api/v1';
     private ?string $apiKey;
     private string $model;
@@ -39,7 +41,7 @@ class OpenRouterClient implements AIClientInterface {
         $temperature = $this->resolveTemperature($messages);
         $payload = [
             'model' => $model,
-            'messages' => $messages,
+            'messages' => $this->applyCacheControl($messages),
             'temperature' => $temperature,
             'max_tokens' => $this->maxTokens,
         ];
@@ -49,44 +51,10 @@ class OpenRouterClient implements AIClientInterface {
             $payload['tool_choice'] = 'auto';
         }
 
-        return $this->executeWithRetry($payload, $heartbeat);
-    }
-
-    private function executeWithRetry(array $payload, ?callable $heartbeat = null, int $maxRetries = 3): array|WP_Error {
-        $lastError = null;
-        $backoffSeconds = [1, 2, 4];
-
-        for ($attempt = 0; $attempt <= $maxRetries; $attempt++) {
-            if ($attempt > 0) {
-                $delay = $backoffSeconds[$attempt - 1] ?? 4;
-                error_log(sprintf('Levi OpenRouter: retry %d/%d after %ds', $attempt, $maxRetries, $delay));
-                sleep($delay);
-            }
-
-            $result = $this->executeApiCall($payload, $heartbeat);
-
-            if (!is_wp_error($result)) {
-                return $result;
-            }
-
-            $lastError = $result;
-            $errData = $result->get_error_data();
-            $httpStatus = is_array($errData) ? (int) ($errData['status'] ?? 0) : 0;
-            $errMsg = mb_strtolower($result->get_error_message());
-
-            $isRetriable = in_array($httpStatus, [429, 502, 503], true)
-                || str_contains($errMsg, 'timed out')
-                || str_contains($errMsg, 'curl error 28')
-                || str_contains($errMsg, 'rate limit')
-                || str_contains($errMsg, 'overloaded')
-                || str_contains($errMsg, 'server error');
-
-            if (!$isRetriable) {
-                return $lastError;
-            }
-        }
-
-        return $lastError;
+        return $this->executeWithRetry(
+            fn() => $this->executeApiCall($payload, $heartbeat),
+            'OpenRouter'
+        );
     }
 
     private function executeApiCall(array $payload, ?callable $heartbeat = null): array|WP_Error {
@@ -201,6 +169,41 @@ class OpenRouterClient implements AIClientInterface {
         return $body;
     }
 
+    /**
+     * Add cache_control breakpoints to system messages.
+     *
+     * Only applied for Anthropic models which require explicit cache_control.
+     * All other providers (Moonshot/Kimi, OpenAI, DeepSeek, Gemini) use
+     * automatic implicit caching — converting content to array format
+     * would break their caching and waste tokens.
+     */
+    private function applyCacheControl(array $messages): array {
+        if (!str_starts_with($this->model, 'anthropic/')) {
+            return $messages;
+        }
+
+        $systemIndex = 0;
+        foreach ($messages as $i => $msg) {
+            if (($msg['role'] ?? '') !== 'system') {
+                continue;
+            }
+            $content = $msg['content'] ?? '';
+            if (!is_string($content)) {
+                continue;
+            }
+            $minLength = $systemIndex === 0 ? 1024 : 256;
+            if (mb_strlen($content) >= $minLength) {
+                $messages[$i]['content'] = [[
+                    'type' => 'text',
+                    'text' => $content,
+                    'cache_control' => ['type' => 'ephemeral'],
+                ]];
+            }
+            $systemIndex++;
+        }
+        return $messages;
+    }
+
     private function resolveTemperature(array $messages): float {
         $lastUserMessage = '';
         for ($i = count($messages) - 1; $i >= 0; $i--) {
@@ -219,63 +222,149 @@ class OpenRouterClient implements AIClientInterface {
         return $isOperationalTask ? 0.2 : 0.7;
     }
 
-    public function streamChat(array $messages, callable $onChunk): array|WP_Error {
+    public function streamChat(array $messages, callable $onChunk, array $tools = []): array|WP_Error {
         if (!$this->apiKey) {
             return new WP_Error('not_configured', 'OpenRouter API key not configured');
         }
 
+        if (!function_exists('curl_init')) {
+            return new WP_Error('curl_missing', 'cURL extension required for streaming');
+        }
+
+        $temperature = $this->resolveTemperature($messages);
         $payload = [
             'model' => $this->model,
-            'messages' => $messages,
-            'temperature' => 0.7,
+            'messages' => $this->applyCacheControl($messages),
+            'temperature' => $temperature,
             'max_tokens' => $this->maxTokens,
             'stream' => true,
+            'stream_options' => ['include_usage' => true],
         ];
 
-        // For streaming, we need to use raw cURL
+        if (!empty($tools)) {
+            $payload['tools'] = $tools;
+            $payload['tool_choice'] = 'auto';
+        }
+
+        $fullContent = '';
+        $finishReason = null;
+        $usage = [];
+        $model = null;
+        $hasToolCalls = false;
+        $toolCallChunks = [];
+        $sseBuffer = '';
+
         $ch = curl_init(self::API_BASE . '/chat/completions');
-        
+
         curl_setopt_array($ch, [
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($payload),
-            CURLOPT_HTTPHEADER => [
-                'Authorization: Bearer ' . $this->apiKey,
-                'Content-Type: application/json',
-                'HTTP-Referer: ' . get_site_url(),
-                'X-Title: Levi WordPress Agent',
-                'Accept: text/event-stream',
-            ],
+            CURLOPT_HTTPHEADER => array_map(
+                fn($k, $v) => "$k: $v",
+                array_keys($this->getApiHeaders()),
+                array_values($this->getApiHeaders())
+            ),
             CURLOPT_RETURNTRANSFER => false,
-            CURLOPT_WRITEFUNCTION => function ($ch, $data) use ($onChunk) {
-                $lines = explode("\n", $data);
-                foreach ($lines as $line) {
+            CURLOPT_WRITEFUNCTION => function ($ch, $data) use ($onChunk, &$fullContent, &$finishReason, &$usage, &$model, &$hasToolCalls, &$toolCallChunks, &$sseBuffer) {
+                $sseBuffer .= $data;
+                while (($pos = strpos($sseBuffer, "\n")) !== false) {
+                    $line = substr($sseBuffer, 0, $pos);
+                    $sseBuffer = substr($sseBuffer, $pos + 1);
                     $line = trim($line);
-                    if (strpos($line, 'data: ') === 0) {
-                        $json = substr($line, 6);
-                        if ($json === '[DONE]') {
-                            return strlen($data);
+
+                    if ($line === '' || !str_starts_with($line, 'data: ')) {
+                        continue;
+                    }
+
+                    $json = substr($line, 6);
+                    if ($json === '[DONE]') {
+                        continue;
+                    }
+
+                    $chunk = json_decode($json, true);
+                    if (!is_array($chunk)) {
+                        continue;
+                    }
+
+                    if ($model === null && !empty($chunk['model'])) {
+                        $model = $chunk['model'];
+                    }
+
+                    if (!empty($chunk['usage'])) {
+                        $usage = $chunk['usage'];
+                    }
+
+                    $choice = $chunk['choices'][0] ?? null;
+                    if ($choice === null) {
+                        continue;
+                    }
+
+                    if (isset($choice['finish_reason']) && $choice['finish_reason'] !== null) {
+                        $finishReason = $choice['finish_reason'];
+                    }
+
+                    $delta = $choice['delta'] ?? [];
+
+                    if (!empty($delta['tool_calls'])) {
+                        $hasToolCalls = true;
+                        foreach ($delta['tool_calls'] as $tc) {
+                            $idx = $tc['index'] ?? 0;
+                            if (!isset($toolCallChunks[$idx])) {
+                                $toolCallChunks[$idx] = [
+                                    'id' => $tc['id'] ?? '',
+                                    'type' => 'function',
+                                    'function' => ['name' => '', 'arguments' => ''],
+                                ];
+                            }
+                            if (!empty($tc['id'])) {
+                                $toolCallChunks[$idx]['id'] = $tc['id'];
+                            }
+                            if (!empty($tc['function']['name'])) {
+                                $toolCallChunks[$idx]['function']['name'] .= $tc['function']['name'];
+                            }
+                            if (isset($tc['function']['arguments'])) {
+                                $toolCallChunks[$idx]['function']['arguments'] .= $tc['function']['arguments'];
+                            }
                         }
-                        $chunk = json_decode($json, true);
-                        if ($chunk && isset($chunk['choices'][0]['delta']['content'])) {
-                            $onChunk($chunk['choices'][0]['delta']['content']);
-                        }
+                        continue;
+                    }
+
+                    if (isset($delta['content']) && $delta['content'] !== '') {
+                        $fullContent .= $delta['content'];
+                        $onChunk($delta['content']);
                     }
                 }
+
                 return strlen($data);
             },
             CURLOPT_TIMEOUT => $this->timeout,
         ]);
 
         curl_exec($ch);
-        
+
         if (curl_errno($ch)) {
             $error = curl_error($ch);
+            $errno = curl_errno($ch);
             curl_close($ch);
-            return new WP_Error('curl_error', $error);
+            $isTimeout = $errno === CURLE_OPERATION_TIMEDOUT || $errno === 28;
+            return new WP_Error($isTimeout ? 'timeout' : 'curl_error', $error);
         }
 
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-        return ['success' => true];
+
+        if ($httpCode !== 200) {
+            return new WP_Error('api_error', "OpenRouter streaming returned HTTP $httpCode", ['status' => $httpCode]);
+        }
+
+        return [
+            'content' => $fullContent,
+            'finish_reason' => $finishReason ?? 'stop',
+            'usage' => $usage,
+            'model' => $model ?? $this->model,
+            'has_tool_calls' => $hasToolCalls,
+            'tool_calls' => $hasToolCalls ? array_values($toolCallChunks) : [],
+        ];
     }
 
     public function getAvailableModels(): array|WP_Error {
