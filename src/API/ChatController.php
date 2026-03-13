@@ -883,6 +883,7 @@ class ChatController extends WP_REST_Controller {
         return [
             'choices' => [[
                 'message' => [
+                    'role' => 'assistant',
                     'content' => $streamResult['content'] ?? '',
                     'tool_calls' => $streamResult['tool_calls'] ?? [],
                 ],
