@@ -526,7 +526,7 @@
             if (isSending) {
                 send.style.display = 'none';
                 if (stop) stop.style.display = 'inline-flex';
-                if (document.hidden) startTitleWorking();
+                startTitleWorking();
             } else {
                 send.style.display = '';
                 if (stop) stop.style.display = 'none';
@@ -538,7 +538,6 @@
 
         document.addEventListener('visibilitychange', function() {
             if (document.hidden && sendInFlight) startTitleWorking();
-            if (!document.hidden && sendInFlight) stopTitleWorking();
         });
 
         // Warn when leaving/reloading while Levi is processing
