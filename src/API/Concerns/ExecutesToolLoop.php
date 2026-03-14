@@ -171,10 +171,13 @@ trait ExecutesToolLoop
                     'success' => $result['success'] ?? false,
                 ]);
 
+                $toolContent = $this->compactToolResultForModel($result);
+                $toolContent .= $this->buildWriteBudgetWarning($functionName);
+
                 $messages[] = [
                     'role' => 'tool',
                     'tool_call_id' => $toolCallId,
-                    'content' => $this->compactToolResultForModel($result),
+                    'content' => $toolContent,
                 ];
             }
 
@@ -210,6 +213,11 @@ trait ExecutesToolLoop
                 foreach ($smokeTest as $st) {
                     $messages[] = $st;
                 }
+            }
+
+            $envWarnings = $this->injectPostWriteEnvironmentWarnings($toolCalls, $toolResults);
+            foreach ($envWarnings as $ew) {
+                $messages[] = $ew;
             }
 
             $integrationCheck = $this->injectPostWriteIntegrationCheck($toolCalls, $toolResults);
@@ -276,7 +284,11 @@ trait ExecutesToolLoop
                         'tool' => 'completion_gate',
                         'iteration' => $iteration,
                     ]);
-                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $assistantHistoryEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    if (!empty($messageData['reasoning_content'])) {
+                        $assistantHistoryEntry['reasoning_content'] = $messageData['reasoning_content'];
+                    }
+                    $messages[] = $assistantHistoryEntry;
                     $messages[] = [
                         'role' => 'system',
                         'content' => "[SYSTEM – COMPLETION CHECK FAILED]\n" . $completionIssues
@@ -321,7 +333,11 @@ trait ExecutesToolLoop
 
                 if ($finalMessage === '') {
                     error_log('Levi: empty AI response after tool loop, nudging for summary');
-                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $assistantHistoryEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    if (!empty($messageData['reasoning_content'])) {
+                        $assistantHistoryEntry['reasoning_content'] = $messageData['reasoning_content'];
+                    }
+                    $messages[] = $assistantHistoryEntry;
                     $messages[] = [
                         'role' => 'system',
                         'content' => '[SYSTEM] Deine letzte Antwort war leer. Fasse jetzt kurz und freundlich zusammen, '
@@ -620,11 +636,13 @@ trait ExecutesToolLoop
                     'summary' => $this->summarizeToolResult($result),
                 ];
 
-                // Add tool result to conversation
+                $toolContent = $this->compactToolResultForModel($result);
+                $toolContent .= $this->buildWriteBudgetWarning($functionName);
+
                 $messages[] = [
                     'role' => 'tool',
                     'tool_call_id' => $toolCallId,
-                    'content' => $this->compactToolResultForModel($result),
+                    'content' => $toolContent,
                 ];
             }
 
@@ -648,6 +666,11 @@ trait ExecutesToolLoop
             $smokeTest = $this->injectPostPluginSmokeTest($toolCalls, $toolResults);
             foreach ($smokeTest as $st) {
                 $messages[] = $st;
+            }
+
+            $envWarnings = $this->injectPostWriteEnvironmentWarnings($toolCalls, $toolResults);
+            foreach ($envWarnings as $ew) {
+                $messages[] = $ew;
             }
 
             $integrationCheck = $this->injectPostWriteIntegrationCheck($toolCalls, $toolResults);
@@ -700,7 +723,11 @@ trait ExecutesToolLoop
                 $completionIssues = $this->checkWriteCompleteness($toolResults);
                 if ($completionIssues !== null && $completionGateCount < 2) {
                     $completionGateCount++;
-                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $assistantHistoryEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    if (!empty($messageData['reasoning_content'])) {
+                        $assistantHistoryEntry['reasoning_content'] = $messageData['reasoning_content'];
+                    }
+                    $messages[] = $assistantHistoryEntry;
                     $messages[] = [
                         'role' => 'system',
                         'content' => "[SYSTEM – COMPLETION CHECK FAILED]\n" . $completionIssues
@@ -745,7 +772,11 @@ trait ExecutesToolLoop
 
                 if ($finalMessage === '') {
                     error_log('Levi: empty AI response after tool loop (classic), nudging for summary');
-                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $assistantHistoryEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    if (!empty($messageData['reasoning_content'])) {
+                        $assistantHistoryEntry['reasoning_content'] = $messageData['reasoning_content'];
+                    }
+                    $messages[] = $assistantHistoryEntry;
                     $messages[] = [
                         'role' => 'system',
                         'content' => '[SYSTEM] Deine letzte Antwort war leer. Fasse jetzt kurz und freundlich zusammen, '
@@ -1081,14 +1112,75 @@ trait ExecutesToolLoop
             }
         }
 
-        if ($consecutiveCount < 2) {
+        if ($consecutiveCount >= 2) {
+            return '[SYSTEM] Du rufst dasselbe Tool (' . $currentTool . ') wiederholt mit exakt denselben Argumenten auf. '
+                . 'Das deutet auf eine Schleife hin. Waehle einen anderen Ansatz: '
+                . 'Wenn patch_plugin_file fehlgeschlagen ist, nutze write_plugin_file zum Neuschreiben. '
+                . 'Wenn du eine Datei bereits gelesen hast, lies sie nicht nochmal – handele stattdessen.';
+        }
+
+        $errorLoopMsg = $this->detectErrorLoop($toolResults, $currentTool);
+        if ($errorLoopMsg !== null) {
+            return $errorLoopMsg;
+        }
+
+        return null;
+    }
+
+    /**
+     * Detect when the same tool produces the same error repeatedly (even with different arguments).
+     * This catches cases like write_plugin_file → activate → "invalid header" repeated
+     * with slightly different content each time.
+     */
+    private function detectErrorLoop(array $toolResults, string $currentTool): ?string {
+        $recentErrors = [];
+        $lookback = min(count($toolResults), 8);
+
+        for ($i = count($toolResults) - 1; $i >= max(0, count($toolResults) - $lookback); $i--) {
+            $tr = $toolResults[$i];
+            if (($tr['tool'] ?? '') !== $currentTool) {
+                continue;
+            }
+            $res = $tr['result'] ?? [];
+            if (($res['success'] ?? true) === false && !empty($res['error'])) {
+                $recentErrors[] = $res['error'];
+            }
+        }
+
+        if (count($recentErrors) < 2) {
             return null;
         }
 
-        return '[SYSTEM] Du rufst dasselbe Tool (' . $currentTool . ') wiederholt mit exakt denselben Argumenten auf. '
-            . 'Das deutet auf eine Schleife hin. Waehle einen anderen Ansatz: '
-            . 'Wenn patch_plugin_file fehlgeschlagen ist, nutze write_plugin_file zum Neuschreiben. '
-            . 'Wenn du eine Datei bereits gelesen hast, lies sie nicht nochmal – handele stattdessen.';
+        $firstError = $recentErrors[0];
+        $sameErrorCount = 0;
+        foreach ($recentErrors as $err) {
+            if ($err === $firstError) {
+                $sameErrorCount++;
+            }
+        }
+
+        if ($sameErrorCount >= 2) {
+            return "[SYSTEM] ACHTUNG: Das Tool '$currentTool' hat {$sameErrorCount}x denselben Fehler produziert: \"{$firstError}\". "
+                . "Wiederhole NICHT denselben Ansatz. Analysiere die Ursache: "
+                . "Lies die betroffene Datei mit read_plugin_file, pruefe das Error-Log mit read_error_log, "
+                . "oder nutze ein anderes Tool. Falls ein Plugin nicht aktiviert werden kann, pruefe ob die Datei "
+                . "existiert und einen gueltigen Plugin-Header hat.";
+        }
+
+        return null;
+    }
+
+    private function buildWriteBudgetWarning(string $toolName): string {
+        if (!$this->isWriteTool($toolName)) {
+            return '';
+        }
+        $remaining = $this->toolGuard->getMaxWriteCalls() - $this->toolGuard->getWriteCallCount();
+        if ($remaining > 5 || $remaining < 0) {
+            return '';
+        }
+        return "\n\n[BUDGET-WARNUNG] Noch {$remaining} von {$this->toolGuard->getMaxWriteCalls()} "
+            . "Schreiboperationen uebrig. Plane die verbleibenden Writes sorgfaeltig. "
+            . "Vermeide Trial-and-Error — lies Dateien und analysiere Fehler bevor du schreibst.";
     }
 
     private function isSensitiveAuditKey(string $key): bool {

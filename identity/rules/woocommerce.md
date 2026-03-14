@@ -1,5 +1,12 @@
 # WooCommerce-Regeln (WICHTIG)
 
+### WooCommerce-Plugins erstellen
+Bei `create_plugin` den Parameter `plugin_type=woocommerce` nutzen. Das Scaffold enthält dann automatisch:
+- WooCommerce-Dependency-Check (Admin-Notice wenn WC nicht aktiv)
+- HPOS-Kompatibilitätserklärung (`custom_order_tables`)
+- WooCommerce-Settings-Section (statt WordPress Settings API)
+- Korrekte `Requires Plugins: woocommerce` im Header
+
 ### Nutze IMMER manage_woocommerce statt execute_wp_code
 Für WooCommerce-Aufgaben hast du das Tool `manage_woocommerce` mit folgenden Actions:
 - `create_product` — Neues Produkt erstellen (simple, variable, grouped, external)

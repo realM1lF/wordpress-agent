@@ -11,7 +11,10 @@ class GetPostTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get detailed information about a specific post by ID or title.';
+        return 'Get detailed information about a single WordPress post, page, or custom post type entry. '
+            . 'Retrieves full content, title, status, author, categories, tags, featured image, and meta fields. '
+            . 'Accepts either a post ID or a title to search by. '
+            . 'Returns more detail than get_posts — use this when you need the full content of a specific item.';
     }
 
     public function getParameters(): array {

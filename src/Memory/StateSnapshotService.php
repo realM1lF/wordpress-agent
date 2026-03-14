@@ -23,9 +23,9 @@ class StateSnapshotService {
         add_action('admin_init', [$this, 'maybeRunOverdueTasks']);
 
         add_action(self::EVENT_SNAPSHOT_HOOK, [$this, 'runDailySync']);
-        add_action('activated_plugin', [self::class, 'scheduleSnapshotUpdate']);
-        add_action('deactivated_plugin', [self::class, 'scheduleSnapshotUpdate']);
-        add_action('switch_theme', [self::class, 'scheduleSnapshotUpdate']);
+        add_action('activated_plugin', [self::class, 'runImmediateSnapshot']);
+        add_action('deactivated_plugin', [self::class, 'runImmediateSnapshot']);
+        add_action('switch_theme', [self::class, 'runImmediateSnapshot']);
     }
 
     public function ensureSchedule(): void {
@@ -125,18 +125,22 @@ class StateSnapshotService {
     }
 
     /**
-     * Schedule a snapshot update with debounce (max 1 per 5 minutes).
-     * Uses wp_schedule_single_event with a 5-second delay so WordPress
-     * has finished updating its internal state before we capture.
+     * Run snapshot synchronously on plugin activation/deactivation/theme switch.
+     * Debounced (max 1 per 60 seconds) to avoid redundant work during bulk operations.
+     * Runs inline so the updated environment info is immediately available
+     * to Levi in the same request (no cron delay).
      */
-    public static function scheduleSnapshotUpdate(): void {
+    public static function runImmediateSnapshot(): void {
         if (get_transient(self::EVENT_DEBOUNCE_KEY)) {
             return;
         }
-        set_transient(self::EVENT_DEBOUNCE_KEY, '1', 5 * MINUTE_IN_SECONDS);
+        set_transient(self::EVENT_DEBOUNCE_KEY, '1', 60);
 
-        if (!wp_next_scheduled(self::EVENT_SNAPSHOT_HOOK)) {
-            wp_schedule_single_event(time() + 5, self::EVENT_SNAPSHOT_HOOK);
+        try {
+            $service = new self();
+            $service->runDailySync();
+        } catch (\Throwable $e) {
+            error_log('Levi StateSnapshot immediate sync failed: ' . $e->getMessage());
         }
     }
 
@@ -343,6 +347,18 @@ class StateSnapshotService {
         return is_array($meta) ? $meta : [];
     }
 
+    /**
+     * Return the environment section from the last cached snapshot.
+     * Used by PostProcessing to inject environment-aware hints into tool responses.
+     *
+     * @return array{editor?: string, widgets?: string, woocommerce_active?: bool, woocommerce_pages?: array, elementor_active?: bool}
+     */
+    public static function getCachedEnvironment(): array {
+        $lastData = get_option(self::LAST_OPTION, []);
+        $snapshot = is_array($lastData['snapshot'] ?? null) ? $lastData['snapshot'] : [];
+        return is_array($snapshot['environment'] ?? null) ? $snapshot['environment'] : [];
+    }
+
     public static function getPromptContext(): string {
         $meta = get_option(self::META_OPTION, []);
         if (!is_array($meta) || empty($meta['captured_at'])) {
@@ -446,6 +462,7 @@ class StateSnapshotService {
             'captured_at' => current_time('mysql'),
             'site_url' => get_site_url(),
             'wp_version' => get_bloginfo('version'),
+            'php_version' => PHP_VERSION,
             'active_theme' => [
                 'stylesheet' => $theme->get_stylesheet(),
                 'name' => (string) $theme->get('Name'),
@@ -604,7 +621,9 @@ class StateSnapshotService {
         $lines = [];
 
         $wpVersion = (string) ($snapshot['wp_version'] ?? 'unknown');
+        $phpVersion = (string) ($snapshot['php_version'] ?? PHP_VERSION);
         $lines[] = '- WordPress: ' . $wpVersion;
+        $lines[] = '- PHP: ' . $phpVersion;
 
         $isBlockTheme = !empty($snapshot['active_theme']['is_block_theme']);
         $themeName = (string) ($snapshot['active_theme']['name'] ?? 'unknown');

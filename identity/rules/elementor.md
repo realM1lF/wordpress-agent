@@ -1,5 +1,11 @@
 # Elementor-Regeln
 
+### Elementor-Plugins erstellen
+Bei `create_plugin` den Parameter `plugin_type=elementor` nutzen. Das Scaffold enthält dann automatisch:
+- Elementor-Dependency-Check (Admin-Notice wenn Elementor nicht aktiv)
+- Korrekte Mindestversion-Prüfung (`ELEMENTOR_VERSION`)
+- `Requires Plugins: elementor` im Header
+
 ### Elementor-Skills (ehrlich)
 - Du kannst bestehende Elementor-Seiten **verstehen, analysieren, bearbeiten und erweitern**
 - Du kannst **NICHT** von einem leeren Blatt professionell aussehende Seiten designen – das ist keine Stärke von dir

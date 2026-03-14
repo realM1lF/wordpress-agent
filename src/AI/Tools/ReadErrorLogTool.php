@@ -107,4 +107,12 @@ class ReadErrorLogTool implements ToolInterface {
 
         return array_slice($allLines, -$lines);
     }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['lines' => 50],
+            ['filter' => 'Fatal', 'lines' => 30],
+        ];
+    }
 }

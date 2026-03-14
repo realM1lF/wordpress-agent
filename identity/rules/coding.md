@@ -17,22 +17,29 @@
 - Kein `<code>`/`<pre>` in Frontend-HTML-Output — rohes HTML verwenden
 - Bei CSS/JS-Änderungen: `http_fetch` auf Zielseite → echte HTML-Struktur/CSS-Klassen prüfen, nicht raten
 
-## Read-after-Write (PFLICHT)
-1. Write/Patch ausführen
-2. SOFORT `read_plugin_file` auf gleiche Datei — Code komplett und korrekt?
-3. System zeigt automatisch PHP Fatal Errors → sofort beheben
-4. ERST DANN "Erledigt!" melden
-- Tool-Erfolgsmeldungen ("file written") bestätigen nur die Operation, NICHT die Korrektheit
+## Automatische Tool-Validierung
+Die Write-Tools (`write_plugin_file`, `patch_plugin_file`, `write_theme_file`) liefern automatisch:
+- **Read-back**: Zeilenanzahl + Preview der ersten 15 Zeilen nach jedem Write
+- **Syntax-Check**: PHP/JS-Validierung mit Rollback bei Fehlern
+- **Size-Warning**: Warnung wenn Datei >300 Zeilen (Hinweis zum Aufteilen)
+- **Constant-Warning**: Warnung wenn Sub-Dateien undefinierte Konstanten referenzieren
+- **Block-Detection**: `http_fetch` erkennt automatisch ob WC-Seiten Blocks oder Shortcodes nutzen und warnt bei inkompatiblen Hooks
+
+Auf diese Daten in der Tool-Response achten und entsprechend reagieren.
 
 ## Multi-File-Inventur vor "Fertig!"
-Für jede betroffene Datei prüfen: Geschrieben? Read-after-Write? Eingebunden (`require_once`, `wp_enqueue_*`)? Funktionalität genutzt?
+Für jede betroffene Datei prüfen: Geschrieben? Eingebunden (`require_once`, `wp_enqueue_*`)? Funktionalität genutzt?
 
 ## Plugin-Erstellung
-- `create_plugin` erstellt nur leeres Scaffold → danach `write_plugin_file` mit echtem Code
+- `create_plugin` erzeugt ein fertiges Scaffold mit korrektem Header, ABSPATH-Check, Konstanten (`_FILE`, `_VERSION`, `_DIR`, `_URL`)
+  - `plugin_type=woocommerce` → WC-Dependency-Check, HPOS-Kompatibilität, Settings-Section
+  - `plugin_type=elementor` → Elementor-Dependency-Check
+  - `features` → automatisch generierte Admin-Settings, Frontend-CSS/JS, REST-API Dateien
+- `write_plugin_file` danach für die eigentliche Geschäftslogik — der Plugin-Header wird automatisch bewahrt
 - Slug-Kollision still lösen (anderen Slug wählen, Fehler nicht zeigen)
 - Schreibreihenfolge: Unter-Dateien zuerst, Hauptdatei zuletzt, aktivieren wenn alles existiert
-- Dateien >300 Zeilen in Includes aufteilen
-- Nach Fertigstellung: `http_fetch` auf Zielseite → prüfen ob Output sichtbar
+- Nach Fertigstellung: `http_fetch` auf Zielseite → prüfen ob Output sichtbar (PFLICHT bei Frontend-Plugins)
+- Nach Plugin-Erstellung/-Bearbeitung: `read_error_log` → keine neuen PHP-Fehler?
 
 ## Wiederaufnahme nach Crash
 `list_plugin_files` → jede Datei lesen → nur fehlende/kaputte Dateien schreiben. Korrekte nicht anfassen.
@@ -77,7 +84,6 @@ Nach jeder Frontend-Änderung die betroffene Seite per `http_fetch` abrufen und 
 - `filemtime()` als Versionsparameter, nie statische Versionsnummern
 - Kein Inline-CSS via `<style>`-Tags — immer eigene `.css`-Dateien per `wp_enqueue_style`
 - Drittanbieter-Plugins nie direkt ändern — eigenes Plugin für Anpassungen
-- Hooks/APIs prüfen: Block-Editor vs. Classic? Cart Block vs. Shortcode?
 
 ## Kritische Settings
 Read → Change → Verify. Nur "erledigt" melden wenn Verifikation stimmt. Keine direkte DB-Manipulation.

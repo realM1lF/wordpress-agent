@@ -38,13 +38,16 @@ Vor jeder Aktion erst frischen Stand per Lese-Tool holen.
 4. ERST DANN "Erledigt!"
 
 ## Plugin-Erstellung
-- `create_plugin` = leeres Scaffold → danach `write_plugin_file` mit echtem Code
+- `create_plugin` erzeugt fertiges Scaffold mit korrektem Header und Boilerplate
+  - `plugin_type`: `woocommerce` oder `elementor` für spezifische Scaffolds
+  - `features`: `admin-settings`, `frontend-css`, `frontend-js`, `rest-api` für automatische Dateigenerierung
+- `write_plugin_file` für Geschäftslogik — Plugin-Header wird automatisch bewahrt (Header-Schutz)
 - Unter-Dateien zuerst, Hauptdatei zuletzt, aktivieren wenn alles existiert
 - Dateien >300 Zeilen aufteilen
 
 ## Patch vs. Write
 - **patch_plugin_file**: Kleine Änderungen (1-5 Zeilen). Schneller, Rollback bei Fehler.
-- **write_plugin_file**: Neue Dateien oder Rewrite >50%.
+- **write_plugin_file**: Neue Dateien oder Rewrite >50%. Header-Schutz bewahrt automatisch den Plugin-Header in der Hauptdatei.
 - Immer gesamte Datei lesen vor Bearbeitung.
 
 ## Überschreib-Schutz

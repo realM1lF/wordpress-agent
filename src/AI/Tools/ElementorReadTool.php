@@ -9,7 +9,11 @@ class ElementorReadTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Read and understand Elementor page layouts, templates, available widgets, and global settings. Use "get_page_layout" to inspect a page\'s full Elementor structure (sections, containers, widgets and their settings) – ALWAYS call this before editing a page. Use "get_templates" to list saved templates, "get_widgets" to see available widget types, "get_global_settings" for global colors/fonts from the active kit.';
+        return 'Read Elementor page layouts, templates, available widgets, and global settings. '
+            . 'Use get_page_layout with a post_id to inspect the full element tree of a page before editing it with elementor_build. '
+            . 'Use get_templates to list saved templates (optionally filtered by template_type). '
+            . 'Use get_widgets to discover available widget types, get_global_settings for global colors and fonts. '
+            . 'Returns structured data, not raw JSON. Only works when Elementor is active on the site.';
     }
 
     public function getParameters(): array {

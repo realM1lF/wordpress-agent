@@ -9,7 +9,10 @@ class CreatePostTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Create a new WordPress post or custom post type (product, event, etc.). Can publish directly or save as draft.';
+        return 'Create a new WordPress post or custom post type entry (product, event, etc.). '
+            . 'Supports title, content (HTML), excerpt, categories, tags, featured image, and post_type for custom types. '
+            . 'Default status is draft; set status to "publish" for immediate publication. '
+            . 'For pages (Seiten), use create_page instead.';
     }
 
     public function getParameters(): array {
@@ -143,6 +146,14 @@ class CreatePostTool implements ToolInterface {
             'message' => $actualStatus === 'publish'
                 ? 'Post published successfully.'
                 : 'Post created as ' . $actualStatus . '.',
+        ];
+    }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['title' => 'Mein erster Beitrag', 'content' => '<p>Willkommen auf meiner Seite!</p>', 'status' => 'draft'],
+            ['title' => 'Produktankuendigung', 'content' => '<h2>Neu im Shop</h2><p>Ab sofort verfuegbar...</p>', 'status' => 'publish', 'categories' => [3]],
         ];
     }
 }

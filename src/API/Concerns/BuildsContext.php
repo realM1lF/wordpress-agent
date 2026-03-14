@@ -272,8 +272,8 @@ PROMPT;
 
     
     /**
-     * Fetch context memories from Vector DB based on the retrieval strategy.
-     * Only searches reference and state_snapshot -- identity comes from transient cache.
+     * Fetch context memories from Vector DB using hybrid search (Semantic + BM25),
+     * confidence-based reranking with the primary model, and retrieval gating.
      */
     private function getContextMemories(string $query, array $strategy): string {
         try {
@@ -286,6 +286,8 @@ PROMPT;
         $cache = new EmbeddingCache();
         $expander = new \Levi\Agent\AI\QueryExpander();
         $searchQueries = $expander->expand($query);
+        $isComplex = $expander->isLastQueryComplex();
+        $needsReferenceRetrieval = $expander->needsRetrieval();
 
         $embeddings = [];
         foreach ($searchQueries as $q) {
@@ -305,18 +307,42 @@ PROMPT;
             return '';
         }
 
+        // Initialize BM25 for hybrid search
+        $bm25 = null;
+        $db = $vectorStore->getDatabase();
+        if ($db !== null) {
+            try {
+                $bm25 = new \Levi\Agent\Memory\BM25Index($db);
+            } catch (\Throwable $e) {
+                error_log('Levi BM25 init: ' . $e->getMessage());
+            }
+        }
+
         $memories = [];
         try {
             $runtimeSettings = $this->settings->getSettings();
-            $referenceK = max(1, (int) ($runtimeSettings['memory_reference_k'] ?? 5));
-            $similarity = (float) ($runtimeSettings['memory_min_similarity'] ?? 0.6);
+            $referenceK = max(1, (int) ($runtimeSettings['memory_reference_k'] ?? 8));
+            $similarity = (float) ($runtimeSettings['memory_min_similarity'] ?? 0.5);
 
-            if (!empty($strategy['reference'])) {
-                $mergedResults = $this->multiQuerySearch(
-                    $vectorStore, $embeddings, 'reference', $referenceK, $similarity
+            if ($isComplex) {
+                $referenceK = (int) ceil($referenceK * 1.6);
+            }
+
+            // Retrieval gating: skip reference docs for simple CRUD/status queries.
+            // Snapshots and episodic memory are always fetched.
+            if (!empty($strategy['reference']) && $needsReferenceRetrieval) {
+                // Overfetch 2x for reranking, then let the reranker filter down
+                $overfetchK = $referenceK * 2;
+                $candidates = $this->hybridSearch(
+                    $vectorStore, $bm25, $embeddings, $searchQueries, 'reference', $overfetchK, $similarity
                 );
-                if (!empty($mergedResults)) {
-                    $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $mergedResults));
+
+                if (!empty($candidates)) {
+                    $reranker = new \Levi\Agent\AI\ChunkReranker();
+                    $reranked = $reranker->rerank($query, $candidates, $referenceK);
+                    if (!empty($reranked)) {
+                        $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $reranked));
+                    }
                 }
             }
 
@@ -353,14 +379,53 @@ PROMPT;
     }
 
     /**
-     * Search with multiple embeddings and merge results, keeping the highest similarity per chunk.
+     * Hybrid search: combine semantic vector search with BM25 keyword search
+     * using Reciprocal Rank Fusion (RRF).
      *
-     * @param VectorStore $store
-     * @param array[]     $embeddings  Array of embedding vectors
-     * @param string      $memoryType  'reference' | 'state_snapshot'
-     * @param int         $limit       Max results to return
-     * @param float       $minSimilarity
-     * @return array  Merged results sorted by similarity desc
+     * Falls back to vector-only when BM25 is unavailable.
+     */
+    private function hybridSearch(
+        VectorStore $store,
+        ?\Levi\Agent\Memory\BM25Index $bm25,
+        array $embeddings,
+        array $searchQueries,
+        string $memoryType,
+        int $limit,
+        float $minSimilarity
+    ): array {
+        // Each source fetches slightly more than $limit so RRF has enough
+        // overlap to merge effectively. The caller controls the total
+        // overfetch (e.g. 2x for reranking) via $limit itself.
+        $sourceLimit = (int) ceil($limit * 1.5);
+
+        $vectorResults = $this->multiQuerySearch($store, $embeddings, $memoryType, $sourceLimit, $minSimilarity);
+
+        if ($bm25 === null) {
+            return array_slice($vectorResults, 0, $limit);
+        }
+
+        $bm25Merged = [];
+        foreach ($searchQueries as $q) {
+            $bm25Results = $bm25->search($q, $memoryType, $sourceLimit);
+            foreach ($bm25Results as $r) {
+                $key = $r['chunk_id'] ?? md5($r['content'] ?? '');
+                if (!isset($bm25Merged[$key]) || ($r['score'] ?? 0) > ($bm25Merged[$key]['score'] ?? 0)) {
+                    $bm25Merged[$key] = $r;
+                }
+            }
+        }
+        usort($bm25Merged, fn($a, $b) => ($b['score'] ?? 0) <=> ($a['score'] ?? 0));
+        $bm25Top = array_slice($bm25Merged, 0, $sourceLimit);
+
+        if (empty($bm25Top)) {
+            return array_slice($vectorResults, 0, $limit);
+        }
+
+        return \Levi\Agent\Memory\BM25Index::reciprocalRankFusion($vectorResults, $bm25Top, $limit);
+    }
+
+    /**
+     * Search with multiple embeddings and merge results, keeping the highest similarity per chunk.
      */
     private function multiQuerySearch(VectorStore $store, array $embeddings, string $memoryType, int $limit, float $minSimilarity): array {
         $merged = [];

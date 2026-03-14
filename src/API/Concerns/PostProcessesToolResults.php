@@ -212,6 +212,8 @@ trait PostProcessesToolResults {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
 
+        wp_cache_delete('plugins', 'plugins');
+
         $pluginBasename = null;
         $allPlugins = get_plugins();
         foreach ($allPlugins as $file => $data) {
@@ -256,14 +258,48 @@ trait PostProcessesToolResults {
             }
         }
 
-        $testUrl = home_url('/');
+        $testUrls = [home_url('/')];
         if (function_exists('wc_get_page_id')) {
             $shopPageId = wc_get_page_id('shop');
             if ($shopPageId > 0) {
-                $testUrl = get_permalink($shopPageId) ?: $testUrl;
+                $testUrls = [get_permalink($shopPageId) ?: home_url('/')];
+            }
+
+            $writtenCode = '';
+            foreach ($toolCalls as $tc) {
+                $tcName = $tc['function']['name'] ?? '';
+                if (in_array($tcName, ['write_plugin_file', 'patch_plugin_file'], true)) {
+                    $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                    $writtenCode .= ($args['content'] ?? '') . "\n";
+                }
+            }
+            if ($writtenCode !== '') {
+                $hasCartRef = (bool) preg_match('/woocommerce_(before_cart|after_cart|cart_contents|after_cart_table|before_cart_table|cart_coupon|cart_actions|cart_totals)/', $writtenCode);
+                $hasCheckoutRef = (bool) preg_match('/woocommerce_(before_checkout|after_checkout|checkout_before|checkout_after|review_order)/', $writtenCode);
+
+                if ($hasCartRef) {
+                    $cartPageId = wc_get_page_id('cart');
+                    if ($cartPageId > 0) {
+                        $cartUrl = get_permalink($cartPageId);
+                        if ($cartUrl) {
+                            $testUrls[] = $cartUrl;
+                        }
+                    }
+                }
+                if ($hasCheckoutRef) {
+                    $checkoutPageId = wc_get_page_id('checkout');
+                    if ($checkoutPageId > 0) {
+                        $checkoutUrl = get_permalink($checkoutPageId);
+                        if ($checkoutUrl) {
+                            $testUrls[] = $checkoutUrl;
+                        }
+                    }
+                }
             }
         }
+        $testUrls = array_unique($testUrls);
 
+        $testUrl = $testUrls[0];
         $fetchResponse = wp_remote_get($testUrl, [
             'timeout' => 15,
             'sslverify' => false,
@@ -365,7 +401,46 @@ trait PostProcessesToolResults {
             . "laesst sich fehlerfrei laden (HTTP $statusCode).\n";
 
         if (!$wasAlreadyActive) {
-            $okContent .= "Das Plugin ist jetzt aktiv.";
+            $okContent .= "Das Plugin ist jetzt aktiv.\n";
+        }
+
+        if ($body !== '') {
+            $wcBlockInfo = $this->detectWcBlocksInBody($body);
+            if ($wcBlockInfo !== '') {
+                $okContent .= "\n" . $wcBlockInfo;
+            }
+        }
+
+        $additionalUrls = array_slice($testUrls, 1);
+        foreach ($additionalUrls as $extraUrl) {
+            $extraResponse = wp_remote_get($extraUrl, [
+                'timeout' => 10,
+                'sslverify' => false,
+                'user-agent' => 'Levi-SmokeTest/1.0',
+            ]);
+            if (!is_wp_error($extraResponse)) {
+                $extraStatus = wp_remote_retrieve_response_code($extraResponse);
+                $extraBody = wp_remote_retrieve_body($extraResponse);
+                $extraHasError = false;
+
+                if ($extraStatus >= 500) {
+                    $extraHasError = true;
+                }
+                if (preg_match('/Fatal\s+error:|Uncaught\s+(?:Error|Exception)|critical error/i', $extraBody)) {
+                    $extraHasError = true;
+                }
+
+                if ($extraHasError) {
+                    $okContent .= "\n\n[WARNUNG] Zusaetzlicher Smoke-Test auf $extraUrl ergab HTTP $extraStatus "
+                        . "oder einen PHP-Fehler. Das Plugin verursacht moeglicherweise Probleme auf dieser Seite.";
+                } else {
+                    $okContent .= "\nZusaetzlich getestet: $extraUrl (HTTP $extraStatus, OK)";
+                    $extraWcInfo = $this->detectWcBlocksInBody($extraBody);
+                    if ($extraWcInfo !== '') {
+                        $okContent .= "\n" . $extraWcInfo;
+                    }
+                }
+            }
         }
 
         return [
@@ -396,13 +471,16 @@ trait PostProcessesToolResults {
      */
     private function injectPostCreatePluginNudge(array $toolCalls, array $toolResults): array {
         $createdSlug = null;
+        $pluginType = 'plain';
         foreach ($toolCalls as $tc) {
             if (($tc['function']['name'] ?? '') !== 'create_plugin') {
                 continue;
             }
+            $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
             foreach ($toolResults as $tr) {
                 if ($tr['tool'] === 'create_plugin' && ($tr['result']['success'] ?? false)) {
                     $createdSlug = $tr['result']['slug'] ?? null;
+                    $pluginType = $tr['result']['plugin_type'] ?? ($args['plugin_type'] ?? 'plain');
                     break 2;
                 }
             }
@@ -412,15 +490,73 @@ trait PostProcessesToolResults {
             return [];
         }
 
+        $nudge = "[SYSTEM – PFLICHT] Das Plugin '$createdSlug' wurde als LEERES SCAFFOLD erstellt. "
+            . "Die Hauptdatei enthaelt nur einen Platzhalter ohne Funktionalitaet. "
+            . "Du MUSST jetzt mit write_plugin_file den vollstaendigen, funktionalen Code in die Hauptdatei schreiben. "
+            . "Fuer kleine Aenderungen an bestehenden Dateien nutze patch_plugin_file statt write_plugin_file. "
+            . "Antworte dem Nutzer NICHT mit 'fertig' oder 'erstellt' bevor du write_plugin_file oder patch_plugin_file aufgerufen hast. "
+            . "Falls das Plugin mehrere Dateien braucht (CSS, JS, Admin-Seite), schreibe ALLE benoetigten Dateien. "
+            . "WICHTIG: Nach dem Schreiben der Hauptdatei wird das Plugin automatisch aktiviert und getestet (Smoke-Test). "
+            . "Rufe NICHT separat install_plugin mit action=activate auf — das passiert automatisch.";
+
+        $envHints = $this->buildEnvironmentHintsForPluginCreation($pluginType);
+        if ($envHints !== '') {
+            $nudge .= "\n\n" . $envHints;
+        }
+
         return [[
             'role' => 'system',
-            'content' => "[SYSTEM – PFLICHT] Das Plugin '$createdSlug' wurde als LEERES SCAFFOLD erstellt. "
-                . "Die Hauptdatei enthaelt nur einen Platzhalter ohne Funktionalitaet. "
-                . "Du MUSST jetzt mit write_plugin_file den vollstaendigen, funktionalen Code in die Hauptdatei schreiben. "
-                . "Fuer kleine Aenderungen an bestehenden Dateien nutze patch_plugin_file statt write_plugin_file. "
-                . "Antworte dem Nutzer NICHT mit 'fertig' oder 'erstellt' bevor du write_plugin_file oder patch_plugin_file aufgerufen hast. "
-                . "Falls das Plugin mehrere Dateien braucht (CSS, JS, Admin-Seite), schreibe ALLE benoetigten Dateien.",
+            'content' => $nudge,
         ]];
+    }
+
+    /**
+     * Build environment-aware hints for plugin creation based on cached snapshot.
+     * Covers: theme type, WC page modes, Elementor, PHP version.
+     */
+    private function buildEnvironmentHintsForPluginCreation(string $pluginType): string {
+        $env = \Levi\Agent\Memory\StateSnapshotService::getCachedEnvironment();
+        $lastData = get_option('levi_agent_state_snapshot_last', []);
+        $snapshot = is_array($lastData['snapshot'] ?? null) ? $lastData['snapshot'] : [];
+        $hints = [];
+
+        $isBlockTheme = !empty($snapshot['active_theme']['is_block_theme']);
+        $themeName = (string) ($snapshot['active_theme']['name'] ?? '');
+
+        if ($isBlockTheme) {
+            $hints[] = "[THEME] Das aktive Theme '$themeName' ist ein Block-Theme (FSE). "
+                . "Classic-Template-Funktionen (get_header, get_footer, get_sidebar, dynamic_sidebar) sind NICHT verfuegbar. "
+                . "Fuer Frontend-Output: Block-Patterns, render_block Filter oder wp_enqueue_scripts nutzen.";
+        }
+
+        $wcPages = $env['woocommerce_pages'] ?? [];
+        $blockPages = [];
+        foreach ($wcPages as $page => $type) {
+            if ($type === 'block') {
+                $blockPages[] = ucfirst($page);
+            }
+        }
+        if (!empty($blockPages)) {
+            $hints[] = "[WC-ENVIRONMENT] " . implode(', ', $blockPages)
+                . " nutzt WooCommerce Blocks (NICHT Shortcodes). "
+                . "Klassische PHP-Hooks wie woocommerce_before_cart, woocommerce_after_cart_table etc. feuern dort NICHT. "
+                . "Fuer Frontend-Aenderungen an Block-basierten Seiten: Custom Block, die WC Block Extensibility API oder JavaScript/DOM-Manipulation verwenden.";
+        }
+
+        if (!empty($env['elementor_active'])) {
+            $hints[] = "[ELEMENTOR] Elementor ist aktiv. Seiten koennen mit Elementor gebaut sein. "
+                . "Pruefe vor the_content-Filtern ob die Zielseite Elementor nutzt.";
+        }
+
+        $phpVersion = (string) ($snapshot['php_version'] ?? PHP_VERSION);
+        $phpMajorMinor = implode('.', array_slice(explode('.', $phpVersion), 0, 2));
+        if (version_compare($phpMajorMinor, '8.0', '<')) {
+            $hints[] = "[PHP] PHP $phpVersion – Kein match-Expression, named arguments oder union types verwenden.";
+        } elseif (version_compare($phpMajorMinor, '8.1', '<')) {
+            $hints[] = "[PHP] PHP $phpVersion – Keine Enums oder Fibers verwenden.";
+        }
+
+        return implode("\n", $hints);
     }
 
     /**
@@ -464,6 +600,137 @@ trait PostProcessesToolResults {
      * actually loads it (require/include for PHP, wp_enqueue for CSS/JS).
      * If not, inject a warning so the AI knows the file is "dead".
      */
+    /**
+     * After writing PHP to a plugin, scan the code for patterns that conflict
+     * with the current WordPress environment (block theme, WC blocks, Elementor).
+     */
+    private function injectPostWriteEnvironmentWarnings(array $toolCalls, array $toolResults): array {
+        $writtenPhpContent = [];
+        foreach ($toolResults as $tr) {
+            if (!($tr['result']['success'] ?? false)) {
+                continue;
+            }
+            $tool = $tr['tool'] ?? '';
+            if (!in_array($tool, ['write_plugin_file', 'patch_plugin_file'], true)) {
+                continue;
+            }
+            $relPath = $tr['result']['relative_path'] ?? '';
+            if ($relPath === '') {
+                foreach ($toolCalls as $tc) {
+                    if (($tc['function']['name'] ?? '') === $tool) {
+                        $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                        $relPath = $args['relative_path'] ?? '';
+                        break;
+                    }
+                }
+            }
+            if (!preg_match('/\.php$/i', $relPath)) {
+                continue;
+            }
+            foreach ($toolCalls as $tc) {
+                if (($tc['function']['name'] ?? '') === $tool) {
+                    $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                    if (!empty($args['content'])) {
+                        $writtenPhpContent[] = $args['content'];
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (empty($writtenPhpContent)) {
+            return [];
+        }
+
+        $env = \Levi\Agent\Memory\StateSnapshotService::getCachedEnvironment();
+        $warnings = [];
+        $allCode = implode("\n", $writtenPhpContent);
+
+        $wcPages = $env['woocommerce_pages'] ?? [];
+        $cartIsBlock = ($wcPages['cart'] ?? '') === 'block';
+        $checkoutIsBlock = ($wcPages['checkout'] ?? '') === 'block';
+
+        if ($cartIsBlock || $checkoutIsBlock) {
+            $cartHookPattern = '/woocommerce_(before_cart|after_cart|cart_contents|before_cart_table|after_cart_table|cart_coupon|cart_actions|before_cart_totals|cart_totals_before_order_total)/';
+            $checkoutHookPattern = '/woocommerce_(before_checkout_form|after_checkout_form|checkout_before_customer_details|checkout_after_customer_details|review_order_before_payment)/';
+
+            $foundCartHooks = [];
+            $foundCheckoutHooks = [];
+
+            if ($cartIsBlock && preg_match_all($cartHookPattern, $allCode, $m)) {
+                $foundCartHooks = array_unique($m[0]);
+            }
+            if ($checkoutIsBlock && preg_match_all($checkoutHookPattern, $allCode, $m)) {
+                $foundCheckoutHooks = array_unique($m[0]);
+            }
+
+            if (!empty($foundCartHooks)) {
+                $warnings[] = "[ENVIRONMENT-KONFLIKT] Dein Code verwendet klassische Cart-Hooks ("
+                    . implode(', ', $foundCartHooks) . "), aber der Warenkorb nutzt WooCommerce BLOCKS. "
+                    . "Diese Hooks feuern NICHT auf Block-basierten Seiten! "
+                    . "Alternativen: Einen Custom WooCommerce Block schreiben, JavaScript/DOM-Manipulation nutzen, "
+                    . "oder den woocommerce/cart Block-Filter-API verwenden.";
+            }
+
+            if (!empty($foundCheckoutHooks)) {
+                $warnings[] = "[ENVIRONMENT-KONFLIKT] Dein Code verwendet klassische Checkout-Hooks ("
+                    . implode(', ', $foundCheckoutHooks) . "), aber der Checkout nutzt WooCommerce BLOCKS. "
+                    . "Diese Hooks feuern NICHT auf Block-basierten Seiten! "
+                    . "Alternativen: Einen Custom WooCommerce Block schreiben oder die WooCommerce Checkout Block Extensibility API nutzen.";
+            }
+        }
+
+        $isBlockTheme = false;
+        $lastData = get_option('levi_agent_state_snapshot_last', []);
+        $snapshot = is_array($lastData['snapshot'] ?? null) ? $lastData['snapshot'] : [];
+        if (!empty($snapshot['active_theme']['is_block_theme'])) {
+            $isBlockTheme = true;
+        }
+
+        if ($isBlockTheme) {
+            $classicThemePatterns = [
+                'get_header()' => 'get_header()',
+                'get_footer()' => 'get_footer()',
+                'get_sidebar()' => 'get_sidebar()',
+                'dynamic_sidebar(' => 'dynamic_sidebar()',
+                'the_custom_logo()' => 'the_custom_logo()',
+            ];
+            $foundClassicPatterns = [];
+            foreach ($classicThemePatterns as $pattern => $label) {
+                if (str_contains($allCode, $pattern)) {
+                    $foundClassicPatterns[] = $label;
+                }
+            }
+
+            if (!empty($foundClassicPatterns)) {
+                $warnings[] = "[ENVIRONMENT-HINWEIS] Dein Code verwendet Classic-Theme-Funktionen ("
+                    . implode(', ', $foundClassicPatterns) . "), aber das aktive Theme ist ein Block-Theme (FSE). "
+                    . "Block-Themes verwenden HTML-Templates in /templates/ und /parts/ statt PHP-Template-Dateien. "
+                    . "Fuer Frontend-Aenderungen: Block-Patterns, Template-Parts oder den render_block Filter nutzen.";
+            }
+        }
+
+        if (!empty($env['elementor_active'])) {
+            if (preg_match('/the_content\s*\(/', $allCode) && str_contains($allCode, 'add_filter')) {
+                $warnings[] = "[ENVIRONMENT-HINWEIS] Elementor ist aktiv. the_content Filter koennen mit "
+                    . "Elementor-gerenderten Seiten kollidieren. Pruefe ob die Zielseite(n) mit Elementor gebaut sind "
+                    . "(elementor_data Post-Meta) und nutze ggf. Elementor Hooks statt the_content.";
+            }
+        }
+
+        if (empty($warnings)) {
+            return [];
+        }
+
+        return [[
+            'role' => 'system',
+            'content' => implode("\n\n", $warnings)
+                . "\n\n[SYSTEM] PFLICHT: Pruefe deinen Code gegen die obigen Warnungen. "
+                . "Falls ein Konflikt besteht, korrigiere den Code SOFORT mit patch_plugin_file. "
+                . "Antworte dem Nutzer NICHT mit 'fertig' bis die Konflikte behoben sind.",
+        ]];
+    }
+
     private function injectPostWriteIntegrationCheck(array $toolCalls, array $toolResults): array {
         $writtenSubFiles = [];
 
@@ -826,5 +1093,28 @@ trait PostProcessesToolResults {
         }
 
         return empty($issues) ? null : implode("\n", $issues);
+    }
+
+    /**
+     * Check HTML body for WooCommerce Block rendering patterns.
+     * Returns a warning string if block-based cart/checkout is detected.
+     */
+    private function detectWcBlocksInBody(string $body): string {
+        $blockPages = [];
+
+        if (str_contains($body, 'wp-block-woocommerce-cart') || str_contains($body, 'wc-block-cart')) {
+            $blockPages[] = 'Cart';
+        }
+        if (str_contains($body, 'wp-block-woocommerce-checkout') || str_contains($body, 'wc-block-checkout')) {
+            $blockPages[] = 'Checkout';
+        }
+
+        if (empty($blockPages)) {
+            return '';
+        }
+
+        return '[WC-ENVIRONMENT] Diese Seite nutzt WooCommerce Blocks (' . implode(', ', $blockPages) . '). '
+            . 'Klassische PHP-Hooks (woocommerce_before_cart, woocommerce_after_cart_table etc.) feuern hier NICHT. '
+            . 'Fuer Frontend-Aenderungen: Custom Block oder JavaScript/DOM-Manipulation verwenden.';
     }
 }

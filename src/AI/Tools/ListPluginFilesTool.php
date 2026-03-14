@@ -9,7 +9,7 @@ class ListPluginFilesTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'List files and directories inside a plugin. Useful to inspect plugin structure before editing code. IMPORTANT: Use the exact directory name from wp-content/plugins as plugin_slug (e.g., "akismet" not "akismet-anti-spam").';
+        return 'List files and directories inside a plugin. Useful to inspect plugin structure before editing. Supports fuzzy slug matching.';
     }
 
     public function getParameters(): array {
@@ -43,6 +43,13 @@ class ListPluginFilesTool implements ToolInterface {
                 'description' => 'Entries per page (default 200, max 1000)',
                 'default' => 200,
             ],
+        ];
+    }
+
+    public function getInputExamples(): array {
+        return [
+            ['plugin_slug' => 'my-plugin'],
+            ['plugin_slug' => 'my-plugin', 'relative_dir' => 'includes', 'max_depth' => 2],
         ];
     }
 

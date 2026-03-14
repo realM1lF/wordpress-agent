@@ -98,6 +98,10 @@ class ToolGuard {
         return $this->writeCallCount;
     }
 
+    public function getMaxWriteCalls(): int {
+        return $this->maxWriteCalls;
+    }
+
     // --- Verdict helpers ---
 
     private static function allowed(): array {

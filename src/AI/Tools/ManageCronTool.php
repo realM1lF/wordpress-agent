@@ -11,14 +11,30 @@ class ManageCronTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'View and manage WordPress scheduled tasks (WP-Cron) and create automated Levi tasks. '
-            . 'Use "list_events" to see all WP-Cron events, "list_schedules" for available intervals, "unschedule_event" to remove any event. '
-            . 'Use "schedule_task" to create a new recurring task, "list_tasks" to see all Levi tasks with results, '
-            . '"update_task" to modify, "delete_task" to remove, "run_task" to execute immediately. '
-            . 'Read-only tools (get_plugins, get_posts, etc.) work without extra confirmation. '
-            . 'Write tools (create_post, update_post, install_plugin, etc.) are also allowed — the user\'s confirmation when creating the task serves as permanent approval. '
-            . 'Max 20 tasks. Allowed schedules: once (one-time, auto-deletes after execution), hourly, twicedaily, daily, weekly.';
+        return 'Manage WordPress scheduled tasks (WP-Cron) and Levi automation tasks. '
+            . 'Actions: list_events, list_schedules, unschedule_event, schedule_task, list_tasks, update_task, delete_task, run_task. '
+            . 'Max 20 active tasks. Schedules: once, hourly, twicedaily, daily, weekly. '
+            . 'Use schedule="once" with start_time for one-off timed actions.';
     }
+
+    public function getInputExamples(): array {
+        return [
+            ['action' => 'schedule_task', 'name' => 'Plugin Update Check', 'tool' => 'get_plugins', 'schedule' => 'daily'],
+            ['action' => 'schedule_task', 'name' => 'Publish Draft Tomorrow', 'tool' => 'update_post', 'tool_params' => ['post_id' => 42, 'status' => 'publish'], 'schedule' => 'once', 'start_time' => '06:00'],
+            ['action' => 'run_task', 'task_id' => 'task_abc123'],
+        ];
+    }
+
+    private const ACTION_REQUIRED_PARAMS = [
+        'list_events'      => [],
+        'list_schedules'   => [],
+        'unschedule_event' => ['hook', 'timestamp'],
+        'schedule_task'    => ['name', 'tool', 'schedule'],
+        'update_task'      => ['task_id'],
+        'delete_task'      => ['task_id'],
+        'run_task'         => ['task_id'],
+        'list_tasks'       => [],
+    ];
 
     public function getParameters(): array {
         return [
@@ -85,6 +101,21 @@ class ManageCronTool implements ToolInterface {
 
     public function execute(array $params): array {
         $action = (string) ($params['action'] ?? '');
+
+        if (isset(self::ACTION_REQUIRED_PARAMS[$action])) {
+            $missing = [];
+            foreach (self::ACTION_REQUIRED_PARAMS[$action] as $param) {
+                if (!isset($params[$param]) || (is_string($params[$param]) && trim($params[$param]) === '')) {
+                    $missing[] = $param;
+                }
+            }
+            if (!empty($missing)) {
+                return [
+                    'success' => false,
+                    'error' => "Action '{$action}' requires: " . implode(', ', $missing) . '.',
+                ];
+            }
+        }
 
         return match ($action) {
             'list_events' => $this->listEvents(),

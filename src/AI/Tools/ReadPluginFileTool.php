@@ -49,6 +49,13 @@ class ReadPluginFileTool implements ToolInterface {
         ];
     }
 
+    public function getInputExamples(): array {
+        return [
+            ['plugin_slug' => 'my-plugin', 'relative_path' => 'my-plugin.php'],
+            ['plugin_slug' => 'my-plugin', 'relative_path' => 'includes/class-settings.php', 'max_bytes' => 30000],
+        ];
+    }
+
     public function checkPermission(): bool {
         return current_user_can('edit_plugins') || current_user_can('install_plugins');
     }

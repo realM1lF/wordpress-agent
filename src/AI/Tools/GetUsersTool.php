@@ -9,7 +9,10 @@ class GetUsersTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get a list of WordPress users. Can filter by role and search. CRITICAL: Returns ONLY actual users from the database - never invent, assume, or hallucinate users that are not in the result.';
+        return 'List WordPress users with optional filters for role, search term, and sorting. '
+            . 'Returns display name, email, role, and registration date. '
+            . 'Use this to find users before managing them with manage_user. '
+            . 'Does not return passwords or sensitive authentication data.';
     }
 
     public function getParameters(): array {

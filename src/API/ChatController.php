@@ -83,11 +83,12 @@ class ChatController extends WP_REST_Controller {
     }
 
     /**
-     * Get all tool definitions. Always sends complete set — provider-side
-     * automatic caching ensures the stable tool block is cached between calls.
+     * Get tool definitions using deferred loading.
+     * Returns core tools + any tools discovered via search_tools.
+     * When total tools <= 20, returns all (no benefit from deferring).
      */
     private function getToolDefs(): array {
-        return $this->toolRegistry->getDefinitions();
+        return $this->toolRegistry->getCoreAndDiscoveredDefinitions($this->discoveredToolNames);
     }
 
     /**
@@ -374,7 +375,7 @@ class ChatController extends WP_REST_Controller {
 
         $this->discoveredToolNames = [];
         $messages = $this->buildMessages($sessionId, $message, true);
-        $tools = $this->toolRegistry->getDefinitions();
+        $tools = $this->getToolDefs();
 
         // Heartbeat callback for SSE keepalive during non-streaming API calls
         $heartbeat = function () {
@@ -399,6 +400,9 @@ class ChatController extends WP_REST_Controller {
                     'content' => $streamResult['content'] ?? null,
                     'tool_calls' => $streamResult['tool_calls'],
                 ];
+                if (!empty($streamResult['reasoning_content'])) {
+                    $toolCallData['reasoning_content'] = $streamResult['reasoning_content'];
+                }
                 $this->handleToolCallsStreaming($toolCallData, $messages, $sessionId, $userId, (string) $message, $heartbeat, $webSearch);
                 if ($hasUploadedContext) {
                     $this->clearSessionUploads($sessionId, $userId);
@@ -599,7 +603,7 @@ class ChatController extends WP_REST_Controller {
 
         $this->discoveredToolNames = [];
         $messages = $this->buildMessages($sessionId, $message, true);
-        $tools = $this->toolRegistry->getDefinitions();
+        $tools = $this->getToolDefs();
 
         // Get AI client (uses alternative model for simple queries)
         $aiClient = $this->getAIClient();
@@ -777,7 +781,11 @@ class ChatController extends WP_REST_Controller {
         }
 
         $streamedContent = '';
-        $onChunk = function (string $chunk) use (&$streamedContent) {
+        $onChunk = function (string $chunk, string $type = 'content') use (&$streamedContent) {
+            if ($type === 'reasoning_start') {
+                $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
+                return;
+            }
             $streamedContent .= $chunk;
             $this->emitSSE('delta', ['content' => $chunk]);
         };
@@ -880,13 +888,19 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function streamResultToResponse(array $streamResult): array {
+        $message = [
+            'role' => 'assistant',
+            'content' => $streamResult['content'] ?? '',
+            'tool_calls' => $streamResult['tool_calls'] ?? [],
+        ];
+
+        if (!empty($streamResult['reasoning_content'])) {
+            $message['reasoning_content'] = $streamResult['reasoning_content'];
+        }
+
         return [
             'choices' => [[
-                'message' => [
-                    'role' => 'assistant',
-                    'content' => $streamResult['content'] ?? '',
-                    'tool_calls' => $streamResult['tool_calls'] ?? [],
-                ],
+                'message' => $message,
                 'finish_reason' => $streamResult['finish_reason'] ?? 'stop',
             ]],
             'model' => $streamResult['model'] ?? null,
@@ -899,7 +913,11 @@ class ChatController extends WP_REST_Controller {
      * Returns the full stream result for post-processing (tool_calls detection, usage).
      */
     private function streamChatWithTracking(array $messages, array $tools = []): array|WP_Error {
-        $result = $this->aiClient->streamChat($messages, function (string $chunk) {
+        $result = $this->aiClient->streamChat($messages, function (string $chunk, string $type = 'content') {
+            if ($type === 'reasoning_start') {
+                $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
+                return;
+            }
             $this->emitSSE('delta', ['content' => $chunk]);
         }, $tools);
 

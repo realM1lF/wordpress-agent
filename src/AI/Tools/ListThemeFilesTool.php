@@ -9,7 +9,10 @@ class ListThemeFilesTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'List files and directories inside a theme. Useful to inspect theme structure before editing templates, CSS, or PHP.';
+        return 'List all files and directories inside a WordPress theme. '
+            . 'Returns the file tree with file sizes and types. '
+            . 'Use this to understand theme structure before editing templates, CSS, or PHP files with write_theme_file. '
+            . 'Shows template files, includes, assets, and configuration files.';
     }
 
     public function getParameters(): array {

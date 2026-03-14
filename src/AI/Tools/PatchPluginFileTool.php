@@ -3,10 +3,14 @@
 namespace Levi\Agent\AI\Tools;
 
 use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
+use Levi\Agent\AI\Tools\Concerns\ValidatesSyntax;
+use Levi\Agent\AI\Tools\Concerns\ResolvesPluginPaths;
 
-class PatchPluginFileTool implements ToolInterface {
+class PatchPluginFileTool extends AbstractTool {
 
     use SanitizesHtmlOutput;
+    use ValidatesSyntax;
+    use ResolvesPluginPaths;
 
     public function getName(): string {
         return 'patch_plugin_file';
@@ -15,8 +19,14 @@ class PatchPluginFileTool implements ToolInterface {
     public function getDescription(): string {
         return 'Apply targeted search-and-replace patches to an existing plugin file. '
             . 'Much faster than write_plugin_file for small changes (rename, bugfix, value change). '
-            . 'Use write_plugin_file only for new files or complete rewrites. '
-            . 'Each replacement must have a unique "search" string that appears exactly once in the file.';
+            . 'Each replacement must have a unique "search" string that appears exactly once in the file. '
+            . 'Automatically validates PHP syntax after patching and rolls back on errors.';
+    }
+
+    public function getInputExamples(): array {
+        return [
+            ['plugin_slug' => 'my-plugin', 'file' => 'my-plugin.php', 'replacements' => [['search' => '$price = 10;', 'replace' => '$price = 15;']]],
+        ];
     }
 
     public function getParameters(): array {
@@ -28,13 +38,12 @@ class PatchPluginFileTool implements ToolInterface {
             ],
             'relative_path' => [
                 'type' => 'string',
-                'description' => 'Relative file path inside the plugin, e.g. "figur-musik-rabatt.php"',
+                'description' => 'Relative file path inside the plugin',
                 'required' => true,
             ],
             'replacements' => [
                 'type' => 'array',
-                'description' => 'Array of {search, replace} objects. Each "search" string must appear exactly once in the file. '
-                    . 'Example: [{"search": "Version: 1.0.0", "replace": "Version: 1.1.0"}]',
+                'description' => 'Array of {search, replace} objects. Each "search" must appear exactly once in the file.',
                 'required' => true,
                 'items' => [
                     'type' => 'object',
@@ -59,9 +68,6 @@ class PatchPluginFileTool implements ToolInterface {
         if ($slug === '' || $relativePath === '') {
             return ['success' => false, 'error' => 'plugin_slug and relative_path are required.'];
         }
-        if (str_contains($relativePath, '..')) {
-            return ['success' => false, 'error' => 'Path traversal is not allowed.'];
-        }
         if (!is_array($replacements) || empty($replacements)) {
             return ['success' => false, 'error' => 'replacements array is required and must not be empty.'];
         }
@@ -69,29 +75,30 @@ class PatchPluginFileTool implements ToolInterface {
             return ['success' => false, 'error' => 'Too many replacements (max 50). Use write_plugin_file for large rewrites.'];
         }
 
-        $pluginRoot = trailingslashit(WP_PLUGIN_DIR) . $slug;
-        if (!is_dir($pluginRoot)) {
-            $resolved = $this->resolvePluginDirectory($slug);
-            if ($resolved !== null) {
-                $pluginRoot = $resolved;
-                $slug = basename($resolved);
-            } else {
-                return [
-                    'success' => false,
-                    'error' => 'Plugin directory does not exist.',
-                    'suggestion' => 'Use get_plugins first to find the correct plugin_slug.',
-                ];
-            }
+        $resolved = $this->resolvePluginRoot($slug);
+        if (isset($resolved['error'])) {
+            return ['success' => false] + $resolved;
         }
+        $pluginRoot = $resolved['root'];
+        $slug = $resolved['slug'];
 
-        $targetPath = $pluginRoot . '/' . $relativePath;
+        $pathCheck = $this->validatePluginFilePath($pluginRoot, $relativePath);
+        if (isset($pathCheck['error'])) {
+            return ['success' => false, 'error' => $pathCheck['error']];
+        }
+        $targetPath = $pathCheck['target_path'];
+
         if (!is_file($targetPath)) {
-            return ['success' => false, 'error' => 'File does not exist. Use write_plugin_file to create new files.'];
+            return [
+                'success' => false,
+                'error' => 'File does not exist.',
+                'suggestion' => 'Use write_plugin_file to create new files.',
+            ];
         }
 
-        $pluginRootReal = realpath($pluginRoot);
         $targetPathReal = realpath($targetPath);
-        if ($pluginRootReal === false || $targetPathReal === false || !str_starts_with($targetPathReal, $pluginRootReal)) {
+        $pluginRootReal = realpath($pluginRoot);
+        if ($targetPathReal === false || $pluginRootReal === false || !str_starts_with($targetPathReal, $pluginRootReal)) {
             return ['success' => false, 'error' => 'Resolved path is outside plugin directory.'];
         }
 
@@ -125,11 +132,11 @@ class PatchPluginFileTool implements ToolInterface {
 
             $count = substr_count($content, $search);
             if ($count === 0) {
-                $errors[] = "Replacement #$i: search string not found in file. Preview: '" . mb_substr($search, 0, 60) . "'";
+                $errors[] = "Replacement #$i: search string not found. Preview: '" . mb_substr($search, 0, 60) . "'";
                 continue;
             }
             if ($count > 1) {
-                $errors[] = "Replacement #$i: search string is ambiguous ($count occurrences). Make the search string more specific.";
+                $errors[] = "Replacement #$i: search string is ambiguous ($count occurrences). Make it more specific.";
                 continue;
             }
 
@@ -171,12 +178,13 @@ class PatchPluginFileTool implements ToolInterface {
             $filesystem->put_contents($targetPath, $originalContent, FS_CHMOD_FILE);
             return [
                 'success' => false,
-                'error' => 'Patch reverted: PHP syntax check failed after patching. ' . ($lint['error'] ?? 'Unknown lint error.'),
+                'error' => 'Patch reverted: PHP syntax check failed. ' . ($lint['error'] ?? 'Unknown lint error.'),
                 'patches_attempted' => $applied,
+                'suggestion' => 'The replacement may have broken the PHP syntax. Read the file first with read_plugin_file, then apply a corrected patch.',
             ];
         }
 
-        $jsLint = $this->validateInlineJavaScript($targetPath);
+        $jsLint = $this->validateJsSyntax($targetPath);
         $fileExt = strtolower((string) pathinfo($relativePath, PATHINFO_EXTENSION));
         if (($jsLint['valid'] ?? true) === false && $fileExt === 'js') {
             $filesystem->put_contents($targetPath, $originalContent, FS_CHMOD_FILE);
@@ -185,6 +193,10 @@ class PatchPluginFileTool implements ToolInterface {
                 'error' => 'Patch reverted: ' . ($jsLint['error'] ?? 'JavaScript syntax check failed.'),
                 'patches_attempted' => $applied,
             ];
+        }
+
+        if (preg_match('/\.php$/i', $relativePath)) {
+            wp_cache_delete('plugins', 'plugins');
         }
 
         $result = [
@@ -196,6 +208,8 @@ class PatchPluginFileTool implements ToolInterface {
             'message' => count($applied) . ' replacement(s) applied successfully.',
         ];
 
+        $result += $this->buildReadBackData($filesystem, $targetPath);
+
         if (!empty($errors)) {
             $result['partial_errors'] = $errors;
         }
@@ -204,12 +218,11 @@ class PatchPluginFileTool implements ToolInterface {
         }
         if (($jsLint['valid'] ?? true) === false) {
             $result['js_error'] = $jsLint['error']
-                . ' The patch was applied but the file likely contains broken frontend JavaScript. Please fix the syntax error.';
+                . ' The patch was applied but the file likely contains broken frontend JavaScript.';
         }
         if (!empty($jsLint['warning'] ?? '')) {
             $result['js_warning'] = $jsLint['warning'];
         }
-
         if ($strippedCount > 0) {
             $result['stripped_tags'] = $strippedCount;
             $result['strip_notice'] = "$strippedCount <code>/<pre>-Tag(s) wurden automatisch entfernt.";
@@ -222,155 +235,4 @@ class PatchPluginFileTool implements ToolInterface {
 
         return $result;
     }
-
-    private function getFilesystem(): ?\WP_Filesystem_Base {
-        if (!function_exists('WP_Filesystem')) {
-            require_once ABSPATH . 'wp-admin/includes/file.php';
-        }
-        if (!WP_Filesystem()) {
-            return null;
-        }
-        global $wp_filesystem;
-        if (!($wp_filesystem instanceof \WP_Filesystem_Base)) {
-            return null;
-        }
-        return $wp_filesystem;
-    }
-
-    private function resolvePluginDirectory(string $requestedSlug): ?string {
-        if (!is_dir(WP_PLUGIN_DIR)) {
-            return null;
-        }
-        $entries = scandir(WP_PLUGIN_DIR);
-        if ($entries === false) {
-            return null;
-        }
-        $normalized = $this->normalizeSlug($requestedSlug);
-        foreach ($entries as $entry) {
-            if ($entry === '.' || $entry === '..' || !is_dir(WP_PLUGIN_DIR . '/' . $entry)) {
-                continue;
-            }
-            if ($entry === $requestedSlug) {
-                continue;
-            }
-            if ($this->normalizeSlug($entry) === $normalized) {
-                return WP_PLUGIN_DIR . '/' . $entry;
-            }
-        }
-        return null;
-    }
-
-    private function normalizeSlug(string $slug): string {
-        return strtolower(str_replace(['-', '_'], '', $slug));
-    }
-
-    private function validateInlineJavaScript(string $path): array {
-        if (!function_exists('exec')) {
-            return ['valid' => true, 'warning' => 'JS validation skipped (exec unavailable).'];
-        }
-
-        $exitCode = 0;
-        @exec('which node 2>/dev/null', $whichOut, $exitCode);
-        if ($exitCode !== 0) {
-            return ['valid' => true, 'warning' => 'JS validation skipped (node not found).'];
-        }
-
-        $ext = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
-
-        if ($ext === 'js') {
-            $output = [];
-            @exec('node --check ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
-            if ($exitCode !== 0) {
-                return [
-                    'valid' => false,
-                    'error' => 'JavaScript syntax error: ' . $this->extractNodeError($output),
-                ];
-            }
-            return ['valid' => true];
-        }
-
-        if ($ext !== 'php') {
-            return ['valid' => true];
-        }
-
-        $content = file_get_contents($path);
-        if ($content === false || !str_contains($content, '<script')) {
-            return ['valid' => true];
-        }
-
-        if (!preg_match_all('/<script(\s[^>]*)?>(.+?)<\/script>/si', $content, $matches)) {
-            return ['valid' => true];
-        }
-
-        $errors = [];
-        foreach ($matches[2] as $i => $jsBlock) {
-            $attrs = $matches[1][$i] ?? '';
-            if ($attrs !== '' && preg_match('/type\s*=\s*["\'](.*?)["\']/i', $attrs, $typeMatch)) {
-                $type = strtolower(trim($typeMatch[1]));
-                if ($type !== '' && $type !== 'text/javascript' && $type !== 'module') {
-                    continue;
-                }
-            }
-
-            $js = trim($jsBlock);
-            if (strlen($js) < 20) {
-                continue;
-            }
-
-            $cleaned = preg_replace('/<\?(?:php|=)\s.*?\?>/s', '0', $js);
-            if (substr_count($cleaned, '0') - substr_count($js, '0') > 8) {
-                continue;
-            }
-
-            $tmpFile = tempnam(sys_get_temp_dir(), 'levi_js_');
-            if ($tmpFile === false) {
-                continue;
-            }
-            file_put_contents($tmpFile, $cleaned);
-            $output = [];
-            $exitCode = 0;
-            @exec('node --check ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
-            @unlink($tmpFile);
-
-            if ($exitCode !== 0) {
-                $errors[] = 'Script block #' . ($i + 1) . ': ' . $this->extractNodeError($output);
-            }
-        }
-
-        if (!empty($errors)) {
-            return [
-                'valid' => false,
-                'error' => 'JavaScript syntax error(s): ' . implode(' | ', $errors),
-            ];
-        }
-
-        return ['valid' => true];
-    }
-
-    private function extractNodeError(array $output): string {
-        foreach ($output as $line) {
-            if (str_contains($line, 'SyntaxError')) {
-                return trim($line);
-            }
-        }
-        $filtered = array_filter($output, fn($l) => trim($l) !== '' && !str_starts_with(trim($l), 'at ') && !str_starts_with(trim($l), 'Node.js'));
-        return implode(' — ', array_slice($filtered, 0, 3)) ?: 'Unknown JS error.';
-    }
-
-    private function validatePhpSyntax(string $path): array {
-        if (strtolower((string) pathinfo($path, PATHINFO_EXTENSION)) !== 'php') {
-            return ['valid' => true];
-        }
-        if (!function_exists('exec')) {
-            return ['valid' => true, 'warning' => 'PHP lint skipped (exec unavailable).'];
-        }
-        $output = [];
-        $exitCode = 0;
-        @exec('php -l ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
-        if ($exitCode !== 0) {
-            return ['valid' => false, 'error' => trim(implode("\n", $output)) ?: 'PHP lint failed.'];
-        }
-        return ['valid' => true];
-    }
-
 }

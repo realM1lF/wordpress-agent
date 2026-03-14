@@ -248,9 +248,15 @@ class InstallPluginTool implements ToolInterface {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
 
+        wp_cache_delete('plugins', 'plugins');
+
         $installedPlugins = get_plugins('/' . $slug);
         if (empty($installedPlugins)) {
-            return ['success' => false, 'error' => "Plugin '$slug' is not installed."];
+            return [
+                'success' => false,
+                'error' => "Plugin '$slug' is not installed.",
+                'suggestion' => "Check the plugin slug. Use list_plugin_files to verify the plugin directory exists and contains a PHP file with a valid 'Plugin Name:' header.",
+            ];
         }
 
         $pluginFile = $slug . '/' . array_key_first($installedPlugins);
@@ -260,7 +266,11 @@ class InstallPluginTool implements ToolInterface {
 
         $result = activate_plugin($pluginFile);
         if (is_wp_error($result)) {
-            return ['success' => false, 'error' => $result->get_error_message()];
+            return [
+                'success' => false,
+                'error' => $result->get_error_message(),
+                'suggestion' => 'Activation failed after cache clear. Read the main plugin file to check for runtime errors. Use read_error_log to see PHP errors.',
+            ];
         }
 
         return ['success' => true, 'plugin_slug' => $slug, 'message' => "Plugin '$slug' activated."];

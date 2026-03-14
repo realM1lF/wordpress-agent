@@ -250,6 +250,8 @@ class OpenRouterClient implements AIClientInterface {
         }
 
         $fullContent = '';
+        $fullReasoningContent = '';
+        $reasoningSignalled = false;
         $finishReason = null;
         $usage = [];
         $model = null;
@@ -332,6 +334,14 @@ class OpenRouterClient implements AIClientInterface {
                         continue;
                     }
 
+                    if (isset($delta['reasoning_content']) && $delta['reasoning_content'] !== '') {
+                        $fullReasoningContent .= $delta['reasoning_content'];
+                        if (!$reasoningSignalled) {
+                            $reasoningSignalled = true;
+                            $onChunk('', 'reasoning_start');
+                        }
+                    }
+
                     if (isset($delta['content']) && $delta['content'] !== '') {
                         $fullContent .= $delta['content'];
                         $onChunk($delta['content']);
@@ -360,7 +370,7 @@ class OpenRouterClient implements AIClientInterface {
             return new WP_Error('api_error', "OpenRouter streaming returned HTTP $httpCode", ['status' => $httpCode]);
         }
 
-        return [
+        $result = [
             'content' => $fullContent,
             'finish_reason' => $finishReason ?? 'stop',
             'usage' => $usage,
@@ -368,6 +378,12 @@ class OpenRouterClient implements AIClientInterface {
             'has_tool_calls' => $hasToolCalls,
             'tool_calls' => $hasToolCalls ? array_values($toolCallChunks) : [],
         ];
+
+        if ($fullReasoningContent !== '') {
+            $result['reasoning_content'] = $fullReasoningContent;
+        }
+
+        return $result;
     }
 
     private function getProviderPreferences(): array {

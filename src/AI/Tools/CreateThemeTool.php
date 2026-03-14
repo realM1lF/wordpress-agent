@@ -2,14 +2,21 @@
 
 namespace Levi\Agent\AI\Tools;
 
-class CreateThemeTool implements ToolInterface {
+use Levi\Agent\AI\Tools\Concerns\ValidatesSyntax;
+
+class CreateThemeTool extends AbstractTool {
+
+    use ValidatesSyntax;
 
     public function getName(): string {
         return 'create_theme';
     }
 
     public function getDescription(): string {
-        return 'Create a new WordPress theme scaffold (directory + style.css + functions.php + index.php), optionally activate it.';
+        return 'Create a new WordPress child or standalone theme scaffold with style.css, functions.php, and index.php. '
+            . 'The theme slug must be unique — refuses creation if a theme with the same slug already exists. '
+            . 'Optionally activates the theme immediately after creation. '
+            . 'Use write_theme_file to add additional template files afterwards.';
     }
 
     public function getParameters(): array {
@@ -64,38 +71,28 @@ class CreateThemeTool implements ToolInterface {
         $overwrite = (bool) ($params['overwrite'] ?? false);
 
         if ($slug === '' || $name === '') {
-            return [
-                'success' => false,
-                'error' => 'Both slug and name are required.',
-            ];
+            return ['success' => false, 'error' => 'Both slug and name are required.'];
         }
 
         $themeDir = trailingslashit(get_theme_root()) . $slug;
         $styleCss = $themeDir . '/style.css';
+
         $filesystem = $this->getFilesystem();
         if ($filesystem === null) {
-            return [
-                'success' => false,
-                'error' => 'WordPress filesystem is not available.',
-            ];
+            return ['success' => false, 'error' => 'WordPress filesystem is not available.'];
         }
+
         $hadStyleCss = $filesystem->exists($styleCss);
         $previousStyleContent = null;
         if ($hadStyleCss) {
             $previousStyleContent = $filesystem->get_contents($styleCss);
             if (!is_string($previousStyleContent)) {
-                return [
-                    'success' => false,
-                    'error' => 'Could not read existing style.css for safety backup.',
-                ];
+                return ['success' => false, 'error' => 'Could not read existing style.css for safety backup.'];
             }
         }
 
         if (!$filesystem->is_dir($themeDir) && !$filesystem->mkdir($themeDir, FS_CHMOD_DIR, true)) {
-            return [
-                'success' => false,
-                'error' => 'Could not create theme directory.',
-            ];
+            return ['success' => false, 'error' => 'Could not create theme directory.'];
         }
 
         if ($filesystem->exists($styleCss) && !$overwrite) {
@@ -117,10 +114,7 @@ class CreateThemeTool implements ToolInterface {
             . "/* Theme styles */\n";
 
         if (!$filesystem->put_contents($styleCss, $styleContent, FS_CHMOD_FILE)) {
-            return [
-                'success' => false,
-                'error' => 'Could not write style.css via WordPress filesystem.',
-            ];
+            return ['success' => false, 'error' => 'Could not write style.css.'];
         }
 
         $functionsContent = "<?php\n"
@@ -139,11 +133,9 @@ class CreateThemeTool implements ToolInterface {
 
         $functionsPath = $themeDir . '/functions.php';
         if (!$filesystem->put_contents($functionsPath, $functionsContent, FS_CHMOD_FILE)) {
-            return [
-                'success' => false,
-                'error' => 'Could not write functions.php via WordPress filesystem.',
-            ];
+            return ['success' => false, 'error' => 'Could not write functions.php.'];
         }
+
         $lint = $this->validatePhpSyntax($functionsPath);
         if (($lint['valid'] ?? false) !== true) {
             $filesystem->delete($functionsPath, false, 'f');
@@ -154,7 +146,7 @@ class CreateThemeTool implements ToolInterface {
             }
             return [
                 'success' => false,
-                'error' => 'Create reverted: PHP syntax check failed for functions.php. ' . ($lint['error'] ?? 'Unknown lint error.'),
+                'error' => 'Create reverted: PHP syntax error in functions.php. ' . ($lint['error'] ?? ''),
             ];
         }
 
@@ -180,11 +172,9 @@ class CreateThemeTool implements ToolInterface {
 
         $indexPath = $themeDir . '/index.php';
         if (!$filesystem->put_contents($indexPath, $indexContent, FS_CHMOD_FILE)) {
-            return [
-                'success' => false,
-                'error' => 'Could not write index.php via WordPress filesystem.',
-            ];
+            return ['success' => false, 'error' => 'Could not write index.php.'];
         }
+
         $lintIndex = $this->validatePhpSyntax($indexPath);
         if (($lintIndex['valid'] ?? false) !== true) {
             $filesystem->delete($indexPath, false, 'f');
@@ -196,7 +186,7 @@ class CreateThemeTool implements ToolInterface {
             }
             return [
                 'success' => false,
-                'error' => 'Create reverted: PHP syntax check failed for index.php. ' . ($lintIndex['error'] ?? 'Unknown lint error.'),
+                'error' => 'Create reverted: PHP syntax error in index.php. ' . ($lintIndex['error'] ?? ''),
             ];
         }
 
@@ -206,7 +196,7 @@ class CreateThemeTool implements ToolInterface {
             if (!$themeObj->exists()) {
                 return [
                     'success' => false,
-                    'error' => 'Theme was created but could not be activated (theme not found).',
+                    'error' => 'Theme created but could not be activated (theme not found).',
                     'theme_slug' => $slug,
                 ];
             }
@@ -219,56 +209,17 @@ class CreateThemeTool implements ToolInterface {
             'slug' => $slug,
             'theme_slug' => $slug,
             'path' => $themeDir,
+            'created_files' => ['style.css', 'functions.php', 'index.php'],
             'activated' => $activated,
             'message' => $activated
                 ? 'Theme scaffold created and activated.'
                 : 'Theme scaffold created.',
         ];
+
         if (!empty($lint['warning'])) {
             $result['warning'] = $lint['warning'];
         }
+
         return $result;
-    }
-
-    private function validatePhpSyntax(string $path): array {
-        if (strtolower((string) pathinfo($path, PATHINFO_EXTENSION)) !== 'php') {
-            return ['valid' => true];
-        }
-
-        if (!function_exists('exec')) {
-            return [
-                'valid' => true,
-                'warning' => 'PHP lint skipped (exec unavailable).',
-            ];
-        }
-
-        $output = [];
-        $exitCode = 0;
-        @exec('php -l ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
-        if ($exitCode !== 0) {
-            return [
-                'valid' => false,
-                'error' => trim(implode("\n", $output)) ?: 'PHP lint failed.',
-            ];
-        }
-
-        return ['valid' => true];
-    }
-
-    private function getFilesystem(): ?\WP_Filesystem_Base {
-        if (!function_exists('WP_Filesystem')) {
-            require_once ABSPATH . 'wp-admin/includes/file.php';
-        }
-
-        if (!WP_Filesystem()) {
-            return null;
-        }
-
-        global $wp_filesystem;
-        if (!($wp_filesystem instanceof \WP_Filesystem_Base)) {
-            return null;
-        }
-
-        return $wp_filesystem;
     }
 }

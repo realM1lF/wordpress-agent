@@ -6,16 +6,18 @@ use WP_Error;
 
 class MemoryLoader {
     private VectorStore $vectorStore;
+    private ChunkContextualizer $contextualizer;
     private int $chunkSize = 500;
 
     /**
      * Bump this when the chunking algorithm changes to force re-indexing
      * of all files on the next sync (cron or manual).
      */
-    private const CHUNK_VERSION = 'v2-markdown';
+    private const CHUNK_VERSION = 'v3-ctx-r3';
 
     public function __construct() {
         $this->vectorStore = new VectorStore();
+        $this->contextualizer = new ChunkContextualizer();
     }
 
     /**
@@ -23,16 +25,19 @@ class MemoryLoader {
      * Legacy method - prefer reloadChangedFiles() for incremental updates.
      */
     public function loadAllMemories(): array {
-        return [
+        $result = [
             'identity' => $this->loadIdentityFiles(),
             'reference' => $this->loadReferenceMemories(),
             'errors' => [],
         ];
+        $this->rebuildBM25Index();
+        return $result;
     }
 
     /**
      * Incremental reload: only re-embed files that have actually changed.
      * Safe against timeouts - already-processed files survive a crash.
+     * Also re-indexes tool definitions when identity files change (tool descriptions may have been updated).
      */
     public function reloadChangedFiles(): array {
         $changes = $this->checkForChanges();
@@ -46,12 +51,17 @@ class MemoryLoader {
                 continue;
             }
 
-            $hasPartialData = $this->vectorStore->getHighestChunkIndex($filename, 'identity') >= 0;
             $fileHashChanged = $this->hasFileContentChanged($path, $filename, 'identity');
+            $versionChanged = $this->hasChunkVersionChanged($path);
 
-            if ($fileHashChanged || !$hasPartialData) {
+            if ($fileHashChanged || $versionChanged) {
                 $this->vectorStore->clearFileVectors($filename, 'identity');
                 $this->vectorStore->unmarkFileLoaded($path);
+
+                if ($versionChanged && !$fileHashChanged) {
+                    $bm25 = new BM25Index($this->vectorStore->getDatabase());
+                    $bm25->clearFileEntries($filename, 'identity');
+                }
             }
 
             $result = $this->processFile($path, 'identity', $filename);
@@ -70,12 +80,17 @@ class MemoryLoader {
                 continue;
             }
 
-            $hasPartialData = $this->vectorStore->getHighestChunkIndex($filename, 'reference') >= 0;
             $fileHashChanged = $this->hasFileContentChanged($path, $filename, 'reference');
+            $versionChanged = $this->hasChunkVersionChanged($path);
 
-            if ($fileHashChanged || !$hasPartialData) {
+            if ($fileHashChanged || $versionChanged) {
                 $this->vectorStore->clearFileVectors($filename, 'reference');
                 $this->vectorStore->unmarkFileLoaded($path);
+
+                if ($versionChanged && !$fileHashChanged) {
+                    $bm25 = new BM25Index($this->vectorStore->getDatabase());
+                    $bm25->clearFileEntries($filename, 'reference');
+                }
             }
 
             $result = $this->processFile($path, 'reference', $filename);
@@ -86,12 +101,117 @@ class MemoryLoader {
             }
         }
 
+        $toolIndexResult = $this->indexToolDefinitions();
+        if (!empty($toolIndexResult['errors'])) {
+            $errors = array_merge($errors, $toolIndexResult['errors']);
+        }
+
+        // Rebuild BM25 keyword index for hybrid search
+        $bm25Indexed = $this->rebuildBM25Index();
+
         return [
             'changed_identity' => $changes['identity'],
             'changed_reference' => $changes['reference'],
             'loaded' => $loaded,
+            'tool_definitions' => $toolIndexResult,
+            'bm25_indexed' => $bm25Indexed,
             'errors' => $errors,
         ];
+    }
+
+    /**
+     * Index all tool definitions in the vector DB for semantic search.
+     * Uses batch embedding (single API call) for efficiency.
+     * Only re-indexes when tool definitions have changed (hash-based check).
+     */
+    public function indexToolDefinitions(): array {
+        if (!$this->vectorStore->isAvailable()) {
+            return ['indexed' => 0, 'skipped' => true, 'reason' => 'VectorStore not available'];
+        }
+
+        try {
+            $registry = new \Levi\Agent\AI\Tools\Registry('full');
+            $tools = $registry->getAll();
+        } catch (\Throwable $e) {
+            return ['indexed' => 0, 'errors' => ['Registry init failed: ' . $e->getMessage()]];
+        }
+
+        $texts = [];
+        $toolNames = [];
+        foreach ($tools as $tool) {
+            $name = $tool->getName();
+            if ($name === 'search_tools') {
+                continue;
+            }
+            $corpus = $name . ': ' . $tool->getDescription();
+            foreach ($tool->getParameters() as $paramName => $config) {
+                $corpus .= ' | ' . $paramName;
+                if (!empty($config['description'])) {
+                    $corpus .= ': ' . $config['description'];
+                }
+            }
+            $texts[] = $corpus;
+            $toolNames[] = $name;
+        }
+
+        if (empty($texts)) {
+            return ['indexed' => 0, 'reason' => 'No tools to index'];
+        }
+
+        $currentHash = md5(implode('|', $texts));
+        $storedHash = get_transient('levi_tool_definitions_hash');
+        if ($storedHash === $currentHash) {
+            return ['indexed' => count($texts), 'skipped' => true, 'reason' => 'Tool definitions unchanged'];
+        }
+
+        $this->vectorStore->clearMemory('tool_definition');
+
+        $embeddings = $this->vectorStore->generateEmbeddingBatch($texts);
+        if (is_wp_error($embeddings)) {
+            return ['indexed' => 0, 'errors' => ['Batch embedding failed: ' . $embeddings->get_error_message()]];
+        }
+
+        $vectors = [];
+        foreach ($texts as $i => $text) {
+            if (!isset($embeddings[$i]) || empty($embeddings[$i])) {
+                continue;
+            }
+            $vectors[] = [
+                'content' => $text,
+                'embedding' => $embeddings[$i],
+                'memory_type' => 'tool_definition',
+                'source_file' => $toolNames[$i],
+                'chunk_index' => 0,
+            ];
+        }
+
+        $inserted = $this->vectorStore->bulkInsertVectors($vectors);
+        set_transient('levi_tool_definitions_hash', $currentHash, WEEK_IN_SECONDS);
+
+        return ['indexed' => $inserted, 'total' => count($texts)];
+    }
+
+    /**
+     * Build/update the BM25 keyword index for all vectors that don't have entries yet.
+     */
+    public function rebuildBM25Index(): int
+    {
+        $db = $this->vectorStore->getDatabase();
+        if ($db === null) {
+            return 0;
+        }
+
+        try {
+            $bm25 = new BM25Index($db);
+            $indexed = $bm25->rebuildFromVectors();
+            if ($indexed > 0) {
+                error_log("MemoryLoader: BM25 indexed {$indexed} new chunks");
+            }
+            return $indexed;
+        } catch (\Throwable $e) {
+            error_log('MemoryLoader BM25 rebuild error: ' . $e->getMessage());
+            return 0;
+        }
     }
 
     /**
@@ -231,7 +351,27 @@ class MemoryLoader {
     }
 
     /**
-     * Process a single file with batch processing and resume support
+     * Check if the stored CHUNK_VERSION differs from the current one.
+     * Returns true when the chunking/contextualization algorithm changed,
+     * requiring a full re-index even though the file content is identical.
+     */
+    private function hasChunkVersionChanged(string $path): bool {
+        $storedHash = $this->vectorStore->getStoredFileHash($path);
+        if ($storedHash === null) {
+            return false;
+        }
+
+        $parts = explode(':', $storedHash, 2);
+        $storedVersion = $parts[1] ?? '';
+        // Strip partial suffix: "v3-ctx-r2_partial_10_100" → "v3-ctx-r2"
+        $storedVersion = explode('_partial_', $storedVersion)[0];
+
+        return $storedVersion !== self::CHUNK_VERSION;
+    }
+
+    /**
+     * Process a single file with batch processing, resume support, and
+     * Contextual Retrieval (LLM-generated chunk context at index time).
      */
     private function processFile(string $filePath, string $memoryType, ?string $sourceFileOverride = null): array|WP_Error {
         $content = file_get_contents($filePath);
@@ -250,21 +390,30 @@ class MemoryLoader {
         if ($highestStoredIndex >= 0) {
             error_log("MemoryLoader: Resuming $sourceFile from chunk $resumeFromIndex (already have 0-$highestStoredIndex)");
         }
-        
-        $vectorsCreated = 0;
+
+        // Only contextualize chunks that actually need indexing (skip already-stored ones).
+        // This avoids wasting LLM calls on chunks that will be skipped during resume.
+        $chunksToProcess = [];
         $skippedChunks = 0;
+        foreach ($chunks as $index => $chunk) {
+            if ($index <= $highestStoredIndex) {
+                $skippedChunks++;
+            } else {
+                $chunksToProcess[$index] = $chunk;
+            }
+        }
+
+        $contextualizedChunks = !empty($chunksToProcess)
+            ? $this->contextualizeChunks($content, $chunksToProcess)
+            : [];
+
+        $vectorsCreated = 0;
         $batch = [];
         $batchSize = 10;
 
-        foreach ($chunks as $index => $chunk) {
-            // Skip already-stored chunks (resume support)
-            if ($index <= $highestStoredIndex) {
-                $skippedChunks++;
-                continue;
-            }
-            
-            // Generate embedding (uses cache if available)
-            $embedding = $this->vectorStore->generateEmbedding($chunk);
+        foreach ($chunksToProcess as $index => $originalChunk) {
+            $embeddingText = $contextualizedChunks[$index] ?? $originalChunk;
+            $embedding = $this->vectorStore->generateEmbedding($embeddingText);
             
             if (is_wp_error($embedding)) {
                 return $embedding;
@@ -274,16 +423,16 @@ class MemoryLoader {
                 continue;
             }
 
-            // Collect for batch insert
+            $hasContext = ($embeddingText !== $originalChunk);
             $batch[] = [
-                'content' => $chunk,
+                'content' => $embeddingText,
                 'embedding' => $embedding,
                 'memory_type' => $memoryType,
                 'source_file' => $sourceFile,
                 'chunk_index' => $index,
+                'original_content' => $hasContext ? $originalChunk : null,
             ];
 
-            // Bulk insert when batch is full
             if (count($batch) >= $batchSize) {
                 $inserted = $this->vectorStore->bulkInsertVectors($batch);
                 $vectorsCreated += $inserted;
@@ -291,17 +440,14 @@ class MemoryLoader {
             }
         }
 
-        // Insert remaining batch
         if (!empty($batch)) {
             $inserted = $this->vectorStore->bulkInsertVectors($batch);
             $vectorsCreated += $inserted;
         }
 
-        // Calculate total vectors now in DB
         $totalVectorsNow = $highestStoredIndex + 1 + $vectorsCreated;
         $isComplete = ($totalVectorsNow >= $totalChunks);
         
-        // Mark file as loaded (include CHUNK_VERSION so algorithm changes trigger re-index)
         $fileHash = $this->vectorStore->getFileHash($filePath) . ':' . self::CHUNK_VERSION;
         if (!$isComplete) {
             $fileHash .= '_partial_' . $totalVectorsNow . '_' . $totalChunks;
@@ -316,6 +462,117 @@ class MemoryLoader {
             'skipped' => $skippedChunks,
             'complete' => $isComplete,
         ];
+    }
+
+    /**
+     * Contextual Retrieval: enrich chunks with LLM-generated descriptions.
+     *
+     * For large documents, sends the surrounding section (not the whole doc)
+     * as context to stay within token limits. Processes in batches of 5.
+     *
+     * @return array<int, string> Contextualized chunks keyed by original index
+     */
+    private function contextualizeChunks(string $fullContent, array $chunks): array
+    {
+        if (empty($chunks) || count($chunks) < 2) {
+            return $chunks;
+        }
+
+        $sections = $this->parseMarkdownSections($fullContent);
+        $sectionTexts = array_map(
+            fn($s) => ($s['header_path'] !== '' ? "[{$s['header_path']}]\n\n" : '') . $s['content'],
+            $sections
+        );
+        $fullSectionText = implode("\n\n", $sectionTexts);
+
+        // For each chunk, find the best surrounding context from the document.
+        // Strategy: use a sliding window over sections to build context per chunk.
+        $contextualized = [];
+        $contextBatchSize = 5;
+        $pendingBatch = [];
+        $pendingIndices = [];
+
+        foreach ($chunks as $index => $chunk) {
+            $sectionContext = $this->findSurroundingContext($chunk, $fullSectionText, $sections);
+            $pendingBatch[] = ['context' => $sectionContext, 'chunk' => $chunk];
+            $pendingIndices[] = $index;
+
+            if (count($pendingBatch) >= $contextBatchSize) {
+                $this->processContextBatch($pendingBatch, $pendingIndices, $contextualized);
+                $pendingBatch = [];
+                $pendingIndices = [];
+            }
+        }
+
+        if (!empty($pendingBatch)) {
+            $this->processContextBatch($pendingBatch, $pendingIndices, $contextualized);
+        }
+
+        return $contextualized;
+    }
+
+    private function processContextBatch(array $batch, array $indices, array &$contextualized): void
+    {
+        foreach ($batch as $i => $item) {
+            $result = $this->contextualizer->contextualizeBatch(
+                $item['context'],
+                [$item['chunk']]
+            );
+            $contextualized[$indices[$i]] = $result['contextualized'][0] ?? $item['chunk'];
+        }
+    }
+
+    /**
+     * Find the most relevant section context for a given chunk.
+     * Returns 2-3 surrounding sections (~6000 words max).
+     */
+    private function findSurroundingContext(string $chunk, string $fullText, array $sections): string
+    {
+        // Quick: find which section(s) contain parts of this chunk
+        $chunkStart = mb_substr($chunk, 0, 100);
+        $bestPos = mb_strpos($fullText, $chunkStart);
+
+        if ($bestPos === false) {
+            // Fallback: use first 6000 words of doc
+            $words = explode(' ', $fullText);
+            return implode(' ', array_slice($words, 0, 6000));
+        }
+
+        // Build context: gather sections around the match position
+        $contextParts = [];
+        $contextWords = 0;
+        $maxContextWords = 6000;
+        $currentPos = 0;
+        $collecting = false;
+
+        foreach ($sections as $section) {
+            $sectionText = ($section['header_path'] !== '' ? "[{$section['header_path']}]\n\n" : '') . $section['content'];
+            $sectionLen = mb_strlen($sectionText);
+            $sectionEnd = $currentPos + $sectionLen + 2;
+
+            $isNearChunk = ($bestPos >= $currentPos - 3000 && $bestPos <= $sectionEnd + 3000);
+            if ($isNearChunk) {
+                $collecting = true;
+            }
+
+            if ($collecting) {
+                $words = str_word_count($sectionText);
+                if ($contextWords + $words > $maxContextWords && $contextWords > 0) {
+                    break;
+                }
+                $contextParts[] = $sectionText;
+                $contextWords += $words;
+            }
+
+            $currentPos = $sectionEnd;
+        }
+
+        if (empty($contextParts)) {
+            $words = explode(' ', $fullText);
+            return implode(' ', array_slice($words, 0, $maxContextWords));
+        }
+
+        return implode("\n\n", $contextParts);
     }
 
     /**
