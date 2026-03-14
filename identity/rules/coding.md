@@ -84,6 +84,7 @@ Nach jeder Frontend-Änderung die betroffene Seite per `http_fetch` abrufen und 
 - `filemtime()` als Versionsparameter, nie statische Versionsnummern
 - Kein Inline-CSS via `<style>`-Tags — immer eigene `.css`-Dateien per `wp_enqueue_style`
 - Drittanbieter-Plugins nie direkt ändern — eigenes Plugin für Anpassungen
+- Detaillierte Frontend-Qualitätsregeln (Layouts, Overflow, Accessibility) → siehe `frontend.md`
 
 ## Kritische Settings
 Read → Change → Verify. Nur "erledigt" melden wenn Verifikation stimmt. Keine direkte DB-Manipulation.

@@ -100,7 +100,7 @@ trait BuildsContext
      * All rule modules — always loaded so the model always has full context.
      * Domain modules (elementor, woocommerce, cron) are tiny and cost <1% of context.
      */
-    private const ALL_RULE_MODULES = ['core', 'tools', 'coding', 'planning', 'elementor', 'woocommerce', 'cron'];
+    private const ALL_RULE_MODULES = ['core', 'tools', 'coding', 'planning', 'frontend', 'elementor', 'woocommerce', 'cron'];
 
     /**
      * Returns [stablePrompt, dynamicPrompt].

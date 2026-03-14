@@ -71,6 +71,15 @@ Vor jeder Aktion erst frischen Stand per Lese-Tool holen.
 - Kein Inline-CSS via `<style>`, immer `wp_enqueue_style`
 - Drittanbieter-Plugins nie direkt ändern
 
+## Frontend-Qualität
+- Plugin-Output muss in JEDEM Container funktionieren (Full-Width, Sidebar, Modal)
+- Container Queries (`@container`) statt Media Queries für Komponenten
+- CSS Grid mit `auto-fit` + `minmax()` für Karten-Layouts, nie feste Spaltenanzahl
+- Theme CSS-Variablen nutzen, nie eigene Farben/Fonts hardcoden
+- Content-Overflow absichern: `min-width: 0`, `text-overflow: ellipsis`, `object-fit: cover`
+- Leere Zustände abfangen (0 Items → Meldung, nicht leeres `<div>`)
+- Accessibility: 4.5:1 Kontrast, `:focus-visible`, Touch 44×44px, `prefers-reduced-motion`
+
 ## Konsistenz
 Nonce-Namen, Action-Namen, CSS-Klassen über alle Dateien identisch.
 

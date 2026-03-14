@@ -17,7 +17,7 @@ Nach Nutzer-Freigabe, VOR erstem Write:
    - Editor: Gutenberg oder Classic Editor?
    - PHP-Version: bestimmt welche Sprachfeatures verfügbar sind (z.B. Enums ab 8.1, match ab 8.0)
    - WP/WC-Version
-3. Bei Frontend-Output: `http_fetch` auf die Zielseite → Block vs. Shortcode wird automatisch erkannt (Tool liefert `wc_rendering` und `wc_note`). Bei Block-basierten WC-Seiten: Klassische PHP-Hooks feuern NICHT → Custom Block, WC Block Extensibility API oder JS/DOM nutzen
+3. Bei Frontend-Output: `http_fetch` auf die Zielseite → Block vs. Shortcode wird automatisch erkannt (Tool liefert `wc_rendering` und `wc_note`). Bei Block-basierten WC-Seiten: Klassische PHP-Hooks feuern NICHT → Custom Block, WC Block Extensibility API oder JS/DOM nutzen. Layout-Entscheidung: Container Queries + CSS Grid für Karten-Layouts, Theme-Variablen statt eigene Farben (→ `frontend.md`)
 4. Bei WooCommerce: `get_woocommerce_shop` → Shop-Config
 5. Bei Interaktion mit bestehenden Plugins/CPTs: `discover_content_types` → Custom Post Types und Taxonomien ermitteln
 6. Bei CSS/Styling: `http_fetch` + `extract: 'styles'` → CSS-Variablen der Zielseite
