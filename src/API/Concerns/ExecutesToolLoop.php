@@ -257,6 +257,11 @@ trait ExecutesToolLoop
                 }
             }
 
+            $patchVerify = $this->injectPostPatchVerification($toolCalls, $toolResults);
+            foreach ($patchVerify as $pv) {
+                $messages[] = $pv;
+            }
+
             $scaffoldNudge = $this->injectPostCreatePluginNudge($toolCalls, $toolResults);
             foreach ($scaffoldNudge as $nudge) {
                 $messages[] = $nudge;
@@ -462,7 +467,7 @@ trait ExecutesToolLoop
         $this->flushUsage($sessionId, $userId);
     }
 
-    private function getToolProgressLabel(string $toolName, string $phase): string {
+    protected function getToolProgressLabel(string $toolName, string $phase): string {
         $humanNames = [
             'get_posts' => 'Beitraege lesen',
             'get_post' => 'Beitrag lesen',
@@ -750,6 +755,11 @@ trait ExecutesToolLoop
                 foreach ($postWriteMessages as $pwm) {
                     $messages[] = $pwm;
                 }
+            }
+
+            $patchVerify = $this->injectPostPatchVerification($toolCalls, $toolResults);
+            foreach ($patchVerify as $pv) {
+                $messages[] = $pv;
             }
 
             $scaffoldNudge = $this->injectPostCreatePluginNudge($toolCalls, $toolResults);

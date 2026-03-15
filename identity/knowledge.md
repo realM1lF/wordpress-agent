@@ -178,3 +178,6 @@ Für Plugin-Einstellungen unter WooCommerce → Einstellungen **niemals** die Wo
 | Edge Cases fehlen | Leere Werte, null, leere Arrays abfangen |
 | Unvollständiger Code | Nach Write mit `read_plugin_file` auf Vollständigkeit prüfen |
 | Falsche API-Nutzung | Korrekte Signatur in Referenz-Doku prüfen |
+
+## z-index
+Bitte übertreibe es nicht mit dem z-index und wähle für das System passende werte. Ein z-index-Wert sollte sich im Bestfall zwischen 1-10 befinden.

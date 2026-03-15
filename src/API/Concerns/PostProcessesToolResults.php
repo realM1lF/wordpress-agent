@@ -71,6 +71,53 @@ trait PostProcessesToolResults {
     }
 
     /**
+     * After successful patch_plugin_file / patch_theme_file, inject a verification
+     * message that forces the AI to check whether all intended changes are present
+     * in the verification_context returned by the tool.
+     */
+    private function injectPostPatchVerification(array $toolCalls, array $toolResults): array {
+        $patchTools = ['patch_plugin_file', 'patch_theme_file'];
+        $patchedFiles = [];
+
+        foreach ($toolResults as $tr) {
+            $tool = $tr['tool'] ?? '';
+            if (!in_array($tool, $patchTools, true)) {
+                continue;
+            }
+            if (!($tr['result']['success'] ?? false)) {
+                continue;
+            }
+
+            $slug = $tr['result']['plugin_slug'] ?? $tr['result']['theme_slug'] ?? '?';
+            $relPath = $tr['result']['relative_path'] ?? '?';
+            $patchCount = $tr['result']['patches_applied'] ?? 0;
+            $hasVerification = !empty($tr['result']['verification_context']);
+
+            $patchedFiles[] = [
+                'file' => "{$slug}/{$relPath}",
+                'patches' => $patchCount,
+                'has_context' => $hasVerification,
+            ];
+        }
+
+        if (empty($patchedFiles)) {
+            return [];
+        }
+
+        $fileList = implode(', ', array_map(fn($f) => $f['file'] . " ({$f['patches']} patches)", $patchedFiles));
+
+        return [[
+            'role' => 'system',
+            'content' => "[PATCH-VERIFIKATION] Erfolgreich gepatcht: {$fileList}.\n\n"
+                . "PFLICHT: Pruefe den verification_context in der Tool-Response. "
+                . "Sind ALLE beabsichtigten Aenderungen dort sichtbar? "
+                . "Wenn Aenderungen fehlen oder der verification_context leer ist, "
+                . "lies die Datei mit read_plugin_file/read_theme_file und patche erneut.\n"
+                . "Melde dem Nutzer NIEMALS 'fertig' ohne diese Pruefung.",
+        ]];
+    }
+
+    /**
      * After CSS/JS file writes, nudge the LLM to verify frontend output.
      * If http_fetch is available: auto-fetch the shop page and inject the HTML.
      * If not: inject a system message reminding Levi to ask the user to check.

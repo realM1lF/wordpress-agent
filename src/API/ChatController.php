@@ -793,11 +793,11 @@ class ChatController extends WP_REST_Controller {
             if ($type === 'tool_call_start') {
                 $info = json_decode($chunk, true);
                 if (is_array($info) && !empty($info['tool'])) {
+                    $toolName = $info['tool'];
                     $this->emitSSE('progress', [
-                        'message' => $info['tool'],
-                        'tool' => $info['tool'],
+                        'message' => $this->getToolProgressLabel($toolName, 'start'),
+                        'tool' => $toolName,
                         'phase' => 'preview',
-                        'context' => $info['tool'],
                     ]);
                 }
                 return;
@@ -937,11 +937,11 @@ class ChatController extends WP_REST_Controller {
             if ($type === 'tool_call_start') {
                 $info = json_decode($chunk, true);
                 if (is_array($info) && !empty($info['tool'])) {
+                    $toolName = $info['tool'];
                     $this->emitSSE('progress', [
-                        'message' => $info['tool'],
-                        'tool' => $info['tool'],
+                        'message' => $this->getToolProgressLabel($toolName, 'start'),
+                        'tool' => $toolName,
                         'phase' => 'preview',
-                        'context' => $info['tool'],
                     ]);
                 }
                 return;

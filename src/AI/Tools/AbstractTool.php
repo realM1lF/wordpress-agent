@@ -117,6 +117,53 @@ abstract class AbstractTool implements ToolInterface {
     }
 
     /**
+     * Build targeted read-back data for patch operations.
+     * Instead of showing the first 15 lines, shows a context window
+     * around each applied replacement so the AI can verify the changes.
+     *
+     * @param array<int, array{index: int, matched_at_line?: int, search_preview: string, replace_preview: string}> $applied
+     * @return array{verification_context: array<int, array{patch_index: int, around_line: int, context: string}>}
+     */
+    protected function buildPatchReadBack(\WP_Filesystem_Base $filesystem, string $targetPath, array $applied): array {
+        $content = $filesystem->get_contents($targetPath);
+        if (!is_string($content)) {
+            return [];
+        }
+
+        $lines = explode("\n", $content);
+        $totalLines = count($lines);
+        $contextRadius = 3;
+        $contexts = [];
+
+        foreach ($applied as $patch) {
+            $line = $patch['matched_at_line'] ?? null;
+            if ($line === null) {
+                continue;
+            }
+
+            $start = max(0, $line - 1 - $contextRadius);
+            $end = min($totalLines - 1, $line - 1 + $contextRadius);
+            $snippet = '';
+            for ($i = $start; $i <= $end; $i++) {
+                $marker = ($i === $line - 1) ? '>>>' : '   ';
+                $snippet .= $marker . ' ' . ($i + 1) . '| ' . $lines[$i] . "\n";
+            }
+
+            $contexts[] = [
+                'patch_index' => $patch['index'],
+                'around_line' => $line,
+                'context' => rtrim($snippet),
+            ];
+        }
+
+        if (empty($contexts)) {
+            return [];
+        }
+
+        return ['verification_context' => $contexts];
+    }
+
+    /**
      * Build a compact diff summary between old and new file content.
      * Not a full diff algorithm — compares line-by-line and reports changed regions.
      *

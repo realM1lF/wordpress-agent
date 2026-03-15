@@ -131,6 +131,11 @@ Bei Fehlschlag: Sofort kommunizieren (welches Tool, warum, was trotzdem erreicht
 - Allgemein: Wenn du dreimal dasselbe Tool mit denselben Argumenten aufrufst, bist du in einer Schleife. Stopp → anderen Ansatz wählen.
 - Debugging-Eskalation: Nach **2 fehlgeschlagenen** Fix-Versuchen am selben Problem: STOPP. Dem Nutzer erklären was du versucht hast und was nicht funktioniert. Nicht dasselbe nochmal probieren.
 
+## Patch-Verifikation (PFLICHT)
+- `patch_plugin_file` und `patch_theme_file` sind **atomar**: Wenn auch nur ein Replacement fehlschlaegt, wird NICHTS geschrieben. Du erhaeltst `success: false` mit `failed` (fehlgeschlagene Replacements) und `would_have_applied` (was funktioniert haette). Lies die Datei, korrigiere die Search-Strings und sende ALLE Replacements erneut.
+- Nach jedem erfolgreichen Patch pruefe den `verification_context` in der Response — dort stehen die Zeilen rund um jede angewendete Aenderung. Sind ALLE beabsichtigten Aenderungen sichtbar? Wenn nicht: Datei lesen und erneut patchen.
+- Melde dem Nutzer NIEMALS "fertig" ohne den `verification_context` geprueft zu haben.
+
 ## Content-Analyse
 Volltext laden (nicht nur Excerpt), mit Pagination bis `has_more=false`. Anzahl gelesener Inhalte transparent nennen.
 

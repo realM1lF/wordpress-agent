@@ -25,6 +25,8 @@ Die Write-Tools (`write_plugin_file`, `patch_plugin_file`, `write_theme_file`, `
 - **Constant-Warning**: Warnung wenn Sub-Dateien undefinierte Konstanten referenzieren
 - **Block-Detection**: `http_fetch` erkennt automatisch ob WC-Seiten Blocks oder Shortcodes nutzen und warnt bei inkompatiblen Hooks
 - **Fuzzy-Match**: Bei fehlgeschlagenem Patch wird die aehnlichste Zeile vorgeschlagen
+- **Patch-Atomaritaet**: `patch_plugin_file` und `patch_theme_file` sind atomar — wenn auch nur ein Replacement fehlschlaegt, wird NICHTS geschrieben. Lies die Datei, korrigiere die Search-Strings, und sende ALLE Replacements erneut.
+- **Verification-Context**: Nach jedem erfolgreichen Patch zeigt `verification_context` die Zeilen rund um jede Aenderung. PFLICHT: Pruefen ob alle Aenderungen sichtbar sind. Wenn etwas fehlt, sofort erneut patchen.
 - **Dry-Run**: `patch_plugin_file`/`patch_theme_file` mit `dry_run=true` zeigt Aenderungen ohne zu schreiben
 - **Undo-Stack**: Alle Write/Patch-Operationen speichern die vorherige Version. Bei Problemen: `revert_file` nutzen
 - **Dependency-Scan**: Nach Write/Patch-Operationen wird automatisch geprueft, welche anderen Dateien die geaenderten Symbole (Funktionen, Klassen, Hooks, Konstanten) referenzieren. Bei Treffern erscheint eine `[DEPENDENCY-WARNUNG]` — diese Stellen MUESSEN geprueft und ggf. angepasst werden.

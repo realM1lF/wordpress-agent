@@ -531,6 +531,22 @@ trait ManagesContext {
             }
         }
 
+        if (isset($compact['results']) && is_array($compact['results'])) {
+            $fileCount = count($compact['results']);
+            if ($fileCount > 0) {
+                $perFileBudget = (int) (8000 / $fileCount);
+                foreach ($compact['results'] as &$entry) {
+                    if (isset($entry['content']) && is_string($entry['content']) && mb_strlen($entry['content']) > $perFileBudget) {
+                        $head = mb_substr($entry['content'], 0, (int) ($perFileBudget * 0.65));
+                        $tail = mb_substr($entry['content'], (int) -($perFileBudget * 0.30));
+                        $entry['content'] = $head . "\n\n...[truncated middle section]...\n\n" . $tail;
+                        $entry['truncated_by_context_budget'] = true;
+                    }
+                }
+                unset($entry);
+            }
+        }
+
         if (isset($compact['content']) && is_string($compact['content']) && mb_strlen($compact['content']) > 4000) {
             $head = mb_substr($compact['content'], 0, 2500);
             $tail = mb_substr($compact['content'], -1200);

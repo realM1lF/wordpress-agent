@@ -178,11 +178,13 @@ class PatchPluginFileTool extends AbstractTool {
             $applied[] = $entry;
         }
 
-        if (!empty($errors) && empty($applied)) {
+        if (!empty($errors)) {
             return [
                 'success' => false,
-                'error' => 'No replacements could be applied.',
-                'details' => $errors,
+                'error' => count($errors) . ' of ' . count($replacements) . ' replacement(s) failed. No changes written (atomic).',
+                'failed' => $errors,
+                'would_have_applied' => $applied,
+                'suggestion' => 'Read the file with read_plugin_file to see the exact content, then fix the search strings and retry ALL replacements.',
             ];
         }
 
@@ -209,9 +211,6 @@ class PatchPluginFileTool extends AbstractTool {
             $diff = $this->buildCompactDiff($originalContent, $content);
             if ($diff !== null) {
                 $result['diff_summary'] = $diff;
-            }
-            if (!empty($errors)) {
-                $result['partial_errors'] = $errors;
             }
             return $result;
         }
@@ -275,10 +274,8 @@ class PatchPluginFileTool extends AbstractTool {
         ];
 
         $result += $this->buildReadBackData($filesystem, $targetPath);
+        $result += $this->buildPatchReadBack($filesystem, $targetPath, $applied);
 
-        if (!empty($errors)) {
-            $result['partial_errors'] = $errors;
-        }
         if (!empty($lint['warning'])) {
             $result['warning'] = $lint['warning'];
         }
