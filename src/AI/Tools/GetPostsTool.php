@@ -209,8 +209,8 @@ class GetPostsTool implements ToolInterface {
     public function getInputExamples(): array
     {
         return [
-            ['status' => 'publish', 'per_page' => 10],
-            ['status' => 'draft', 'search' => 'Willkommen', 'per_page' => 5],
+            ['status' => 'publish', 'number' => 10],
+            ['status' => 'draft', 'search' => 'Willkommen', 'number' => 5],
         ];
     }
 }

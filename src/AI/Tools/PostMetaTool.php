@@ -152,21 +152,23 @@ class PostMetaTool implements ToolInterface {
 
         $result = update_post_meta($postId, $metaKey, $valueToStore);
 
-        // For WooCommerce: sync product data cache if relevant keys change
         $wcSyncKeys = ['_regular_price', '_sale_price', '_price', '_stock', '_stock_status', '_sku'];
         if (in_array($metaKey, $wcSyncKeys, true) && function_exists('wc_get_product')) {
             $product = wc_get_product($postId);
             if ($product) {
-                // Trigger WC data sync
                 if (in_array($metaKey, ['_regular_price', '_sale_price'], true)) {
                     $regular = get_post_meta($postId, '_regular_price', true);
                     $sale = get_post_meta($postId, '_sale_price', true);
                     $price = ($sale !== '' && $sale !== false) ? $sale : $regular;
                     update_post_meta($postId, '_price', $price);
                 }
-                clean_post_cache($postId);
+                if (function_exists('wc_delete_product_transients')) {
+                    wc_delete_product_transients($postId);
+                }
             }
         }
+
+        clean_post_cache($postId);
 
         $actualValue = get_post_meta($postId, $metaKey, true);
         $verified = ($actualValue == $valueToStore);
@@ -202,6 +204,7 @@ class PostMetaTool implements ToolInterface {
 
         $existed = metadata_exists('post', $postId, $metaKey);
         $result = delete_post_meta($postId, $metaKey);
+        clean_post_cache($postId);
 
         return [
             'success' => $result || !$existed,

@@ -234,10 +234,11 @@ class CreatePluginTool extends AbstractTool {
         $filesystem->put_contents($pluginDir . '/README.md', $readme, FS_CHMOD_FILE);
         $createdFiles[] = 'README.md';
 
+        wp_cache_delete('plugins', 'plugins');
+
         $activated = false;
         if ($activate) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
-            wp_cache_delete('plugins', 'plugins');
             $activationResult = activate_plugin($pluginBasename);
             if (is_wp_error($activationResult)) {
                 return [

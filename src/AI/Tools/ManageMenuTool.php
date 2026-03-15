@@ -199,6 +199,9 @@ class ManageMenuTool implements ToolInterface {
             return ['success' => false, 'error' => $result->get_error_message()];
         }
 
+        wp_cache_delete($menuId, 'nav_menu_items');
+        wp_cache_delete('last_changed', 'terms');
+
         return [
             'success' => true,
             'item_id' => $result,
@@ -212,10 +215,21 @@ class ManageMenuTool implements ToolInterface {
             return ['success' => false, 'error' => 'item_id is required.'];
         }
 
+        $menuItem = get_post($itemId);
+        $menuId = $menuItem ? (int) get_post_meta($itemId, '_menu_item_menu_item_parent', true) : 0;
+        $menuTerms = $menuItem ? wp_get_object_terms($itemId, 'nav_menu', ['fields' => 'ids']) : [];
+
         $deleted = wp_delete_post($itemId, true);
         if (!$deleted) {
             return ['success' => false, 'error' => 'Could not delete menu item.'];
         }
+
+        if (!empty($menuTerms) && !is_wp_error($menuTerms)) {
+            foreach ($menuTerms as $termId) {
+                wp_cache_delete($termId, 'nav_menu_items');
+            }
+        }
+        wp_cache_delete('last_changed', 'terms');
 
         return [
             'success' => true,
@@ -272,9 +286,9 @@ class ManageMenuTool implements ToolInterface {
     public function getInputExamples(): array
     {
         return [
-            ['action' => 'list'],
-            ['action' => 'add_item', 'menu_id' => 1, 'title' => 'Shop', 'url' => '/shop/'],
-            ['action' => 'create', 'name' => 'Footer Navigation'],
+            ['action' => 'list_menus'],
+            ['action' => 'add_menu_item', 'menu_id' => 1, 'title' => 'Shop', 'url' => '/shop/', 'object_type' => 'custom'],
+            ['action' => 'get_menu_items', 'menu_id' => 1],
         ];
     }
 }

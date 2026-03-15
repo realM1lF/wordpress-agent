@@ -21,15 +21,17 @@ class ElementorBuildTool implements ToolInterface {
 
     public function getDescription(): string {
         return 'Edit and extend Elementor page layouts: modify content, add/remove widgets, update settings, apply templates. '
-            . 'Always read the page layout with get_elementor_data first. '
+            . 'Always read the page layout with get_elementor_data first to get element IDs. '
+            . 'For add_widget: use parent_id (element ID from get_elementor_data) to target the exact container. '
             . 'Use real Elementor widgets (heading, text-editor, button, image, icon-box, etc.). '
             . 'Does not create new pages — use create_page first, then edit with this tool.';
     }
 
     public function getInputExamples(): array {
         return [
-            ['action' => 'update_element', 'post_id' => 123, 'element_id' => 'abc123', 'settings' => ['title' => 'Neuer Titel']],
-            ['action' => 'add_element', 'post_id' => 123, 'parent_id' => 'container1', 'widget_type' => 'heading', 'settings' => ['title' => 'Willkommen', 'header_size' => 'h2']],
+            ['action' => 'update_section', 'post_id' => 123, 'element_id' => 'abc123', 'settings' => '{"title":"Neuer Titel"}'],
+            ['action' => 'add_widget', 'post_id' => 123, 'parent_id' => 'abc123', 'widget_type' => 'heading', 'settings' => '{"title":"Willkommen","header_size":"h2"}'],
+            ['action' => 'add_widget', 'post_id' => 123, 'section_index' => 0, 'column_index' => 0, 'widget_type' => 'text-editor', 'settings' => '{"editor":"<p>Inhalt</p>"}'],
             ['action' => 'remove_element', 'post_id' => 123, 'element_id' => 'abc123'],
         ];
     }
@@ -67,13 +69,17 @@ class ElementorBuildTool implements ToolInterface {
                 'type' => 'string',
                 'description' => 'Elementor element ID (for remove_element, or as alternative to section_index for update_section)',
             ],
+            'parent_id' => [
+                'type' => 'string',
+                'description' => 'Elementor element ID of the parent container to insert into (for add_widget). Preferred over section_index/column_index. Get IDs from get_elementor_data.',
+            ],
             'column_index' => [
                 'type' => 'integer',
-                'description' => 'Zero-based column index within section (for add_widget)',
+                'description' => 'Zero-based column index within section (for add_widget, fallback when parent_id is not used)',
             ],
             'position' => [
                 'type' => 'integer',
-                'description' => 'Zero-based insertion position within column (for add_widget, -1 for end)',
+                'description' => 'Zero-based insertion position within parent (for add_widget, -1 for end)',
             ],
             'widget_type' => [
                 'type' => 'string',
@@ -173,7 +179,7 @@ class ElementorBuildTool implements ToolInterface {
             update_post_meta($postId, '_wp_page_template', $pageTemplate);
         }
 
-        $this->clearElementorCache();
+        $this->clearElementorCache($postId);
 
         $verified = get_post_meta($postId, '_elementor_data', true);
         $verifiedData = json_decode($verified, true);
@@ -252,25 +258,6 @@ class ElementorBuildTool implements ToolInterface {
             return ['success' => false, 'error' => 'Could not load Elementor data for this page.'];
         }
 
-        $sectionIndex = (int) ($params['section_index'] ?? 0);
-        $columnIndex = (int) ($params['column_index'] ?? 0);
-        $position = (int) ($params['position'] ?? -1);
-
-        if (!isset($data[$sectionIndex])) {
-            return ['success' => false, 'error' => "Section index $sectionIndex is out of range."];
-        }
-
-        $section = &$data[$sectionIndex];
-        $children = &$section['elements'];
-
-        if (!is_array($children) || empty($children)) {
-            $children = [['id' => $this->generateElementId(), 'elType' => 'container', 'settings' => [], 'elements' => []]];
-        }
-
-        if (!isset($children[$columnIndex])) {
-            return ['success' => false, 'error' => "Column index $columnIndex is out of range (section has " . count($children) . ' columns).'];
-        }
-
         $settingsJson = (string) ($params['settings'] ?? '{}');
         $settings = json_decode($settingsJson, true);
         if (!is_array($settings)) {
@@ -284,6 +271,46 @@ class ElementorBuildTool implements ToolInterface {
             'settings' => $this->sanitizeSettings($settings),
             'elements' => [],
         ];
+
+        $position = (int) ($params['position'] ?? -1);
+        $parentId = (string) ($params['parent_id'] ?? '');
+
+        if ($parentId !== '') {
+            $parent = &$this->findElementByIdRef($data, $parentId);
+            if ($parent === null) {
+                return ['success' => false, 'error' => "Parent element with ID '$parentId' not found."];
+            }
+
+            if (!isset($parent['elements']) || !is_array($parent['elements'])) {
+                $parent['elements'] = [];
+            }
+
+            if ($position < 0 || $position >= count($parent['elements'])) {
+                $parent['elements'][] = $widget;
+            } else {
+                array_splice($parent['elements'], $position, 0, [$widget]);
+            }
+
+            return $this->saveElementorData($postId, $data, "Widget '$widgetType' added to element '$parentId'.");
+        }
+
+        $sectionIndex = (int) ($params['section_index'] ?? 0);
+        $columnIndex = (int) ($params['column_index'] ?? 0);
+
+        if (!isset($data[$sectionIndex])) {
+            return ['success' => false, 'error' => "Section index $sectionIndex is out of range (page has " . count($data) . ' top-level elements).'];
+        }
+
+        $section = &$data[$sectionIndex];
+        $children = &$section['elements'];
+
+        if (!is_array($children) || empty($children)) {
+            $children = [['id' => $this->generateElementId(), 'elType' => 'container', 'settings' => [], 'elements' => []]];
+        }
+
+        if (!isset($children[$columnIndex])) {
+            return ['success' => false, 'error' => "Column index $columnIndex is out of range (section has " . count($children) . ' columns).'];
+        }
 
         $colElements = &$children[$columnIndex]['elements'];
         if (!is_array($colElements)) {
@@ -363,7 +390,7 @@ class ElementorBuildTool implements ToolInterface {
         update_post_meta($postId, '_elementor_data', wp_slash(wp_json_encode($remapped, JSON_UNESCAPED_UNICODE)));
         update_post_meta($postId, '_elementor_edit_mode', 'builder');
 
-        $this->clearElementorCache();
+        $this->clearElementorCache($postId);
 
         return [
             'success' => true,
@@ -496,7 +523,7 @@ class ElementorBuildTool implements ToolInterface {
         }
 
         update_post_meta($postId, '_elementor_data', wp_slash($json));
-        $this->clearElementorCache();
+        $this->clearElementorCache($postId);
 
         $verified = get_post_meta($postId, '_elementor_data', true);
         $verifiedData = json_decode($verified, true);
@@ -622,8 +649,17 @@ class ElementorBuildTool implements ToolInterface {
         return $settings;
     }
 
-    private function clearElementorCache(): void {
-        if (class_exists('\Elementor\Plugin') && isset(\Elementor\Plugin::$instance->files_manager)) {
+    private function clearElementorCache(?int $postId = null): void {
+        if (!class_exists('\Elementor\Plugin')) {
+            return;
+        }
+
+        if ($postId !== null && class_exists('\Elementor\Core\Files\CSS\Post')) {
+            $cssFile = \Elementor\Core\Files\CSS\Post::create($postId);
+            $cssFile->update();
+        }
+
+        if (isset(\Elementor\Plugin::$instance->files_manager)) {
             \Elementor\Plugin::$instance->files_manager->clear_cache();
         }
     }

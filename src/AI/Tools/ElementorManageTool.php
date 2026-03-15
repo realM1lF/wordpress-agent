@@ -37,6 +37,10 @@ class ElementorManageTool implements ToolInterface {
                 'description' => 'Template type (for import_template)',
                 'enum' => ['page', 'section'],
             ],
+            'post_id' => [
+                'type' => 'integer',
+                'description' => 'Optional post/page ID for clear_css_cache. When provided, regenerates CSS for that specific page instead of clearing all.',
+            ],
         ];
     }
 
@@ -52,7 +56,7 @@ class ElementorManageTool implements ToolInterface {
         $action = (string) ($params['action'] ?? '');
 
         return match ($action) {
-            'clear_css_cache' => $this->clearCssCache(),
+            'clear_css_cache' => $this->clearCssCache($params),
             'import_template' => $this->importTemplate($params),
             'export_template' => $this->exportTemplate($params),
             'delete_template' => $this->deleteTemplate($params),
@@ -60,8 +64,25 @@ class ElementorManageTool implements ToolInterface {
         };
     }
 
-    private function clearCssCache(): array {
-        if (!class_exists('\Elementor\Plugin') || !isset(\Elementor\Plugin::$instance->files_manager)) {
+    private function clearCssCache(array $params): array {
+        if (!class_exists('\Elementor\Plugin')) {
+            return ['success' => false, 'error' => 'Elementor is not available.'];
+        }
+
+        $postId = (int) ($params['post_id'] ?? 0);
+
+        if ($postId > 0 && class_exists('\Elementor\Core\Files\CSS\Post')) {
+            $cssFile = \Elementor\Core\Files\CSS\Post::create($postId);
+            $cssFile->update();
+
+            return [
+                'success' => true,
+                'post_id' => $postId,
+                'message' => "CSS for post $postId regenerated.",
+            ];
+        }
+
+        if (!isset(\Elementor\Plugin::$instance->files_manager)) {
             return ['success' => false, 'error' => 'Elementor files manager not available.'];
         }
 
@@ -69,7 +90,7 @@ class ElementorManageTool implements ToolInterface {
 
         return [
             'success' => true,
-            'message' => 'Elementor CSS cache cleared. Pages will regenerate CSS on next load.',
+            'message' => 'Elementor CSS cache cleared globally. Pages will regenerate CSS on next load.',
         ];
     }
 
@@ -109,6 +130,10 @@ class ElementorManageTool implements ToolInterface {
         update_post_meta($postId, '_elementor_template_type', $type);
         update_post_meta($postId, '_elementor_edit_mode', 'builder');
         update_post_meta($postId, '_elementor_version', defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : '3.0');
+
+        if (isset(\Elementor\Plugin::$instance->files_manager)) {
+            \Elementor\Plugin::$instance->files_manager->clear_cache();
+        }
 
         return [
             'success' => true,
@@ -164,6 +189,10 @@ class ElementorManageTool implements ToolInterface {
 
         if (!$result) {
             return ['success' => false, 'error' => 'Failed to delete template.'];
+        }
+
+        if (isset(\Elementor\Plugin::$instance->files_manager)) {
+            \Elementor\Plugin::$instance->files_manager->clear_cache();
         }
 
         return [

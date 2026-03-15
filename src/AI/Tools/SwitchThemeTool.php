@@ -56,8 +56,8 @@ class SwitchThemeTool implements ToolInterface {
     public function getInputExamples(): array
     {
         return [
-            ['slug' => 'twentytwentyfour'],
-            ['slug' => 'astra'],
+            ['theme' => 'twentytwentyfour'],
+            ['theme' => 'astra'],
         ];
     }
 }

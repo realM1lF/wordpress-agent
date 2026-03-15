@@ -17,8 +17,8 @@ class ManageTaxonomyTool implements ToolInterface {
     public function getInputExamples(): array {
         return [
             ['action' => 'get_terms', 'taxonomy' => 'product_cat'],
-            ['action' => 'create_term', 'taxonomy' => 'product_cat', 'name' => 'Sale Items', 'slug' => 'sale-items'],
-            ['action' => 'set_post_terms', 'post_id' => 42, 'taxonomy' => 'category', 'term_ids' => [3, 7]],
+            ['action' => 'create_term', 'taxonomy' => 'product_cat', 'term_name' => 'Sale Items'],
+            ['action' => 'set_post_terms', 'post_id' => 42, 'taxonomy' => 'category', 'terms' => [3, 7]],
         ];
     }
 
@@ -195,6 +195,8 @@ class ManageTaxonomyTool implements ToolInterface {
             return ['success' => false, 'error' => $result->get_error_message()];
         }
 
+        clean_post_cache($postId);
+
         $currentTerms = wp_get_object_terms($postId, $taxonomy);
         $names = is_array($currentTerms) ? array_map(fn($t) => $t->name, $currentTerms) : [];
 
@@ -237,6 +239,8 @@ class ManageTaxonomyTool implements ToolInterface {
             }
             return ['success' => false, 'error' => $result->get_error_message()];
         }
+
+        clean_term_cache($result['term_id'], $taxonomy);
 
         return [
             'success' => true,

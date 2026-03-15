@@ -254,6 +254,10 @@ class PatchThemeFileTool extends AbstractTool {
             ];
         }
 
+        if (preg_match('/\.php$/i', $relativePath) && function_exists('opcache_invalidate')) {
+            opcache_invalidate($targetPathReal, true);
+        }
+
         $this->recordFileVersion($targetPath, $originalContent, $this->getName());
 
         $result = [

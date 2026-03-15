@@ -3,6 +3,36 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.8.0] – 2026-03-15
+- **Alle Tools validieren jetzt ihre Parameter:** Wenn Levi einem Tool Parameter schickt, die es gar nicht kennt, bekommt er jetzt eine Warnung zurück — statt dass sie still ignoriert werden. Das verhindert, dass Levi denkt, eine Aktion hätte geklappt, obwohl sie gar nicht ausgeführt wurde. Betrifft alle 50+ Tools automatisch über die zentrale Registry.
+- **Elementor-Inhalte werden endlich sichtbar:** Drei Bugs behoben, die dazu führten, dass von Levi erstellte Elementor-Widgets nicht auf der Seite erschienen:
+  - `add_widget` versteht jetzt `parent_id` (Element-ID aus `get_elementor_data`), um Widgets gezielt in den richtigen Container zu platzieren — nicht mehr nur per `section_index`.
+  - Nach jeder Elementor-Änderung wird das CSS der betroffenen Seite neu generiert (`Post::create()->update()`), nicht nur der globale Cache geleert.
+  - Die Tool-Beispiele und das Schema wurden korrigiert — vorher zeigten sie Action-Namen, die es gar nicht gab.
+- **Fehlerlog zeigt nur noch aktuelle Fehler:** `read_error_log` hat einen neuen `since`-Parameter. Levi kann jetzt z. B. nur Fehler der letzten Stunde anfordern (`since: "1h"`), statt alte, längst behobene Fehler zu sehen und sich davon verwirren zu lassen.
+- **Cache-Invalidierung für 13 Tools nachgerüstet:** Nach Änderungen an Produkten, Menüs, Taxonomien, Post-Meta, Seiten-Templates, Medien und Plugin-/Theme-Dateien werden die entsprechenden WordPress-Caches jetzt korrekt geleert. Änderungen sind sofort sichtbar — nicht erst nach Cache-Ablauf.
+- **8 Tools hatten falsche Beispiele — jetzt korrigiert:** Das Modell lernt aus den Beispielen in der Tool-Description. Wenn dort falsche Parameternamen stehen, schickt Levi genau diese falschen Namen. Betrifft: SwitchTheme, PatchPluginFile, ManageTaxonomy, ManageMenu, CreatePage, GetPosts, GetPages, WooCommerceManage.
+
+## [0.7.7] – 2026-03-14
+- **Streaming UX komplett überarbeitet:** Die Chat-Timeline zeigt Tool-Aufrufe jetzt wie Cursor: sofortige Vorschau beim Start, Dauer nach Abschluss, keine doppelten Einträge mehr.
+- **Kein rohes JSON mehr im Chat:** Tool-Call-Events (`tool_call_start`) werden jetzt in allen Stream-Phasen (Initial + Continuation) korrekt als Timeline-Karten angezeigt statt als roher JSON-Text.
+- **Duplikate im Chat behoben:** Wenn Levi zwischen Tool-Aufrufen Text streamt, wird dieser nicht mehr doppelt angezeigt.
+- **Timeline-Rauschen reduziert:** Post-Write-Validierungen (Error-Log, Smoke-Test, Integration-Check) erscheinen nur noch als Status-Label, nicht mehr als eigene Timeline-Karten. Karten für nicht existierende Tools werden unterdrückt.
+
+## [0.7.6] – 2026-03-14
+- **Levi antwortet bei einfachen Anfragen deutlich schneller:** Der vorhandene QueryClassifier wurde aktiviert und steuert jetzt die RAG-Pipeline. Bei einfachen Anfragen (Begrüßung, Status-Fragen, direkte Aktionen) werden teure Embedding- und LLM-Aufrufe übersprungen — nur lokale Episodic Memories werden geladen.
+- **Granulare Status-Events:** Der Chat zeigt jetzt „Nachricht empfangen…", „Kontext laden…" und „Levi denkt nach…" als separate Phasen, damit du siehst, was gerade passiert.
+- **Eager Tool-Call Preview:** Sobald das Modell einen Tool-Aufruf startet, erscheint sofort eine Vorschau-Karte in der Timeline — noch bevor der Aufruf abgeschlossen ist.
+
+## [0.7.5] – 2026-03-13
+- **Cursor-Level Tooling:** Write-Schutz verhindert versehentliches Überschreiben existierender Dateien. Erweiterter Linter prüft jetzt auch Referenz-Integrität (fehlende Includes, undefinierte Funktionen) und WordPress-Anti-Patterns. Context-Komprimierung in Tool-Loops reduziert Token-Verbrauch.
+- **Frontend-Qualitätsregeln:** Levi prüft vor dem Schreiben von Plugin-Output automatisch auf `<code>`/`<pre>`-Tags, die CSS brechen, und entfernt sie.
+
+## [0.7.4] – 2026-03-12
+- **RAG-Pipeline verbessert:** BM25-Suche repariert, Hybrid-Search (Embedding + BM25) liefert bessere Ergebnisse. Chunk-Reranking mit LLM für präzisere Kontext-Auswahl.
+- **Rules optimiert:** Destruktive Aktionen erfordern jetzt explizit `allow_destructive`, Frontend-Verify-Regeln für Plugin-Output, Client-seitige Validierung.
+- **Streaming-Fix:** `role: assistant` wird jetzt korrekt in `streamResultToResponse` gesetzt — behebt einen Fehler, bei dem Continuation-Nachrichten fehlschlugen.
+
 ## [0.7.3] – 2026-03-11
 - **Glass-Optik für den Chat:** Das Chat-Widget nutzt jetzt einen Blur-Effekt (backdrop-filter) und halbtransparente Hintergründe – ähnlich dem Header auf der Levi-Website. Hell/Dunkel wird automatisch anhand des Hintergrunds erkannt.
 - **Status-Label sofort sichtbar:** Der Typing-Indicator zeigt direkt „Levi verarbeitet die Anfrage…“, sobald Levi anfängt – nicht erst, wenn die erste Server-Nachricht eintrifft.

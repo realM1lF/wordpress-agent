@@ -119,6 +119,7 @@ class StoreSessionImageTool implements ToolInterface {
 
         if ($setFeatured && $attachToPost > 0) {
             set_post_thumbnail($attachToPost, $attachmentId);
+            clean_post_cache($attachToPost);
         }
 
         return [

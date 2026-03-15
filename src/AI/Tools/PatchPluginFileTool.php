@@ -27,7 +27,7 @@ class PatchPluginFileTool extends AbstractTool {
 
     public function getInputExamples(): array {
         return [
-            ['plugin_slug' => 'my-plugin', 'file' => 'my-plugin.php', 'replacements' => [['search' => '$price = 10;', 'replace' => '$price = 15;']]],
+            ['plugin_slug' => 'my-plugin', 'relative_path' => 'my-plugin.php', 'replacements' => [['search' => '$price = 10;', 'replace' => '$price = 15;']]],
         ];
     }
 
@@ -255,6 +255,12 @@ class PatchPluginFileTool extends AbstractTool {
 
         if (preg_match('/\.php$/i', $relativePath)) {
             wp_cache_delete('plugins', 'plugins');
+            if (function_exists('opcache_invalidate')) {
+                $realPath = realpath($targetPath);
+                if ($realPath !== false) {
+                    opcache_invalidate($realPath, true);
+                }
+            }
         }
 
         $this->recordFileVersion($targetPath, $originalContent, $this->getName());

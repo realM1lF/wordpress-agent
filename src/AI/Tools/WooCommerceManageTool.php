@@ -33,7 +33,7 @@ class WooCommerceManageTool implements ToolInterface {
     public function getInputExamples(): array {
         return [
             ['action' => 'create_product', 'name' => 'Basic T-Shirt', 'product_type' => 'simple', 'regular_price' => '29.99', 'status' => 'publish'],
-            ['action' => 'set_product_attributes', 'product_id' => 42, 'attributes' => [['name' => 'Farbe', 'values' => ['Rot', 'Blau']], ['name' => 'Größe', 'values' => ['S', 'M', 'L']]]],
+            ['action' => 'set_product_attributes', 'product_id' => 42, 'attributes' => [['name' => 'Farbe', 'options' => ['Rot', 'Blau']], ['name' => 'Größe', 'options' => ['S', 'M', 'L']]]],
             ['action' => 'create_variations', 'product_id' => 42, 'uniform_price' => '29.99'],
             ['action' => 'create_coupon', 'coupon_code' => 'SUMMER25', 'discount_type' => 'percent', 'amount' => '25'],
         ];
@@ -246,6 +246,7 @@ class WooCommerceManageTool implements ToolInterface {
         }
 
         $product->save();
+        $this->clearProductTransients($product->get_id());
 
         $result = [
             'success' => true,
@@ -330,6 +331,7 @@ class WooCommerceManageTool implements ToolInterface {
         }
 
         $product->save();
+        $this->clearProductTransients($productId);
 
         return [
             'success' => true,
@@ -353,6 +355,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $name = $product->get_name();
         $product->delete(true);
+        $this->clearProductTransients($productId);
 
         return [
             'success' => true,
@@ -430,6 +433,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $product->set_attributes($wcAttributes);
         $product->save();
+        $this->clearProductTransients($productId);
 
         return [
             'success' => true,
@@ -537,6 +541,7 @@ class WooCommerceManageTool implements ToolInterface {
         }
 
         \WC_Product_Variable::sync($productId);
+        $this->clearProductTransients($productId);
 
         return [
             'success' => true,
@@ -629,13 +634,15 @@ class WooCommerceManageTool implements ToolInterface {
             return ['success' => false, 'error' => 'No changes specified.'];
         }
 
+        $parentId = $variation->get_parent_id();
         $variation->save();
-        \WC_Product_Variable::sync($variation->get_parent_id());
+        \WC_Product_Variable::sync($parentId);
+        $this->clearProductTransients($parentId);
 
         return [
             'success' => true,
             'variation_id' => $variationId,
-            'parent_id' => $variation->get_parent_id(),
+            'parent_id' => $parentId,
             'changes' => $changes,
             'message' => 'Variation updated.',
         ];
@@ -655,6 +662,7 @@ class WooCommerceManageTool implements ToolInterface {
         $parentId = $variation->get_parent_id();
         $variation->delete(true);
         \WC_Product_Variable::sync($parentId);
+        $this->clearProductTransients($parentId);
 
         return [
             'success' => true,
@@ -739,6 +747,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $this->applyCouponParams($coupon, $params);
         $coupon->save();
+        clean_post_cache($coupon->get_id());
 
         return [
             'success' => true,
@@ -761,6 +770,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $this->applyCouponParams($coupon, $params);
         $coupon->save();
+        clean_post_cache($couponId);
 
         return [
             'success' => true,
@@ -783,6 +793,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $code = $coupon->get_code();
         $coupon->delete(true);
+        clean_post_cache($couponId);
 
         return [
             'success' => true,
@@ -835,5 +846,12 @@ class WooCommerceManageTool implements ToolInterface {
         if (isset($params['usage_limit'])) {
             $coupon->set_usage_limit((int) $params['usage_limit']);
         }
+    }
+
+    private function clearProductTransients(int $productId): void {
+        if (function_exists('wc_delete_product_transients')) {
+            wc_delete_product_transients($productId);
+        }
+        clean_post_cache($productId);
     }
 }

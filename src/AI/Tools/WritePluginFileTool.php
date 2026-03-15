@@ -190,6 +190,12 @@ class WritePluginFileTool extends AbstractTool {
 
         if (preg_match('/\.php$/i', $relativePath)) {
             wp_cache_delete('plugins', 'plugins');
+            if (function_exists('opcache_invalidate')) {
+                $realPath = realpath($targetPath);
+                if ($realPath !== false) {
+                    opcache_invalidate($realPath, true);
+                }
+            }
         }
 
         if (is_string($previousContent)) {

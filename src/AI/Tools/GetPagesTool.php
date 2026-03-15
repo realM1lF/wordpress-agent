@@ -139,7 +139,7 @@ class GetPagesTool implements ToolInterface {
     {
         return [
             ['status' => 'publish'],
-            ['status' => 'draft', 'per_page' => 5, 'include_content' => true],
+            ['status' => 'draft', 'number' => 5, 'include_content' => true],
         ];
     }
 }

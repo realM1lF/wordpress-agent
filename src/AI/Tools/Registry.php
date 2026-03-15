@@ -295,14 +295,38 @@ class Registry {
             ];
         }
 
+        $unknownParams = $this->detectUnknownParams($tool, $params);
+
         try {
-            return $tool->execute($params);
+            $result = $tool->execute($params);
         } catch (\Exception $e) {
             return [
                 'success' => false,
                 'error' => $e->getMessage(),
             ];
         }
+
+        if (!empty($unknownParams)) {
+            $known = array_keys($tool->getParameters());
+            $result['_warnings'] = [
+                'unknown_params' => $unknownParams,
+                'hint' => 'These parameters were sent but are not defined in this tool\'s schema and were ignored. Valid parameters: ' . implode(', ', $known) . '.',
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Detect parameters not declared in the tool's schema.
+     *
+     * @return string[] List of unknown parameter names (empty if all valid)
+     */
+    private function detectUnknownParams(ToolInterface $tool, array $params): array {
+        $known = array_keys($tool->getParameters());
+        $sent = array_keys($params);
+
+        return array_values(array_diff($sent, $known));
     }
 
     /**

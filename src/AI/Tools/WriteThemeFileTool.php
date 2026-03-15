@@ -171,6 +171,10 @@ class WriteThemeFileTool extends AbstractTool {
             ];
         }
 
+        if (preg_match('/\.php$/i', $relativePath) && function_exists('opcache_invalidate')) {
+            opcache_invalidate($targetPath, true);
+        }
+
         if (is_string($previousContent)) {
             $this->recordFileVersion($targetPath, $previousContent, $this->getName());
         }
