@@ -33,6 +33,16 @@ trait ExecutesToolLoop
             $iteration++;
             $messages[] = $messageData;
 
+            [$readBatch, $nonReadCalls] = $this->partitionToolCalls($toolCalls);
+            $isBatchableReadOnly = !empty($readBatch) && empty($nonReadCalls) && count($readBatch) > 1;
+            if ($isBatchableReadOnly) {
+                $this->emitSSE('progress', [
+                    'message' => count($readBatch) . ' Dateien lesen...',
+                    'tool' => 'batch_read',
+                    'iteration' => $iteration,
+                ]);
+            }
+
             foreach ($toolCalls as $toolCall) {
                 $functionName = trim($toolCall['function']['name'] ?? '');
                 $rawArgs = $toolCall['function']['arguments'] ?? '{}';
@@ -64,6 +74,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -102,6 +114,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -111,11 +125,13 @@ trait ExecutesToolLoop
                     continue;
                 }
 
-                $this->emitSSE('progress', [
-                    'message' => $this->getToolProgressLabel($functionName, 'start'),
-                    'tool' => $functionName,
-                    'iteration' => $iteration,
-                ]);
+                if (!$isBatchableReadOnly) {
+                    $this->emitSSE('progress', [
+                        'message' => $this->getToolProgressLabel($functionName, 'start'),
+                        'tool' => $functionName,
+                        'iteration' => $iteration,
+                    ]);
+                }
 
                 $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
                 if ($loopNudge !== null) {
@@ -139,6 +155,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -155,6 +173,8 @@ trait ExecutesToolLoop
 
                 $this->trackOwnedPluginFromToolResult($functionName, $functionArgs, $result);
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                $this->setWorkingSetIteration($iteration);
+                $this->trackFileAccessFromToolResult($functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
                     'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
@@ -164,12 +184,14 @@ trait ExecutesToolLoop
                     'iteration' => $iteration,
                 ];
 
-                $this->emitSSE('progress', [
-                    'message' => $this->getToolProgressLabel($functionName, ($result['success'] ?? false) ? 'done' : 'failed'),
-                    'tool' => $functionName,
-                    'iteration' => $iteration,
-                    'success' => $result['success'] ?? false,
-                ]);
+                if (!$isBatchableReadOnly) {
+                    $this->emitSSE('progress', [
+                        'message' => $this->getToolProgressLabel($functionName, ($result['success'] ?? false) ? 'done' : 'failed'),
+                        'tool' => $functionName,
+                        'iteration' => $iteration,
+                        'success' => $result['success'] ?? false,
+                    ]);
+                }
 
                 $toolContent = $this->compactToolResultForModel($result);
                 $toolContent .= $this->buildWriteBudgetWarning($functionName);
@@ -178,7 +200,14 @@ trait ExecutesToolLoop
                     'role' => 'tool',
                     'tool_call_id' => $toolCallId,
                     'content' => $toolContent,
+                    '_levi_iteration' => $iteration,
+                    '_levi_tool' => $functionName,
                 ];
+            }
+
+            $autoList = $this->injectAutoListOnMissingFile($toolCalls, $toolResults);
+            foreach ($autoList as $al) {
+                $messages[] = $al;
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
@@ -232,6 +261,16 @@ trait ExecutesToolLoop
                 }
             }
 
+            $depWarnings = $this->injectPostWriteReverseDependencyWarnings($toolCalls, $toolResults);
+            foreach ($depWarnings as $dw) {
+                $messages[] = $dw;
+            }
+
+            $refCheck = $this->injectPostWriteReferenceCheck($toolCalls, $toolResults);
+            foreach ($refCheck as $rc) {
+                $messages[] = $rc;
+            }
+
             $codeTagWarnings = $this->injectCodeTagWarnings($toolResults);
             if (!empty($codeTagWarnings)) {
                 $this->emitSSE('progress', [
@@ -253,6 +292,13 @@ trait ExecutesToolLoop
                 ]);
                 foreach ($toolMismatch as $tm) {
                     $messages[] = $tm;
+                }
+            }
+
+            if ($iteration >= 2) {
+                $wsSummary = $this->getWorkingSetSummary();
+                if ($wsSummary !== '') {
+                    $messages[] = ['role' => 'system', 'content' => $wsSummary];
                 }
             }
 
@@ -431,6 +477,21 @@ trait ExecutesToolLoop
             'discover_content_types' => 'Inhaltstypen erkennen',
             'discover_rest_api' => 'REST-API erkennen',
             'execute_wp_code' => 'Code ausfuehren',
+            'grep_plugin_files' => 'Plugin-Dateien durchsuchen',
+            'grep_theme_files' => 'Theme-Dateien durchsuchen',
+            'patch_theme_file' => 'Theme-Datei patchen',
+            'delete_plugin_file' => 'Plugin-Datei loeschen',
+            'delete_theme_file' => 'Theme-Datei loeschen',
+            'check_plugin_health' => 'Plugin-Gesundheit pruefen',
+            'rename_in_plugin' => 'Umbenennung in Plugin',
+            'revert_file' => 'Datei-Revert',
+            'search_tools' => 'Tools suchen',
+            'http_fetch' => 'HTTP-Abfrage',
+            'manage_user' => 'Benutzer verwalten',
+            'update_any_option' => 'Option aendern',
+            'store_session_image' => 'Bild speichern',
+            'switch_theme' => 'Theme wechseln',
+            'create_theme' => 'Theme erstellen',
         ];
 
         $name = $humanNames[$toolName] ?? $toolName;
@@ -506,6 +567,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -552,6 +615,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -602,6 +667,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -618,6 +685,8 @@ trait ExecutesToolLoop
 
                 $this->trackOwnedPluginFromToolResult($functionName, $functionArgs, $result);
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                $this->setWorkingSetIteration($iteration);
+                $this->trackFileAccessFromToolResult($functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
                     'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
@@ -643,7 +712,14 @@ trait ExecutesToolLoop
                     'role' => 'tool',
                     'tool_call_id' => $toolCallId,
                     'content' => $toolContent,
+                    '_levi_iteration' => $iteration,
+                    '_levi_tool' => $functionName,
                 ];
+            }
+
+            $autoList = $this->injectAutoListOnMissingFile($toolCalls, $toolResults);
+            foreach ($autoList as $al) {
+                $messages[] = $al;
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
@@ -678,6 +754,16 @@ trait ExecutesToolLoop
                 $messages[] = $ic;
             }
 
+            $depWarnings = $this->injectPostWriteReverseDependencyWarnings($toolCalls, $toolResults);
+            foreach ($depWarnings as $dw) {
+                $messages[] = $dw;
+            }
+
+            $refCheckClassic = $this->injectPostWriteReferenceCheck($toolCalls, $toolResults);
+            foreach ($refCheckClassic as $rc) {
+                $messages[] = $rc;
+            }
+
             $codeTagWarnings = $this->injectCodeTagWarnings($toolResults);
             foreach ($codeTagWarnings as $ctw) {
                 $messages[] = $ctw;
@@ -686,6 +772,13 @@ trait ExecutesToolLoop
             $toolMismatch = $this->injectToolMismatchCorrection($message, $toolResults);
             foreach ($toolMismatch as $tm) {
                 $messages[] = $tm;
+            }
+
+            if ($iteration >= 2) {
+                $wsSummary = $this->getWorkingSetSummary();
+                if ($wsSummary !== '') {
+                    $messages[] = ['role' => 'system', 'content' => $wsSummary];
+                }
             }
 
             $loopMessages = $this->compactMessagesForToolLoop($messages, $iteration);
@@ -959,10 +1052,13 @@ trait ExecutesToolLoop
             'write_plugin_file',
             'patch_plugin_file',
             'write_theme_file',
+            'patch_theme_file',
             'create_plugin',
             'create_theme',
             'execute_wp_code',
             'elementor_build',
+            'rename_in_plugin',
+            'revert_file',
         ], true);
     }
 
@@ -1197,5 +1293,33 @@ trait ExecutesToolLoop
             'confirm_password',
             'confirmation_password',
         ], true);
+    }
+
+    private const BATCHABLE_READ_TOOLS = [
+        'read_plugin_file', 'read_theme_file',
+        'list_plugin_files', 'list_theme_files',
+        'grep_plugin_files', 'grep_theme_files',
+        'get_posts', 'get_post', 'get_pages',
+        'get_plugins', 'get_options', 'get_users', 'get_media',
+        'read_error_log', 'check_plugin_health',
+        'search_tools', 'discover_content_types', 'discover_rest_api',
+    ];
+
+    /**
+     * Partition tool calls into batchable read-only tools and non-read tools.
+     * @return array{0: array, 1: array} [$readCalls, $nonReadCalls]
+     */
+    private function partitionToolCalls(array $toolCalls): array {
+        $readCalls = [];
+        $nonReadCalls = [];
+        foreach ($toolCalls as $tc) {
+            $name = trim($tc['function']['name'] ?? '');
+            if (in_array($name, self::BATCHABLE_READ_TOOLS, true)) {
+                $readCalls[] = $tc;
+            } else {
+                $nonReadCalls[] = $tc;
+            }
+        }
+        return [$readCalls, $nonReadCalls];
     }
 }

@@ -21,9 +21,10 @@ class Registry {
         'get_posts', 'get_post', 'get_pages', 'get_plugins',
         'get_options', 'get_users', 'get_media',
         'create_plugin', 'list_plugin_files', 'read_plugin_file',
-        'write_plugin_file', 'patch_plugin_file',
+        'write_plugin_file', 'patch_plugin_file', 'grep_plugin_files',
         'create_post', 'create_page', 'update_post',
         'read_error_log', 'http_fetch',
+        'check_plugin_health',
         'search_tools',
     ];
 
@@ -325,6 +326,8 @@ class Registry {
             new ListThemeFilesTool(),
             new ReadThemeFileTool(),
             new ReadErrorLogTool(),
+            new GrepPluginFilesTool(),
+            new CheckPluginHealthTool(),
         ];
 
         $commonWriteTools = [
@@ -357,7 +360,11 @@ class Registry {
             new SwitchThemeTool(),
             new CreateThemeTool(),
             new WriteThemeFileTool(),
+            new PatchThemeFileTool(),
+            new GrepThemeFilesTool(),
             new DeleteThemeFileTool(),
+            new RevertFileTool(),
+            new RenameInPluginTool(),
             new StoreSessionImageTool(),
         ];
 

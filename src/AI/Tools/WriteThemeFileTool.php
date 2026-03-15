@@ -5,21 +5,24 @@ namespace Levi\Agent\AI\Tools;
 use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
 use Levi\Agent\AI\Tools\Concerns\ValidatesSyntax;
 use Levi\Agent\AI\Tools\Concerns\ResolvesThemePaths;
+use Levi\Agent\AI\Tools\Concerns\TracksFileHistory;
 
 class WriteThemeFileTool extends AbstractTool {
 
     use SanitizesHtmlOutput;
     use ValidatesSyntax;
     use ResolvesThemePaths;
+    use TracksFileHistory;
 
     public function getName(): string {
         return 'write_theme_file';
     }
 
     public function getDescription(): string {
-        return 'Write or overwrite a file inside a theme directory. '
-            . 'The theme header in style.css is automatically preserved. '
-            . 'For small changes prefer patch-based editing.';
+        return 'Create a NEW file inside a theme directory. '
+            . 'If the file already exists, this tool REJECTS the write — use patch_theme_file to edit existing files. '
+            . 'Set overwrite=true only for complete rewrites where more than 50% of the file changes. '
+            . 'The theme header in style.css is automatically preserved.';
     }
 
     public function getParameters(): array {
@@ -48,6 +51,14 @@ class WriteThemeFileTool extends AbstractTool {
                 'type' => 'boolean',
                 'description' => 'Keep the existing theme header when writing style.css. Only set false to update theme metadata.',
                 'default' => true,
+            ],
+            'overwrite' => [
+                'type' => 'boolean',
+                'description' => 'DANGER: Set to true to overwrite an existing file completely. '
+                    . 'Only use when rewriting MORE than 50% of the file. '
+                    . 'You MUST read the entire file first and include ALL existing code you want to keep. '
+                    . 'For normal edits, use patch_theme_file instead.',
+                'default' => false,
             ],
         ];
     }
@@ -109,6 +120,22 @@ class WriteThemeFileTool extends AbstractTool {
             }
         }
 
+        $overwrite = (bool) ($params['overwrite'] ?? false);
+        if ($hadExistingFile && !$overwrite) {
+            $existingLines = substr_count($previousContent, "\n") + 1;
+            return [
+                'success' => false,
+                'error' => "File already exists ({$existingLines} lines). "
+                    . "Use patch_theme_file for targeted changes to existing files. "
+                    . "write_theme_file is only for creating NEW files.",
+                'suggestion' => 'Read the file with read_theme_file first, then use patch_theme_file '
+                    . 'with {search, replace} pairs to change only the specific parts you need. '
+                    . 'This prevents accidental code loss. '
+                    . 'If you truly need a complete rewrite (>50% change), set overwrite=true.',
+                'existing_lines' => $existingLines,
+            ];
+        }
+
         // --- Header protection for style.css ---
         $headerProtected = false;
         if ($this->isThemeStylesheet($relativePath) && $preserveHeader && is_string($previousContent)) {
@@ -133,6 +160,19 @@ class WriteThemeFileTool extends AbstractTool {
                 'error' => 'Write reverted: PHP syntax check failed. ' . ($lint['error'] ?? 'Unknown lint error.'),
                 'suggestion' => 'Common issues: missing semicolons, unclosed brackets, undefined constants. Fix the syntax error and try again.',
             ];
+        }
+
+        $cssLint = $this->validateCssSyntax($targetPath);
+        if (($cssLint['valid'] ?? true) === false) {
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
+            return [
+                'success' => false,
+                'error' => 'Write reverted: ' . ($cssLint['error'] ?? 'CSS syntax check failed.'),
+            ];
+        }
+
+        if (is_string($previousContent)) {
+            $this->recordFileVersion($targetPath, $previousContent, $this->getName());
         }
 
         $result = [
@@ -160,6 +200,23 @@ class WriteThemeFileTool extends AbstractTool {
         $codeTagCheck = $this->detectCodeTagsInOutput($content, $relativePath);
         if ($codeTagCheck !== null) {
             $result['code_tag_warning'] = $codeTagCheck;
+        }
+
+        if ($hadExistingFile && is_string($previousContent)) {
+            $oldLines = substr_count($previousContent, "\n") + 1;
+            $newLines = substr_count($content, "\n") + 1;
+            $lostLines = $oldLines - $newLines;
+            if ($lostLines > 5 && $lostLines > (int) ($oldLines * 0.1)) {
+                $result['content_loss_warning'] = "[WARNUNG] Die Datei hatte vorher {$oldLines} Zeilen, "
+                    . "jetzt nur noch {$newLines} Zeilen ({$lostLines} Zeilen weniger). "
+                    . "Pruefe ob du versehentlich bestehenden Code entfernt hast. "
+                    . "Falls ja, lies die vorherige Version und stelle den fehlenden Code wieder her.";
+            }
+
+            $diff = $this->buildCompactDiff($previousContent, $content);
+            if ($diff !== null) {
+                $result['diff_summary'] = $diff;
+            }
         }
 
         return $result;

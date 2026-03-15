@@ -679,6 +679,7 @@ class StateSnapshotService {
 
         if ($env['woocommerce_active'] && function_exists('wc_get_page_id')) {
             $env['woocommerce_pages'] = $this->detectWooCommercePageTypes();
+            $env['woocommerce_coming_soon'] = get_option('woocommerce_coming_soon') === 'yes';
         }
 
         $env['elementor_active'] = in_array('elementor/elementor.php', $activePluginFiles, true);

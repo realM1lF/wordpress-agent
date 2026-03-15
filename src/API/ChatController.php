@@ -25,6 +25,9 @@ class ChatController extends WP_REST_Controller {
     use Concerns\ExecutesToolLoop;
     use Concerns\PostProcessesToolResults;
     use Concerns\ManagesUploads;
+    use Concerns\TracksWorkingSet;
+    use \Levi\Agent\AI\Tools\Concerns\ValidatesSyntax;
+    use \Levi\Agent\AI\Tools\Concerns\WordPressCoreWhitelist;
 
     protected $namespace = 'levi-agent/v1';
     protected $rest_base = 'chat';
@@ -387,7 +390,7 @@ class ChatController extends WP_REST_Controller {
 
         // Get AI client (uses alternative model for simple queries)
         $aiClient = $this->getAIClient();
-
+        
         // --- Primary path: streaming with real-time delta output ---
         $streamResult = $this->streamChatWithTracking($messages, $tools);
 
@@ -784,8 +787,8 @@ class ChatController extends WP_REST_Controller {
         $onChunk = function (string $chunk, string $type = 'content') use (&$streamedContent) {
             if ($type === 'reasoning_start') {
                 $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
-                return;
-            }
+            return;
+        }
             $streamedContent .= $chunk;
             $this->emitSSE('delta', ['content' => $chunk]);
         };
@@ -833,7 +836,7 @@ class ChatController extends WP_REST_Controller {
 
         $guardedMessages = $messages;
         $guardedMessages[] = [
-            'role' => 'system',
+                'role' => 'system',
             'content' => '[SYSTEM] Tools sind voruebergehend nicht verfuegbar. '
                 . 'Fasse NUR zusammen, was tatsaechlich erledigt wurde – also nur Aktionen, '
                 . 'fuer die ein erfolgreiches Tool-Ergebnis in dieser Konversation vorliegt. '
@@ -889,7 +892,7 @@ class ChatController extends WP_REST_Controller {
 
     private function streamResultToResponse(array $streamResult): array {
         $message = [
-            'role' => 'assistant',
+                    'role' => 'assistant',
             'content' => $streamResult['content'] ?? '',
             'tool_calls' => $streamResult['tool_calls'] ?? [],
         ];
@@ -933,8 +936,8 @@ class ChatController extends WP_REST_Controller {
             $this->usageAccumulator['api_calls']++;
             if ($this->usageAccumulator['model'] === null) {
                 $this->usageAccumulator['model'] = $result['model'] ?? null;
-            }
-        } else {
+                }
+            } else {
             $this->usageAccumulator['api_calls']++;
         }
 

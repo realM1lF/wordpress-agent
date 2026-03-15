@@ -4,43 +4,44 @@ namespace Levi\Agent\AI\Tools;
 
 use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
 use Levi\Agent\AI\Tools\Concerns\ValidatesSyntax;
-use Levi\Agent\AI\Tools\Concerns\ResolvesPluginPaths;
+use Levi\Agent\AI\Tools\Concerns\ResolvesThemePaths;
 use Levi\Agent\AI\Tools\Concerns\TracksFileHistory;
 
-class PatchPluginFileTool extends AbstractTool {
+class PatchThemeFileTool extends AbstractTool {
 
     use SanitizesHtmlOutput;
     use ValidatesSyntax;
-    use ResolvesPluginPaths;
+    use ResolvesThemePaths;
     use TracksFileHistory;
 
     public function getName(): string {
-        return 'patch_plugin_file';
+        return 'patch_theme_file';
     }
 
     public function getDescription(): string {
-        return 'Apply targeted search-and-replace patches to an existing plugin file. '
-            . 'Much faster than write_plugin_file for small changes (rename, bugfix, value change). '
+        return 'Apply targeted search-and-replace patches to an existing theme file. '
+            . 'Much faster than write_theme_file for small changes (rename, bugfix, value change). '
             . 'Each replacement must have a unique "search" string that appears exactly once in the file. '
-            . 'Automatically validates PHP syntax after patching and rolls back on errors.';
+            . 'Automatically validates PHP/CSS syntax after patching and rolls back on errors.';
     }
 
     public function getInputExamples(): array {
         return [
-            ['plugin_slug' => 'my-plugin', 'file' => 'my-plugin.php', 'replacements' => [['search' => '$price = 10;', 'replace' => '$price = 15;']]],
+            ['theme_slug' => 'my-theme', 'relative_path' => 'functions.php', 'replacements' => [['search' => '$color = "blue";', 'replace' => '$color = "red";']]],
+            ['theme_slug' => 'my-theme', 'relative_path' => 'style.css', 'replacements' => [['search' => 'font-size: 14px;', 'replace' => 'font-size: 16px;']]],
         ];
     }
 
     public function getParameters(): array {
         return [
-            'plugin_slug' => [
+            'theme_slug' => [
                 'type' => 'string',
-                'description' => 'Target plugin slug (directory in wp-content/plugins)',
+                'description' => 'Target theme slug (directory in wp-content/themes)',
                 'required' => true,
             ],
             'relative_path' => [
                 'type' => 'string',
-                'description' => 'Relative file path inside the plugin',
+                'description' => 'Relative file path inside the theme, e.g. "style.css", "functions.php"',
                 'required' => true,
             ],
             'replacements' => [
@@ -65,33 +66,33 @@ class PatchPluginFileTool extends AbstractTool {
     }
 
     public function checkPermission(): bool {
-        return current_user_can('install_plugins') || current_user_can('edit_plugins');
+        return current_user_can('edit_themes') || current_user_can('switch_themes');
     }
 
     public function execute(array $params): array {
-        $slug = sanitize_title($params['plugin_slug'] ?? '');
+        $slug = sanitize_title($params['theme_slug'] ?? '');
         $relativePath = ltrim((string) ($params['relative_path'] ?? ''), '/');
         $replacements = $params['replacements'] ?? [];
         $dryRun = (bool) ($params['dry_run'] ?? false);
 
         if ($slug === '' || $relativePath === '') {
-            return ['success' => false, 'error' => 'plugin_slug and relative_path are required.'];
+            return ['success' => false, 'error' => 'theme_slug and relative_path are required.'];
         }
         if (!is_array($replacements) || empty($replacements)) {
             return ['success' => false, 'error' => 'replacements array is required and must not be empty.'];
         }
         if (count($replacements) > 50) {
-            return ['success' => false, 'error' => 'Too many replacements (max 50). Use write_plugin_file for large rewrites.'];
+            return ['success' => false, 'error' => 'Too many replacements (max 50). Use write_theme_file for large rewrites.'];
         }
 
-        $resolved = $this->resolvePluginRoot($slug);
+        $resolved = $this->resolveThemeRoot($slug);
         if (isset($resolved['error'])) {
             return ['success' => false] + $resolved;
         }
-        $pluginRoot = $resolved['root'];
+        $themeRoot = $resolved['root'];
         $slug = $resolved['slug'];
 
-        $pathCheck = $this->validatePluginFilePath($pluginRoot, $relativePath);
+        $pathCheck = $this->validateThemeFilePath($themeRoot, $relativePath);
         if (isset($pathCheck['error'])) {
             return ['success' => false, 'error' => $pathCheck['error']];
         }
@@ -101,14 +102,14 @@ class PatchPluginFileTool extends AbstractTool {
             return [
                 'success' => false,
                 'error' => 'File does not exist.',
-                'suggestion' => 'Use write_plugin_file to create new files.',
+                'suggestion' => 'Use write_theme_file to create new files.',
             ];
         }
 
         $targetPathReal = realpath($targetPath);
-        $pluginRootReal = realpath($pluginRoot);
-        if ($targetPathReal === false || $pluginRootReal === false || !str_starts_with($targetPathReal, $pluginRootReal)) {
-            return ['success' => false, 'error' => 'Resolved path is outside plugin directory.'];
+        $themeRootReal = realpath($themeRoot);
+        if ($targetPathReal === false || $themeRootReal === false || !str_starts_with($targetPathReal, $themeRootReal)) {
+            return ['success' => false, 'error' => 'Resolved path is outside theme directory.'];
         }
 
         $filesystem = $this->getFilesystem();
@@ -191,7 +192,7 @@ class PatchPluginFileTool extends AbstractTool {
         if ($content === $originalContent) {
             return [
                 'success' => true,
-                'plugin_slug' => $slug,
+                'theme_slug' => $slug,
                 'relative_path' => $relativePath,
                 'patches_applied' => 0,
                 'message' => 'No changes needed — file content unchanged.',
@@ -202,7 +203,7 @@ class PatchPluginFileTool extends AbstractTool {
             $result = [
                 'success' => true,
                 'dry_run' => true,
-                'plugin_slug' => $slug,
+                'theme_slug' => $slug,
                 'relative_path' => $relativePath,
                 'patches_preview' => $applied,
             ];
@@ -228,7 +229,7 @@ class PatchPluginFileTool extends AbstractTool {
                 'success' => false,
                 'error' => 'Patch reverted: PHP syntax check failed. ' . ($lint['error'] ?? 'Unknown lint error.'),
                 'patches_attempted' => $applied,
-                'suggestion' => 'The replacement may have broken the PHP syntax. Read the file first with read_plugin_file, then apply a corrected patch.',
+                'suggestion' => 'The replacement may have broken the PHP syntax. Read the file first with read_theme_file, then apply a corrected patch.',
             ];
         }
 
@@ -253,15 +254,11 @@ class PatchPluginFileTool extends AbstractTool {
             ];
         }
 
-        if (preg_match('/\.php$/i', $relativePath)) {
-            wp_cache_delete('plugins', 'plugins');
-        }
-
         $this->recordFileVersion($targetPath, $originalContent, $this->getName());
 
         $result = [
             'success' => true,
-            'plugin_slug' => $slug,
+            'theme_slug' => $slug,
             'relative_path' => $relativePath,
             'patches_applied' => count($applied),
             'patches' => $applied,

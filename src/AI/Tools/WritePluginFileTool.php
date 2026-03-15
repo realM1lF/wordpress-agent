@@ -5,22 +5,24 @@ namespace Levi\Agent\AI\Tools;
 use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
 use Levi\Agent\AI\Tools\Concerns\ValidatesSyntax;
 use Levi\Agent\AI\Tools\Concerns\ResolvesPluginPaths;
+use Levi\Agent\AI\Tools\Concerns\TracksFileHistory;
 
 class WritePluginFileTool extends AbstractTool {
 
     use SanitizesHtmlOutput;
     use ValidatesSyntax;
     use ResolvesPluginPaths;
+    use TracksFileHistory;
 
     public function getName(): string {
         return 'write_plugin_file';
     }
 
     public function getDescription(): string {
-        return 'Write or overwrite a file inside a plugin directory. '
-            . 'The plugin header in the main file (slug.php) is automatically preserved — '
-            . 'you only need to provide the code body. '
-            . 'For small changes prefer patch_plugin_file instead.';
+        return 'Create a NEW file inside a plugin directory. '
+            . 'If the file already exists, this tool REJECTS the write — use patch_plugin_file to edit existing files. '
+            . 'Set overwrite=true only for complete rewrites where more than 50% of the file changes. '
+            . 'The plugin header in the main file (slug.php) is automatically preserved.';
     }
 
     public function getParameters(): array {
@@ -49,6 +51,14 @@ class WritePluginFileTool extends AbstractTool {
                 'type' => 'boolean',
                 'description' => 'Keep the existing plugin header when writing the main file. Only set to false if you need to update metadata like version or description.',
                 'default' => true,
+            ],
+            'overwrite' => [
+                'type' => 'boolean',
+                'description' => 'DANGER: Set to true to overwrite an existing file completely. '
+                    . 'Only use when rewriting MORE than 50% of the file. '
+                    . 'You MUST read the entire file first and include ALL existing code you want to keep. '
+                    . 'For normal edits, use patch_plugin_file instead.',
+                'default' => false,
             ],
         ];
     }
@@ -117,6 +127,22 @@ class WritePluginFileTool extends AbstractTool {
             }
         }
 
+        $overwrite = (bool) ($params['overwrite'] ?? false);
+        if ($hadExistingFile && !$overwrite) {
+            $existingLines = substr_count($previousContent, "\n") + 1;
+            return [
+                'success' => false,
+                'error' => "File already exists ({$existingLines} lines). "
+                    . "Use patch_plugin_file for targeted changes to existing files. "
+                    . "write_plugin_file is only for creating NEW files.",
+                'suggestion' => 'Read the file with read_plugin_file first, then use patch_plugin_file '
+                    . 'with {search, replace} pairs to change only the specific parts you need. '
+                    . 'This prevents accidental code loss. '
+                    . 'If you truly need a complete rewrite (>50% change), set overwrite=true.',
+                'existing_lines' => $existingLines,
+            ];
+        }
+
         // --- Header protection for main plugin file ---
         $headerProtected = false;
         if ($this->isMainPluginFile($slug, $relativePath) && $preserveHeader && is_string($previousContent)) {
@@ -143,6 +169,15 @@ class WritePluginFileTool extends AbstractTool {
             ];
         }
 
+        $cssLint = $this->validateCssSyntax($targetPath);
+        if (($cssLint['valid'] ?? true) === false) {
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
+            return [
+                'success' => false,
+                'error' => 'Write reverted: ' . ($cssLint['error'] ?? 'CSS syntax check failed.'),
+            ];
+        }
+
         $jsLint = $this->validateJsSyntax($targetPath);
         $fileExt = strtolower((string) pathinfo($relativePath, PATHINFO_EXTENSION));
         if (($jsLint['valid'] ?? true) === false && $fileExt === 'js') {
@@ -155,6 +190,10 @@ class WritePluginFileTool extends AbstractTool {
 
         if (preg_match('/\.php$/i', $relativePath)) {
             wp_cache_delete('plugins', 'plugins');
+        }
+
+        if (is_string($previousContent)) {
+            $this->recordFileVersion($targetPath, $previousContent, $this->getName());
         }
 
         $result = [
@@ -189,6 +228,23 @@ class WritePluginFileTool extends AbstractTool {
         $codeTagCheck = $this->detectCodeTagsInOutput($content, $relativePath);
         if ($codeTagCheck !== null) {
             $result['code_tag_warning'] = $codeTagCheck;
+        }
+
+        if ($hadExistingFile && is_string($previousContent)) {
+            $oldLines = substr_count($previousContent, "\n") + 1;
+            $newLines = substr_count($content, "\n") + 1;
+            $lostLines = $oldLines - $newLines;
+            if ($lostLines > 5 && $lostLines > (int) ($oldLines * 0.1)) {
+                $result['content_loss_warning'] = "[WARNUNG] Die Datei hatte vorher {$oldLines} Zeilen, "
+                    . "jetzt nur noch {$newLines} Zeilen ({$lostLines} Zeilen weniger). "
+                    . "Pruefe ob du versehentlich bestehenden Code entfernt hast. "
+                    . "Falls ja, lies die vorherige Version und stelle den fehlenden Code mit patch_plugin_file wieder her.";
+            }
+
+            $diff = $this->buildCompactDiff($previousContent, $content);
+            if ($diff !== null) {
+                $result['diff_summary'] = $diff;
+            }
         }
 
         if (!$this->isMainPluginFile($slug, $relativePath)) {

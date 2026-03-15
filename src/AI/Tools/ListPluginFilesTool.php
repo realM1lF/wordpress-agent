@@ -9,7 +9,8 @@ class ListPluginFilesTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'List files and directories inside a plugin. Useful to inspect plugin structure before editing. Supports fuzzy slug matching.';
+        return 'List files and directories inside a plugin. Supports fuzzy slug matching. '
+            . 'ALWAYS call this before read_plugin_file or write_plugin_file when you have not yet seen the plugin file structure in this session.';
     }
 
     public function getParameters(): array {
@@ -42,6 +43,11 @@ class ListPluginFilesTool implements ToolInterface {
                 'type' => 'integer',
                 'description' => 'Entries per page (default 200, max 1000)',
                 'default' => 200,
+            ],
+            'include_symbols' => [
+                'type' => 'boolean',
+                'description' => 'Include top-level PHP symbols (functions, classes, hooks) per file. Slower but gives a code map.',
+                'default' => false,
             ],
         ];
     }
@@ -115,6 +121,11 @@ class ListPluginFilesTool implements ToolInterface {
         $pagedEntries = array_slice($entries, $offset, $perPage);
         $hasMore = ($offset + count($pagedEntries)) < $total;
 
+        $includeSymbols = (bool) ($params['include_symbols'] ?? false);
+        if ($includeSymbols) {
+            $this->enrichWithSymbols($pagedEntries, $pluginRootReal);
+        }
+
         return [
             'success' => true,
             'plugin_slug' => $slug,
@@ -168,6 +179,71 @@ class ListPluginFilesTool implements ToolInterface {
      */
     private function normalizeSlug(string $slug): string {
         return strtolower(str_replace(['-', '_'], '', $slug));
+    }
+
+    private const SYMBOL_MAX_PHP_FILES = 30;
+    private const SYMBOL_MAX_FILE_SIZE = 200 * 1024;
+
+    private function enrichWithSymbols(array &$entries, string $rootReal): void {
+        $phpCount = 0;
+        foreach ($entries as &$entry) {
+            if ($entry['type'] !== 'file') {
+                continue;
+            }
+            $ext = strtolower(pathinfo($entry['path'], PATHINFO_EXTENSION));
+            if ($ext !== 'php') {
+                continue;
+            }
+            if ($phpCount >= self::SYMBOL_MAX_PHP_FILES) {
+                break;
+            }
+
+            $filePath = $rootReal . '/' . $entry['path'];
+            if (!is_file($filePath) || filesize($filePath) > self::SYMBOL_MAX_FILE_SIZE) {
+                continue;
+            }
+
+            $content = @file_get_contents($filePath);
+            if ($content === false) {
+                continue;
+            }
+
+            $phpCount++;
+            $symbols = $this->extractPhpSymbols($content);
+            $entry['symbols'] = !empty($symbols) ? $symbols : null;
+        }
+        unset($entry);
+    }
+
+    private function extractPhpSymbols(string $code): array {
+        $symbols = [];
+
+        if (preg_match_all('/\bfunction\s+(\w+)\s*\(/m', $code, $m)) {
+            $symbols['functions'] = array_values(array_unique($m[1]));
+        }
+        if (preg_match_all('/\bclass\s+(\w+)/m', $code, $m)) {
+            $symbols['classes'] = array_values(array_unique($m[1]));
+        }
+
+        $hooks = [];
+        if (preg_match_all('/\badd_action\(\s*[\'"]([^\'"]+)[\'"]/m', $code, $m)) {
+            $hooks = array_merge($hooks, $m[1]);
+        }
+        if (preg_match_all('/\badd_filter\(\s*[\'"]([^\'"]+)[\'"]/m', $code, $m)) {
+            $hooks = array_merge($hooks, $m[1]);
+        }
+        if (!empty($hooks)) {
+            $symbols['hooks'] = array_values(array_unique($hooks));
+        }
+
+        if (preg_match_all('/\bregister_post_type\(\s*[\'"]([^\'"]+)[\'"]/m', $code, $m)) {
+            $symbols['post_types'] = array_values(array_unique($m[1]));
+        }
+        if (preg_match_all('/\badd_shortcode\(\s*[\'"]([^\'"]+)[\'"]/m', $code, $m)) {
+            $symbols['shortcodes'] = array_values(array_unique($m[1]));
+        }
+
+        return $symbols;
     }
 
     private function walk(string $dir, string $pluginRootReal, array &$entries, int $depth, int $maxDepth, bool $includeHidden): void {

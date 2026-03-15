@@ -258,6 +258,78 @@ trait PostProcessesToolResults {
             }
         }
 
+        // Scan plugin files once for CPTs and shortcodes
+        $cptSlugs = [];
+        $shortcodeSlugs = [];
+        $pluginDir = trailingslashit(WP_PLUGIN_DIR) . $pluginSlug;
+        if (is_dir($pluginDir)) {
+            try {
+                $iterator = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator($pluginDir, \RecursiveDirectoryIterator::SKIP_DOTS)
+                );
+                foreach ($iterator as $file) {
+                    if ($file->getExtension() !== 'php') {
+                        continue;
+                    }
+                    $content = @file_get_contents($file->getPathname());
+                    if ($content === false) {
+                        continue;
+                    }
+                    if (preg_match_all("/register_post_type\s*\(\s*['\"]([a-z0-9_]+)['\"]/i", $content, $m)) {
+                        $cptSlugs = array_merge($cptSlugs, $m[1]);
+                    }
+                    if (preg_match_all("/add_shortcode\s*\(\s*['\"]([a-z0-9_-]+)['\"]/i", $content, $m)) {
+                        $shortcodeSlugs = array_merge($shortcodeSlugs, $m[1]);
+                    }
+                }
+            } catch (\Throwable $e) {
+                // ignore filesystem errors
+            }
+            $cptSlugs = array_unique($cptSlugs);
+            $shortcodeSlugs = array_unique($shortcodeSlugs);
+        }
+
+        // CPT: flush rewrite rules + collect archive and single post URLs
+        $pluginTestUrls = [];
+        if (!empty($cptSlugs)) {
+            flush_rewrite_rules();
+            foreach ($cptSlugs as $cptSlug) {
+                $archiveUrl = get_post_type_archive_link($cptSlug);
+                if ($archiveUrl) {
+                    $pluginTestUrls[] = $archiveUrl;
+                }
+                $singlePosts = get_posts([
+                    'post_type' => $cptSlug,
+                    'posts_per_page' => 1,
+                    'post_status' => 'publish',
+                    'fields' => 'ids',
+                ]);
+                if (!empty($singlePosts)) {
+                    $singleUrl = get_permalink($singlePosts[0]);
+                    if ($singleUrl) {
+                        $pluginTestUrls[] = $singleUrl;
+                    }
+                }
+            }
+        }
+
+        // Shortcode: find published pages containing the shortcode
+        if (!empty($shortcodeSlugs)) {
+            global $wpdb;
+            foreach ($shortcodeSlugs as $sc) {
+                $pageId = $wpdb->get_var($wpdb->prepare(
+                    "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_content LIKE %s LIMIT 1",
+                    '%[' . $wpdb->esc_like($sc) . '%'
+                ));
+                if ($pageId) {
+                    $scUrl = get_permalink((int) $pageId);
+                    if ($scUrl) {
+                        $pluginTestUrls[] = $scUrl;
+                    }
+                }
+            }
+        }
+
         $testUrls = [home_url('/')];
         if (function_exists('wc_get_page_id')) {
             $shopPageId = wc_get_page_id('shop');
@@ -265,14 +337,8 @@ trait PostProcessesToolResults {
                 $testUrls = [get_permalink($shopPageId) ?: home_url('/')];
             }
 
-            $writtenCode = '';
-            foreach ($toolCalls as $tc) {
-                $tcName = $tc['function']['name'] ?? '';
-                if (in_array($tcName, ['write_plugin_file', 'patch_plugin_file'], true)) {
-                    $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
-                    $writtenCode .= ($args['content'] ?? '') . "\n";
-                }
-            }
+            $writtenPhpParts = $this->collectWrittenPhpContent($toolCalls, $toolResults);
+            $writtenCode = implode("\n", $writtenPhpParts);
             if ($writtenCode !== '') {
                 $hasCartRef = (bool) preg_match('/woocommerce_(before_cart|after_cart|cart_contents|after_cart_table|before_cart_table|cart_coupon|cart_actions|cart_totals)/', $writtenCode);
                 $hasCheckoutRef = (bool) preg_match('/woocommerce_(before_checkout|after_checkout|checkout_before|checkout_after|review_order)/', $writtenCode);
@@ -296,6 +362,9 @@ trait PostProcessesToolResults {
                     }
                 }
             }
+        }
+        if (!empty($pluginTestUrls)) {
+            $testUrls = array_merge($testUrls, $pluginTestUrls);
         }
         $testUrls = array_unique($testUrls);
 
@@ -336,8 +405,8 @@ trait PostProcessesToolResults {
         }
 
         $errorLogResult = $this->toolRegistry->execute('read_error_log', [
-            'lines' => 20,
-            'filter' => 'Fatal|ArgumentCountError|TypeError|Uncaught',
+            'lines' => 30,
+            'filter' => 'Fatal|Warning|Deprecated|ArgumentCountError|TypeError|Uncaught',
         ]);
         $recentLogErrors = '';
         if (!empty($errorLogResult['lines'])) {
@@ -371,7 +440,8 @@ trait PostProcessesToolResults {
 
             $errorContent .= "\n[SYSTEM] PFLICHT: Das Plugin wurde wegen eines Laufzeitfehlers wieder deaktiviert. "
                 . "Der Fehler tritt auf wenn eine Seite geladen wird, die Plugin-Code ausfuehrt. "
-                . "Typische Ursachen: falsche Argument-Anzahl bei add_filter/add_action (pruefe accepted_args!), "
+                . "Typische Ursachen: undefinierte Variablen (Variable vor Verwendung definieren!), "
+                . "falsche Argument-Anzahl bei add_filter/add_action (pruefe accepted_args!), "
                 . "fehlende Klassen/Funktionen, falsche Hook-Signaturen. "
                 . "Lies den Fehler genau, korrigiere den Code mit patch_plugin_file, und nenne dem Nutzer NICHT 'fertig' bis der Fehler behoben ist.";
 
@@ -441,6 +511,14 @@ trait PostProcessesToolResults {
                     }
                 }
             }
+        }
+
+        $env = \Levi\Agent\Memory\StateSnapshotService::getCachedEnvironment();
+        if (!empty($env['woocommerce_coming_soon'])) {
+            $okContent .= "\n\n[WARNUNG] WooCommerce Coming-Soon-Modus ist aktiv. "
+                . "Der Smoke-Test laeuft ohne Session und sieht moeglicherweise die Platzhalter-Seite "
+                . "statt der echten Plugin-Ausgabe. Teste die Seite manuell als eingeloggter Nutzer "
+                . "oder deaktiviere Coming-Soon voruebergehend, um zuverlaessige Ergebnisse zu erhalten.";
         }
 
         return [
@@ -596,16 +674,15 @@ trait PostProcessesToolResults {
     }
 
     /**
-     * After writing a sub-file inside a plugin, check whether the main plugin file
-     * actually loads it (require/include for PHP, wp_enqueue for CSS/JS).
-     * If not, inject a warning so the AI knows the file is "dead".
+     * Collect PHP content that was written or patched in this tool loop.
+     * For write_plugin_file: uses the content arg directly.
+     * For patch_plugin_file: reads the patched file from disk (patch is already applied).
+     *
+     * @return string[] PHP file contents
      */
-    /**
-     * After writing PHP to a plugin, scan the code for patterns that conflict
-     * with the current WordPress environment (block theme, WC blocks, Elementor).
-     */
-    private function injectPostWriteEnvironmentWarnings(array $toolCalls, array $toolResults): array {
+    private function collectWrittenPhpContent(array $toolCalls, array $toolResults): array {
         $writtenPhpContent = [];
+
         foreach ($toolResults as $tr) {
             if (!($tr['result']['success'] ?? false)) {
                 continue;
@@ -614,6 +691,8 @@ trait PostProcessesToolResults {
             if (!in_array($tool, ['write_plugin_file', 'patch_plugin_file'], true)) {
                 continue;
             }
+
+            $pluginSlug = $tr['result']['plugin_slug'] ?? null;
             $relPath = $tr['result']['relative_path'] ?? '';
             if ($relPath === '') {
                 foreach ($toolCalls as $tc) {
@@ -627,16 +706,35 @@ trait PostProcessesToolResults {
             if (!preg_match('/\.php$/i', $relPath)) {
                 continue;
             }
-            foreach ($toolCalls as $tc) {
-                if (($tc['function']['name'] ?? '') === $tool) {
-                    $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
-                    if (!empty($args['content'])) {
-                        $writtenPhpContent[] = $args['content'];
+
+            if ($tool === 'write_plugin_file') {
+                foreach ($toolCalls as $tc) {
+                    if (($tc['function']['name'] ?? '') === 'write_plugin_file') {
+                        $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                        if (!empty($args['content'])) {
+                            $writtenPhpContent[] = $args['content'];
+                        }
+                        break;
                     }
-                    break;
+                }
+            } elseif ($tool === 'patch_plugin_file' && $pluginSlug !== null && $relPath !== '') {
+                $filePath = trailingslashit(WP_PLUGIN_DIR) . $pluginSlug . '/' . $relPath;
+                $content = @file_get_contents($filePath);
+                if ($content !== false) {
+                    $writtenPhpContent[] = $content;
                 }
             }
         }
+
+        return $writtenPhpContent;
+    }
+
+    /**
+     * After writing PHP to a plugin, scan the code for patterns that conflict
+     * with the current WordPress environment (block theme, WC blocks, Elementor).
+     */
+    private function injectPostWriteEnvironmentWarnings(array $toolCalls, array $toolResults): array {
+        $writtenPhpContent = $this->collectWrittenPhpContent($toolCalls, $toolResults);
 
         if (empty($writtenPhpContent)) {
             return [];
@@ -718,6 +816,19 @@ trait PostProcessesToolResults {
             }
         }
 
+        // the_content recursion: filter callback calling the_content()
+        if (preg_match('/add_filter\s*\(\s*[\'"]the_content[\'"]/', $allCode)
+            && preg_match('/\bthe_content\s*\(/', $allCode)
+        ) {
+            $warnings[] = "[CODE-FEHLER] Dein Code registriert einen the_content-Filter UND ruft the_content() "
+                . "im selben Code auf. Das verursacht eine Endlosschleife (infinite recursion) und einen HTTP 500 Fehler! "
+                . "Innerhalb eines the_content-Filter-Callbacks IMMER den \$content-Parameter verwenden, "
+                . "NIE the_content() aufrufen.";
+        }
+
+        // Meta-key consistency: detect mismatched keys between get_post_meta and update_post_meta
+        $this->checkMetaKeyConsistency($allCode, $toolResults, $warnings);
+
         if (empty($warnings)) {
             return [];
         }
@@ -729,6 +840,93 @@ trait PostProcessesToolResults {
                 . "Falls ein Konflikt besteht, korrigiere den Code SOFORT mit patch_plugin_file. "
                 . "Antworte dem Nutzer NICHT mit 'fertig' bis die Konflikte behoben sind.",
         ]];
+    }
+
+    /**
+     * Check for meta-key mismatches between get_post_meta and update_post_meta calls
+     * across ALL PHP files in the plugin directory, not just the main file.
+     */
+    private function checkMetaKeyConsistency(string $writtenCode, array $toolResults, array &$warnings): void {
+        $pluginSlug = null;
+        foreach ($toolResults as $tr) {
+            if (($tr['result']['success'] ?? false)
+                && in_array($tr['tool'] ?? '', ['write_plugin_file', 'patch_plugin_file'], true)
+            ) {
+                $pluginSlug = $tr['result']['plugin_slug'] ?? null;
+                if ($pluginSlug !== null) {
+                    break;
+                }
+            }
+        }
+
+        $fullCode = $writtenCode;
+        if ($pluginSlug !== null) {
+            $pluginDir = trailingslashit(WP_PLUGIN_DIR) . $pluginSlug;
+            if (is_dir($pluginDir)) {
+                $allPhpCode = '';
+                $fileCount = 0;
+                $totalBytes = 0;
+                $maxFiles = 50;
+                $maxBytes = 2 * 1024 * 1024; // 2 MB
+                try {
+                    $iterator = new \RecursiveIteratorIterator(
+                        new \RecursiveDirectoryIterator($pluginDir, \RecursiveDirectoryIterator::SKIP_DOTS)
+                    );
+                    foreach ($iterator as $file) {
+                        if ($file->getExtension() !== 'php') {
+                            continue;
+                        }
+                        if ($fileCount >= $maxFiles || $totalBytes >= $maxBytes) {
+                            break;
+                        }
+                        $content = @file_get_contents($file->getPathname());
+                        if ($content === false) {
+                            continue;
+                        }
+                        $allPhpCode .= $content . "\n";
+                        $fileCount++;
+                        $totalBytes += strlen($content);
+                    }
+                } catch (\Throwable $e) {
+                    // fall through to use $writtenCode
+                }
+                if ($allPhpCode !== '') {
+                    $fullCode = $allPhpCode;
+                }
+            }
+        }
+
+        $getKeys = [];
+        $updateKeys = [];
+        if (preg_match_all("/get_post_meta\s*\([^,]+,\s*['\"]([^'\"]+)['\"]/", $fullCode, $m)) {
+            $getKeys = array_unique($m[1]);
+        }
+        if (preg_match_all("/update_post_meta\s*\([^,]+,\s*['\"]([^'\"]+)['\"]/", $fullCode, $m)) {
+            $updateKeys = array_unique($m[1]);
+        }
+
+        if (empty($getKeys) || empty($updateKeys)) {
+            return;
+        }
+
+        $onlyInGet = array_diff($getKeys, $updateKeys);
+        $onlyInUpdate = array_diff($updateKeys, $getKeys);
+
+        if (empty($onlyInGet) || empty($onlyInUpdate)) {
+            return;
+        }
+
+        foreach ($onlyInGet as $getKey) {
+            foreach ($onlyInUpdate as $updateKey) {
+                $shorter = strlen($getKey) < strlen($updateKey) ? $getKey : $updateKey;
+                $longer = strlen($getKey) >= strlen($updateKey) ? $getKey : $updateKey;
+                if (str_contains($longer, $shorter) || similar_text($getKey, $updateKey) > (strlen($longer) * 0.6)) {
+                    $warnings[] = "[META-KEY MISMATCH] get_post_meta liest '{$getKey}', aber update_post_meta schreibt '{$updateKey}'. "
+                        . "Das fuehrt zu leeren Daten! Pruefe ob die Keys identisch sein muessen und korrigiere den Mismatch.";
+                    return;
+                }
+            }
+        }
     }
 
     private function injectPostWriteIntegrationCheck(array $toolCalls, array $toolResults): array {
@@ -871,6 +1069,79 @@ trait PostProcessesToolResults {
                 . "Bei PHP: require_once. Bei CSS: wp_enqueue_style. Bei JS: wp_enqueue_script. "
                 . "Antworte dem Nutzer NICHT mit 'fertig' bevor die Integration sichergestellt ist.",
         ]];
+    }
+
+    /**
+     * When read_plugin_file or read_theme_file fails with "File does not exist",
+     * automatically run list_plugin_files/list_theme_files and inject the file tree
+     * so the LLM can pick the correct path without wasting another round trip.
+     */
+    private function injectAutoListOnMissingFile(array $toolCalls, array $toolResults): array {
+        $injected = [];
+
+        foreach ($toolResults as $i => $tr) {
+            $tool = $tr['tool'] ?? '';
+            $success = $tr['result']['success'] ?? true;
+            $error = $tr['result']['error'] ?? '';
+
+            if ($success || stripos($error, 'does not exist') === false) {
+                continue;
+            }
+
+            $isPluginRead = $tool === 'read_plugin_file';
+            $isThemeRead = $tool === 'read_theme_file';
+            if (!$isPluginRead && !$isThemeRead) {
+                continue;
+            }
+
+            $slug = null;
+            foreach ($toolCalls as $tc) {
+                if (($tc['function']['name'] ?? '') === $tool) {
+                    $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                    $slug = $args['plugin_slug'] ?? $args['theme_slug'] ?? null;
+                    break;
+                }
+            }
+            if ($slug === null) {
+                continue;
+            }
+
+            $listTool = $isPluginRead ? 'list_plugin_files' : 'list_theme_files';
+            $slugParam = $isPluginRead ? 'plugin_slug' : 'theme_slug';
+
+            $listResult = $this->toolRegistry->execute($listTool, [$slugParam => $slug, 'max_depth' => 3]);
+
+            if (empty($listResult) || !empty($listResult['error'])) {
+                continue;
+            }
+
+            $fakeId = 'auto_list_' . bin2hex(random_bytes(8));
+            $fileTree = is_array($listResult) ? wp_json_encode($listResult, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : (string) $listResult;
+
+            $injected[] = [
+                'role' => 'assistant',
+                'content' => null,
+                'tool_calls' => [[
+                    'id' => $fakeId,
+                    'type' => 'function',
+                    'function' => [
+                        'name' => $listTool,
+                        'arguments' => wp_json_encode([$slugParam => $slug]),
+                    ],
+                ]],
+            ];
+            $injected[] = [
+                'role' => 'tool',
+                'tool_call_id' => $fakeId,
+                'content' => "[AUTO-RECOVERY] Die Datei existiert nicht. Hier ist die tatsaechliche Dateistruktur von '$slug':\n\n"
+                    . $fileTree
+                    . "\n\nWaehle den richtigen Pfad aus dieser Liste und versuche es erneut.",
+            ];
+
+            break;
+        }
+
+        return $injected;
     }
 
     /**
@@ -1093,6 +1364,341 @@ trait PostProcessesToolResults {
         }
 
         return empty($issues) ? null : implode("\n", $issues);
+    }
+
+    /**
+     * After write/patch tools, scan for symbols defined in the changed file and grep
+     * all other files in the same plugin/theme for references. Warns about reverse dependencies.
+     */
+    private function injectPostWriteReverseDependencyWarnings(array $toolCalls, array $toolResults): array {
+        $writeTools = [
+            'write_plugin_file', 'patch_plugin_file', 'write_theme_file', 'patch_theme_file',
+        ];
+
+        $changedFiles = [];
+        foreach ($toolResults as $tr) {
+            if (!($tr['result']['success'] ?? false)) {
+                continue;
+            }
+            $tool = $tr['tool'] ?? '';
+            if (!in_array($tool, $writeTools, true)) {
+                continue;
+            }
+
+            $slug = $tr['result']['plugin_slug'] ?? $tr['result']['theme_slug'] ?? null;
+            $relPath = $tr['result']['relative_path'] ?? '';
+            $isTheme = isset($tr['result']['theme_slug']);
+
+            if ($slug === null || $relPath === '') {
+                foreach ($toolCalls as $tc) {
+                    if (($tc['function']['name'] ?? '') === $tool) {
+                        $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                        if ($slug === null) {
+                            $slug = $args['plugin_slug'] ?? $args['theme_slug'] ?? null;
+                            $isTheme = isset($args['theme_slug']);
+                        }
+                        if ($relPath === '') {
+                            $relPath = $args['relative_path'] ?? '';
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if ($slug === null || $relPath === '' || !preg_match('/\.php$/i', $relPath)) {
+                continue;
+            }
+
+            $rootDir = $isTheme
+                ? (function_exists('get_theme_root') ? get_theme_root() . '/' . $slug : '')
+                : trailingslashit(WP_PLUGIN_DIR) . $slug;
+
+            if ($rootDir === '' || !is_dir($rootDir)) {
+                continue;
+            }
+
+            $symbols = $this->extractChangedSymbols($tool, $toolCalls, $rootDir, $relPath);
+            if (!empty($symbols)) {
+                $changedFiles[] = [
+                    'root' => realpath($rootDir) ?: $rootDir,
+                    'rel_path' => $relPath,
+                    'symbols' => $symbols,
+                    'slug' => $slug,
+                ];
+            }
+        }
+
+        if (empty($changedFiles)) {
+            return [];
+        }
+
+        $allWarnings = [];
+        foreach ($changedFiles as $cf) {
+            $depHits = $this->scanReverseDependencies($cf['root'], $cf['rel_path'], $cf['symbols']);
+            if (empty($depHits)) {
+                continue;
+            }
+
+            $lines = [];
+            foreach ($depHits as $symbol => $refs) {
+                $refParts = [];
+                foreach (array_slice($refs, 0, 5) as $ref) {
+                    $refParts[] = "{$ref['file']} (Zeile {$ref['line']})";
+                }
+                $lines[] = "- `{$symbol}` wird verwendet in: " . implode(', ', $refParts);
+                if (count($refs) > 5) {
+                    $lines[count($lines) - 1] .= ' (+' . (count($refs) - 5) . ' weitere)';
+                }
+            }
+
+            $allWarnings[] = "[DEPENDENCY-WARNUNG] {$cf['rel_path']} enthaelt Symbole, die in anderen Dateien referenziert werden:\n"
+                . implode("\n", $lines)
+                . "\nPruefe ob diese Stellen mit deiner Aenderung kompatibel sind.";
+        }
+
+        if (empty($allWarnings)) {
+            return [];
+        }
+
+        return [[
+            'role' => 'system',
+            'content' => implode("\n\n", $allWarnings),
+        ]];
+    }
+
+    /**
+     * After write/patch tools, run reference integrity + WordPress pattern checks
+     * on the written PHP files. Injects [CODE-WARNUNG] messages for any issues found.
+     */
+    private function injectPostWriteReferenceCheck(array $toolCalls, array $toolResults): array {
+        $writeTools = [
+            'write_plugin_file', 'patch_plugin_file', 'write_theme_file', 'patch_theme_file',
+        ];
+
+        $checkedFiles = [];
+        $knownFunctionsCache = [];
+        $allWarnings = [];
+
+        foreach ($toolResults as $tr) {
+            if (!($tr['result']['success'] ?? false)) {
+                continue;
+            }
+            $tool = $tr['tool'] ?? '';
+            if (!in_array($tool, $writeTools, true)) {
+                continue;
+            }
+
+            $slug = $tr['result']['plugin_slug'] ?? $tr['result']['theme_slug'] ?? null;
+            $relPath = $tr['result']['relative_path'] ?? '';
+            $isTheme = isset($tr['result']['theme_slug']);
+
+            if ($slug === null || $relPath === '') {
+                foreach ($toolCalls as $tc) {
+                    if (($tc['function']['name'] ?? '') === $tool) {
+                        $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                        if ($slug === null) {
+                            $slug = $args['plugin_slug'] ?? $args['theme_slug'] ?? null;
+                            $isTheme = isset($args['theme_slug']);
+                        }
+                        if ($relPath === '') {
+                            $relPath = $args['relative_path'] ?? '';
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if ($slug === null || $relPath === '' || !preg_match('/\.php$/i', $relPath)) {
+                continue;
+            }
+
+            $fileKey = $slug . '/' . $relPath;
+            if (isset($checkedFiles[$fileKey])) {
+                continue;
+            }
+            $checkedFiles[$fileKey] = true;
+
+            $rootDir = $isTheme
+                ? (function_exists('get_theme_root') ? get_theme_root() . '/' . $slug : '')
+                : trailingslashit(WP_PLUGIN_DIR) . $slug;
+
+            if ($rootDir === '' || !is_dir($rootDir)) {
+                continue;
+            }
+
+            $filePath = $rootDir . '/' . $relPath;
+            if (!is_file($filePath)) {
+                continue;
+            }
+
+            $fileWarnings = [];
+
+            $content = @file_get_contents($filePath);
+
+            if (method_exists($this, 'checkReferenceIntegrity') && $content !== false) {
+                if (!isset($knownFunctionsCache[$rootDir]) && method_exists($this, 'buildKnownFunctionsForPlugin')) {
+                    $knownFunctionsCache[$rootDir] = $this->buildKnownFunctionsForPlugin($rootDir);
+                }
+                $refCheck = $this->checkReferenceIntegrity($filePath, $rootDir, $knownFunctionsCache[$rootDir] ?? null);
+                if (!empty($refCheck['undefined_calls'])) {
+                    $preview = implode(', ', array_slice($refCheck['undefined_calls'], 0, 5));
+                    $fileWarnings[] = "Moeglicherweise undefinierte Funktionen: {$preview}";
+                }
+            }
+
+            if (method_exists($this, 'checkWordPressPatterns') && $content !== false) {
+                $wpCheck = $this->checkWordPressPatterns($content, $relPath);
+                foreach ($wpCheck['warnings'] ?? [] as $w) {
+                    $fileWarnings[] = $w;
+                }
+            }
+
+            if (!empty($fileWarnings)) {
+                $allWarnings[] = "[CODE-WARNUNG] Moegliche Probleme in {$relPath}:\n- "
+                    . implode("\n- ", $fileWarnings)
+                    . "\nPruefe ob diese Aufrufe korrekt sind.";
+            }
+        }
+
+        if (empty($allWarnings)) {
+            return [];
+        }
+
+        return [[
+            'role' => 'system',
+            'content' => implode("\n\n", $allWarnings),
+        ]];
+    }
+
+    private function extractChangedSymbols(string $tool, array $toolCalls, string $rootDir, string $relPath): array {
+        $isPatch = str_contains($tool, 'patch_');
+        $symbols = [];
+
+        if ($isPatch) {
+            foreach ($toolCalls as $tc) {
+                if (($tc['function']['name'] ?? '') !== $tool) {
+                    continue;
+                }
+                $args = json_decode($tc['function']['arguments'] ?? '{}', true) ?: [];
+                $replacements = $args['replacements'] ?? [];
+                foreach ($replacements as $r) {
+                    $search = (string) ($r['search'] ?? '');
+                    $replace = (string) ($r['replace'] ?? '');
+                    $combined = $search . "\n" . $replace;
+                    $this->extractSymbolsFromCode($combined, $symbols);
+                }
+                break;
+            }
+        } else {
+            $filePath = $rootDir . '/' . $relPath;
+            $content = @file_get_contents($filePath, false, null, 0, 200 * 1024);
+            if ($content !== false) {
+                $this->extractSymbolsFromCode($content, $symbols);
+            }
+        }
+
+        return array_slice(array_unique($symbols), 0, 10);
+    }
+
+    private function extractSymbolsFromCode(string $code, array &$symbols): void {
+        if (preg_match_all('/\bfunction\s+(\w+)\s*\(/m', $code, $m)) {
+            foreach ($m[1] as $fn) {
+                if (strlen($fn) >= 4) {
+                    $symbols[] = $fn;
+                }
+            }
+        }
+        if (preg_match_all('/\bclass\s+(\w+)/m', $code, $m)) {
+            foreach ($m[1] as $cls) {
+                $symbols[] = $cls;
+            }
+        }
+        if (preg_match_all('/\badd_(?:action|filter)\(\s*[\'"]([^\'"]+)[\'"]/m', $code, $m)) {
+            foreach ($m[1] as $hook) {
+                if (strlen($hook) >= 4 && !str_starts_with($hook, 'wp_') && !str_starts_with($hook, 'admin_') && !str_starts_with($hook, 'init')) {
+                    $symbols[] = $hook;
+                }
+            }
+        }
+        if (preg_match_all('/\bdefine\(\s*[\'"](\w+)[\'"]/m', $code, $m)) {
+            foreach ($m[1] as $const) {
+                if (!in_array($const, ['ABSPATH', 'WPINC', 'WP_DEBUG'], true)) {
+                    $symbols[] = $const;
+                }
+            }
+        }
+    }
+
+    /**
+     * @return array<string, array<array{file: string, line: int}>>
+     */
+    private function scanReverseDependencies(string $rootDir, string $changedRelPath, array $symbols): array {
+        if (empty($symbols)) {
+            return [];
+        }
+
+        $skipExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'woff', 'woff2', 'ttf', 'eot', 'mp4', 'mp3', 'zip', 'gz', 'tar', 'map'];
+        $hits = [];
+        $filesScanned = 0;
+
+        try {
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($rootDir, \RecursiveDirectoryIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::LEAVES_ONLY
+            );
+
+            foreach ($iterator as $file) {
+                if ($filesScanned >= 50) {
+                    break;
+                }
+                if (!$file->isFile()) {
+                    continue;
+                }
+                $ext = strtolower($file->getExtension());
+                if (in_array($ext, $skipExtensions, true) || !in_array($ext, ['php', 'js', 'css'], true)) {
+                    continue;
+                }
+                if ($file->getSize() > 500 * 1024) {
+                    continue;
+                }
+                if (str_contains($file->getFilename(), '.min.')) {
+                    continue;
+                }
+
+                $filePath = $file->getPathname();
+                $relFile = ltrim(substr($filePath, strlen($rootDir)), '/');
+
+                if ($relFile === $changedRelPath) {
+                    continue;
+                }
+
+                $content = @file_get_contents($filePath);
+                if ($content === false || str_contains($content, "\x00")) {
+                    continue;
+                }
+                $filesScanned++;
+
+                $lines = explode("\n", $content);
+                foreach ($symbols as $symbol) {
+                    foreach ($lines as $lineIdx => $lineContent) {
+                        if (str_contains($lineContent, $symbol)) {
+                            if (!isset($hits[$symbol])) {
+                                $hits[$symbol] = [];
+                            }
+                            $hits[$symbol][] = [
+                                'file' => $relFile,
+                                'line' => $lineIdx + 1,
+                            ];
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently handle filesystem errors
+        }
+
+        return $hits;
     }
 
     /**
