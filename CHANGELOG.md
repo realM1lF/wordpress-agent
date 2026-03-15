@@ -14,7 +14,7 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 - **8 Tools hatten falsche Beispiele — jetzt korrigiert:** Das Modell lernt aus den Beispielen in der Tool-Description. Wenn dort falsche Parameternamen stehen, schickt Levi genau diese falschen Namen. Betrifft: SwitchTheme, PatchPluginFile, ManageTaxonomy, ManageMenu, CreatePage, GetPosts, GetPages, WooCommerceManage.
 
 ## [0.7.7] – 2026-03-14
-- **Streaming UX komplett überarbeitet:** Die Chat-Timeline zeigt Tool-Aufrufe jetzt wie Cursor: sofortige Vorschau beim Start, Dauer nach Abschluss, keine doppelten Einträge mehr.
+- **Streaming UX komplett überarbeitet:** Die Chat-Timeline zeigt Tool-Aufrufe jetzt wie Professionals: sofortige Vorschau beim Start, Dauer nach Abschluss, keine doppelten Einträge mehr.
 - **Kein rohes JSON mehr im Chat:** Tool-Call-Events (`tool_call_start`) werden jetzt in allen Stream-Phasen (Initial + Continuation) korrekt als Timeline-Karten angezeigt statt als roher JSON-Text.
 - **Duplikate im Chat behoben:** Wenn Levi zwischen Tool-Aufrufen Text streamt, wird dieser nicht mehr doppelt angezeigt.
 - **Timeline-Rauschen reduziert:** Post-Write-Validierungen (Error-Log, Smoke-Test, Integration-Check) erscheinen nur noch als Status-Label, nicht mehr als eigene Timeline-Karten. Karten für nicht existierende Tools werden unterdrückt.
@@ -25,7 +25,7 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 - **Eager Tool-Call Preview:** Sobald das Modell einen Tool-Aufruf startet, erscheint sofort eine Vorschau-Karte in der Timeline — noch bevor der Aufruf abgeschlossen ist.
 
 ## [0.7.5] – 2026-03-13
-- **Cursor-Level Tooling:** Write-Schutz verhindert versehentliches Überschreiben existierender Dateien. Erweiterter Linter prüft jetzt auch Referenz-Integrität (fehlende Includes, undefinierte Funktionen) und WordPress-Anti-Patterns. Context-Komprimierung in Tool-Loops reduziert Token-Verbrauch.
+- **Professionals-Level Tooling:** Write-Schutz verhindert versehentliches Überschreiben existierender Dateien. Erweiterter Linter prüft jetzt auch Referenz-Integrität (fehlende Includes, undefinierte Funktionen) und WordPress-Anti-Patterns. Context-Komprimierung in Tool-Loops reduziert Token-Verbrauch.
 - **Frontend-Qualitätsregeln:** Levi prüft vor dem Schreiben von Plugin-Output automatisch auf `<code>`/`<pre>`-Tags, die CSS brechen, und entfernt sie.
 
 ## [0.7.4] – 2026-03-12
@@ -36,7 +36,7 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 ## [0.7.3] – 2026-03-11
 - **Glass-Optik für den Chat:** Das Chat-Widget nutzt jetzt einen Blur-Effekt (backdrop-filter) und halbtransparente Hintergründe – ähnlich dem Header auf der Levi-Website. Hell/Dunkel wird automatisch anhand des Hintergrunds erkannt.
 - **Status-Label sofort sichtbar:** Der Typing-Indicator zeigt direkt „Levi verarbeitet die Anfrage…“, sobald Levi anfängt – nicht erst, wenn die erste Server-Nachricht eintrifft.
-- **Chat-Eingabe wächst mit:** Die Textarea passt sich automatisch der Textmenge an (bis max. 150px Höhe), ähnlich wie bei Cursor-Chat. Nach dem Absenden wird sie wieder auf eine Zeile zurückgesetzt.
+- **Chat-Eingabe wächst mit:** Die Textarea passt sich automatisch der Textmenge an (bis max. 150px Höhe), ähnlich wie bei Professionals-Chat. Nach dem Absenden wird sie wieder auf eine Zeile zurückgesetzt.
 - **OpenRouter bevorzugt Baseten:** Kimi-Anfragen über OpenRouter nutzen jetzt bevorzugt den Baseten-Provider für stabilere Antwortzeiten.
 - **Keine Tool-Loops mehr:** Levi dreht sich nicht mehr im Kreis. Eine neue Regel („Nicht im Kreis drehen") verbietet, dieselbe Datei mehrfach hintereinander zu lesen – einmal lesen, dann handeln. Wenn `patch_plugin_file` fehlschlägt, soll Levi `write_plugin_file` nutzen statt endlos weiterzulesen. Zusätzlich erkennt das System wiederholte identische Tool-Aufrufe und blockiert sie ab dem dritten Mal mit einem Hinweis, einen anderen Ansatz zu wählen.
 
