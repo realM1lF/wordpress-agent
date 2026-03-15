@@ -788,8 +788,20 @@ class ChatController extends WP_REST_Controller {
         $onChunk = function (string $chunk, string $type = 'content') use (&$streamedContent) {
             if ($type === 'reasoning_start') {
                 $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
-            return;
-        }
+                return;
+            }
+            if ($type === 'tool_call_start') {
+                $info = json_decode($chunk, true);
+                if (is_array($info) && !empty($info['tool'])) {
+                    $this->emitSSE('progress', [
+                        'message' => $info['tool'],
+                        'tool' => $info['tool'],
+                        'phase' => 'preview',
+                        'context' => $info['tool'],
+                    ]);
+                }
+                return;
+            }
             $streamedContent .= $chunk;
             $this->emitSSE('delta', ['content' => $chunk]);
         };
