@@ -1021,17 +1021,28 @@
 
                 hideDots();
 
-                if (phase === 'start') {
-                    const card = document.createElement('div');
-                    card.className = 'levi-tool-card levi-tool-card-running';
-                    card.setAttribute('data-tool', tool);
-                    card.innerHTML =
-                        '<span class="levi-tool-icon levi-tool-running"><span class="levi-tool-spinner"></span></span>' +
-                        '<span class="levi-tool-label">' + escapeHtml(ctx || label) + '</span>' +
-                        '<span class="levi-tool-result"></span>' +
-                        '<span class="levi-tool-duration"></span>';
-                    timelineEl.appendChild(card);
-                    activeCardEl = card;
+                if (phase === 'start' || phase === 'preview') {
+                    var existingCard = (phase === 'start' && tool)
+                        ? timelineEl.querySelector('.levi-tool-card-running[data-tool="' + tool + '"]')
+                        : null;
+                    if (existingCard) {
+                        activeCardEl = existingCard;
+                        if (ctx) {
+                            var lbl = existingCard.querySelector('.levi-tool-label');
+                            if (lbl) lbl.textContent = ctx || label;
+                        }
+                    } else {
+                        const card = document.createElement('div');
+                        card.className = 'levi-tool-card levi-tool-card-running';
+                        card.setAttribute('data-tool', tool);
+                        card.innerHTML =
+                            '<span class="levi-tool-icon levi-tool-running"><span class="levi-tool-spinner"></span></span>' +
+                            '<span class="levi-tool-label">' + escapeHtml(ctx || label) + '</span>' +
+                            '<span class="levi-tool-result"></span>' +
+                            '<span class="levi-tool-duration"></span>';
+                        timelineEl.appendChild(card);
+                        activeCardEl = card;
+                    }
                     setLabel(label);
                     messages.scrollTop = messages.scrollHeight;
                 } else if (phase === 'done' || phase === 'failed') {

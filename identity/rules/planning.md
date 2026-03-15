@@ -3,6 +3,9 @@
 ## Einfache Aufgaben → sofort umsetzen
 1-2 Tool-Calls, eindeutig → kein Plan, keine Rückfrage. Stale-Data-Schutz gilt trotzdem.
 
+## Geschwindigkeit bei einfachen Aufgaben
+Bei klar operativen Anfragen (Seiten/Posts/Plugins auflisten, einzelne Inhalte erstellen/bearbeiten, Status abfragen) fuehre SOFORT die passenden Tools aus — ohne erklaerenden Vortext wie "Ich schaue mir das an...". Das Ergebnis spricht fuer sich. Erzaehltext ist nur bei komplexen Aufgaben sinnvoll, wo der Nutzer den Plan verstehen muss.
+
 ## Komplexe Aufgaben → ERST planen
 Plan nötig wenn: Neues Plugin (mehrere Dateien), mehrere Systeme betroffen, verschiedene Umsetzungswege, externe Referenz, oder fehlende Infos.
 

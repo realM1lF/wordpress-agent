@@ -314,7 +314,8 @@ class OpenRouterClient implements AIClientInterface {
                         $hasToolCalls = true;
                         foreach ($delta['tool_calls'] as $tc) {
                             $idx = $tc['index'] ?? 0;
-                            if (!isset($toolCallChunks[$idx])) {
+                            $isNew = !isset($toolCallChunks[$idx]);
+                            if ($isNew) {
                                 $toolCallChunks[$idx] = [
                                     'id' => $tc['id'] ?? '',
                                     'type' => 'function',
@@ -326,6 +327,9 @@ class OpenRouterClient implements AIClientInterface {
                             }
                             if (!empty($tc['function']['name'])) {
                                 $toolCallChunks[$idx]['function']['name'] .= $tc['function']['name'];
+                                if ($isNew) {
+                                    $onChunk(json_encode(['tool' => $tc['function']['name'], 'index' => $idx]), 'tool_call_start');
+                                }
                             }
                             if (isset($tc['function']['arguments'])) {
                                 $toolCallChunks[$idx]['function']['arguments'] .= $tc['function']['arguments'];

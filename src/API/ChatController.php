@@ -354,8 +354,7 @@ class ChatController extends WP_REST_Controller {
             return;
         }
 
-        // Emit initial status immediately (keeps Nginx alive)
-        $this->emitSSE('status', ['message' => 'Levi verarbeitet die Anfrage...', 'session_id' => $sessionId]);
+        $this->emitSSE('status', ['message' => 'Nachricht empfangen...', 'session_id' => $sessionId]);
 
         $webSearch = (bool) $request->get_param('web_search') && $this->settings->isWebSearchEnabled();
 
@@ -377,6 +376,7 @@ class ChatController extends WP_REST_Controller {
         $hasUploadedContext = !empty($this->getSessionUploads($sessionId, $userId));
 
         $this->discoveredToolNames = [];
+        $this->emitSSE('status', ['message' => 'Kontext laden...']);
         $messages = $this->buildMessages($sessionId, $message, true);
         $tools = $this->getToolDefs();
 
@@ -392,6 +392,7 @@ class ChatController extends WP_REST_Controller {
         $aiClient = $this->getAIClient();
         
         // --- Primary path: streaming with real-time delta output ---
+        $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
         $streamResult = $this->streamChatWithTracking($messages, $tools);
 
         if (!is_wp_error($streamResult)) {
@@ -919,6 +920,18 @@ class ChatController extends WP_REST_Controller {
         $result = $this->aiClient->streamChat($messages, function (string $chunk, string $type = 'content') {
             if ($type === 'reasoning_start') {
                 $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
+                return;
+            }
+            if ($type === 'tool_call_start') {
+                $info = json_decode($chunk, true);
+                if (is_array($info) && !empty($info['tool'])) {
+                    $this->emitSSE('progress', [
+                        'message' => $info['tool'],
+                        'tool' => $info['tool'],
+                        'phase' => 'preview',
+                        'context' => $info['tool'],
+                    ]);
+                }
                 return;
             }
             $this->emitSSE('delta', ['content' => $chunk]);

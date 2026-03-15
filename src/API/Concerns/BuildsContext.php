@@ -3,6 +3,7 @@
 namespace Levi\Agent\API\Concerns;
 
 use Levi\Agent\Agent\Identity;
+use Levi\Agent\AI\QueryClassifier;
 use Levi\Agent\Memory\EmbeddingCache;
 use Levi\Agent\Memory\StateSnapshotService;
 use Levi\Agent\Memory\VectorStore;
@@ -129,11 +130,11 @@ trait BuildsContext
             // non-critical
         }
 
-        // Always search vector DB for relevant context (model benefits from having it)
         if (!empty($query)) {
-            $fullStrategy = ['identity' => true, 'reference' => true, 'snapshot' => true, 'full_tools' => true];
+            $classifier = new QueryClassifier();
+            $strategy = $classifier->getRetrievalStrategy($query);
             try {
-                $contextMemories = $this->getContextMemories($query, $fullStrategy);
+                $contextMemories = $this->getContextMemories($query, $strategy);
                 if (!empty($contextMemories)) {
                     $dynamicParts[] = "# Relevant Context\n\n" . $contextMemories;
                 }
@@ -276,6 +277,13 @@ PROMPT;
      * confidence-based reranking with the primary model, and retrieval gating.
      */
     private function getContextMemories(string $query, array $strategy): string {
+        $needsReference = !empty($strategy['reference']);
+        $needsSnapshot = !empty($strategy['snapshot']);
+
+        if (!$needsReference && !$needsSnapshot) {
+            return $this->getEpisodicMemoriesOnly($query);
+        }
+
         try {
             $vectorStore = new VectorStore();
         } catch (\Throwable $e) {
@@ -443,5 +451,40 @@ PROMPT;
         usort($merged, fn($a, $b) => ($b['similarity'] ?? 0) <=> ($a['similarity'] ?? 0));
 
         return array_slice($merged, 0, $limit);
+    }
+
+    /**
+     * Fast-path: only fetch episodic memories (local DB, ~20ms).
+     * Skips QueryExpander, Embeddings API, and ChunkReranker entirely.
+     */
+    private function getEpisodicMemoriesOnly(string $query): string {
+        $userId = get_current_user_id();
+        if ($userId <= 0) {
+            return '';
+        }
+
+        try {
+            $vectorStore = new VectorStore();
+        } catch (\Throwable $e) {
+            return '';
+        }
+
+        $cache = new EmbeddingCache();
+        $emb = $cache->get($query);
+        if ($emb === null) {
+            $emb = $vectorStore->generateEmbedding($query);
+            if (is_wp_error($emb) || empty($emb)) {
+                return '';
+            }
+            $cache->set($query, $emb);
+        }
+
+        $episodic = $vectorStore->searchEpisodicMemories($emb, $userId, 5, 0.70);
+        if (empty($episodic)) {
+            return '';
+        }
+
+        $facts = array_map(fn($r) => '- ' . $r['fact'], $episodic);
+        return "## Learnings from previous sessions\n" . implode("\n", $facts);
     }
 }
