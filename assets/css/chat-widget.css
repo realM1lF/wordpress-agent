@@ -666,18 +666,17 @@
 .levi-typing {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     padding: 12px 16px;
 }
 
-.levi-typing-row {
+.levi-typing-dots {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
     gap: 4px;
 }
 
-.levi-typing span {
+.levi-typing-dots span {
     width: 8px;
     height: 8px;
     background: #64748b;
@@ -685,17 +684,14 @@
     animation: levi-typing 1.4s infinite;
 }
 
-.levi-typing span:nth-child(2) { animation-delay: 0.2s; }
-.levi-typing span:nth-child(3) { animation-delay: 0.4s; }
+.levi-typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.levi-typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 
 .levi-typing-label {
     display: block;
-    width: 100%;
-    margin-top: 6px;
     color: #94a3b8;
     font-size: 12px;
     min-height: 16px;
-    transition: opacity 0.2s ease;
 }
 .levi-typing-label:empty {
     display: none;
@@ -707,19 +703,6 @@
     color: #e2e8f0;
     word-wrap: break-word;
     overflow-wrap: break-word;
-}
-.levi-stream-content ~ .levi-typing-row {
-    margin-top: 12px;
-    border-top: 1px solid rgba(255,255,255,0.08);
-    padding-top: 12px;
-}
-.levi-stream-content ~ .levi-chat-progress-track {
-    margin-top: 8px;
-}
-.levi-stream-content + .levi-stream-content {
-    margin-top: 12px;
-    border-top: 1px solid rgba(255,255,255,0.06);
-    padding-top: 12px;
 }
 .levi-stream-content p:first-child {
     margin-top: 0;
@@ -774,6 +757,94 @@
 @keyframes levi-typing {
     0%, 60%, 100% { transform: translateY(0); }
     30% { transform: translateY(-10px); }
+}
+
+/* Tool timeline */
+.levi-tool-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin: 6px 0 4px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.levi-tool-timeline:empty {
+    display: none;
+}
+
+.levi-tool-card {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    color: #94a3b8;
+    animation: levi-tool-fade-in 0.18s ease;
+}
+
+.levi-tool-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+}
+
+.levi-tool-spinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid rgba(167, 139, 250, 0.3);
+    border-top-color: #a78bfa;
+    border-radius: 50%;
+    animation: levi-spin 0.7s linear infinite;
+}
+
+.levi-tool-done {
+    color: #4ade80;
+}
+
+.levi-tool-failed {
+    color: #f87171;
+}
+
+.levi-tool-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #cbd5e1;
+}
+
+.levi-tool-card-done .levi-tool-label {
+    color: #94a3b8;
+}
+
+.levi-tool-card-failed .levi-tool-label {
+    color: #fca5a5;
+}
+
+.levi-tool-result {
+    color: #64748b;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.levi-tool-duration {
+    color: #475569;
+    font-size: 11px;
+    min-width: 32px;
+    text-align: right;
+    white-space: nowrap;
+}
+
+
+@keyframes levi-tool-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 /* Stop button */
@@ -1134,7 +1205,7 @@
     color: hsl(0, 72%, 51%);
 }
 
-.levi-chat-light .levi-typing span {
+.levi-chat-light .levi-typing-dots span {
     background: hsl(240, 5%, 65%);
 }
 
@@ -1146,17 +1217,48 @@
     color: hsl(240, 10%, 15%);
 }
 
-.levi-chat-light .levi-stream-content ~ .levi-typing-row {
-    border-top-color: hsla(240, 6%, 70%, 0.25);
-}
-
-.levi-chat-light .levi-stream-content + .levi-stream-content {
-    border-top-color: hsla(240, 6%, 70%, 0.2);
-}
 
 .levi-chat-light .levi-chat-progress-track {
     background: hsla(240, 5%, 70%, 0.3);
 }
+
+.levi-chat-light .levi-tool-card {
+    color: hsl(240, 5%, 50%);
+}
+
+.levi-chat-light .levi-tool-label {
+    color: hsl(240, 10%, 25%);
+}
+
+.levi-chat-light .levi-tool-card-done .levi-tool-label {
+    color: hsl(240, 5%, 50%);
+}
+
+.levi-chat-light .levi-tool-card-failed .levi-tool-label {
+    color: hsl(0, 72%, 45%);
+}
+
+.levi-chat-light .levi-tool-done {
+    color: hsl(142, 71%, 35%);
+}
+
+.levi-chat-light .levi-tool-failed {
+    color: hsl(0, 72%, 51%);
+}
+
+.levi-chat-light .levi-tool-result {
+    color: hsl(240, 5%, 55%);
+}
+
+.levi-chat-light .levi-tool-duration {
+    color: hsl(240, 5%, 60%);
+}
+
+.levi-chat-light .levi-tool-spinner {
+    border-color: hsla(263, 70%, 50%, 0.2);
+    border-top-color: hsl(263, 70%, 50%);
+}
+
 
 .levi-chat-light .levi-message-time {
     color: hsla(240, 10%, 10%, 0.4);

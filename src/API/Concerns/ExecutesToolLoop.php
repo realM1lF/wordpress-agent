@@ -125,11 +125,32 @@ trait ExecutesToolLoop
                     continue;
                 }
 
+                $toolContext = $this->buildToolContext($functionName, $functionArgs);
+
+                if (!$this->toolRegistry->get($functionName)) {
+                    $result = [
+                        'success' => false,
+                        'error' => "Tool '{$functionName}' nicht gefunden.",
+                        'tool' => $functionName,
+                    ];
+                    $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCallId,
+                        'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
+                    ];
+                    continue;
+                }
+
                 if (!$isBatchableReadOnly) {
                     $this->emitSSE('progress', [
                         'message' => $this->getToolProgressLabel($functionName, 'start'),
                         'tool' => $functionName,
                         'iteration' => $iteration,
+                        'phase' => 'start',
+                        'context' => $toolContext,
                     ]);
                 }
 
@@ -162,10 +183,23 @@ trait ExecutesToolLoop
                         'role' => 'system',
                         'content' => $loopNudge,
                     ];
+
+                    if (!$isBatchableReadOnly) {
+                        $this->emitSSE('progress', [
+                            'message' => $this->getToolProgressLabel($functionName, 'failed'),
+                            'tool' => $functionName,
+                            'iteration' => $iteration,
+                            'phase' => 'failed',
+                            'context' => $toolContext,
+                            'result_summary' => 'Loop erkannt',
+                        ]);
+                    }
                     continue;
                 }
 
+                $toolStartTime = hrtime(true);
                 $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                $toolDurationMs = (int) ((hrtime(true) - $toolStartTime) / 1_000_000);
 
                 if ($functionName === 'search_tools' && !empty($result['tools'])) {
                     $this->addDiscoveredTools(array_column($result['tools'], 'name'));
@@ -184,12 +218,17 @@ trait ExecutesToolLoop
                     'iteration' => $iteration,
                 ];
 
+                $toolPhase = ($result['success'] ?? false) ? 'done' : 'failed';
                 if (!$isBatchableReadOnly) {
                     $this->emitSSE('progress', [
-                        'message' => $this->getToolProgressLabel($functionName, ($result['success'] ?? false) ? 'done' : 'failed'),
+                        'message' => $this->getToolProgressLabel($functionName, $toolPhase),
                         'tool' => $functionName,
                         'iteration' => $iteration,
                         'success' => $result['success'] ?? false,
+                        'phase' => $toolPhase,
+                        'context' => $toolContext,
+                        'result_summary' => $this->buildToolResultSummary($functionName, $result),
+                        'duration_ms' => $toolDurationMs,
                     ]);
                 }
 
@@ -212,11 +251,7 @@ trait ExecutesToolLoop
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
             if (!empty($postWriteMessages)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Prüfe Error-Logs...',
-                    'tool' => 'read_error_log',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Validierung...']);
                 foreach ($postWriteMessages as $pwm) {
                     $messages[] = $pwm;
                 }
@@ -234,11 +269,7 @@ trait ExecutesToolLoop
 
             $smokeTest = $this->injectPostPluginSmokeTest($toolCalls, $toolResults);
             if (!empty($smokeTest)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Smoke-Test: Plugin wird aktiviert und getestet...',
-                    'tool' => 'http_fetch',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Smoke-Test...']);
                 foreach ($smokeTest as $st) {
                     $messages[] = $st;
                 }
@@ -251,11 +282,7 @@ trait ExecutesToolLoop
 
             $integrationCheck = $this->injectPostWriteIntegrationCheck($toolCalls, $toolResults);
             if (!empty($integrationCheck)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Prüfe Datei-Integration...',
-                    'tool' => 'integration_check',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Datei-Integration pruefen...']);
                 foreach ($integrationCheck as $ic) {
                     $messages[] = $ic;
                 }
@@ -273,11 +300,7 @@ trait ExecutesToolLoop
 
             $codeTagWarnings = $this->injectCodeTagWarnings($toolResults);
             if (!empty($codeTagWarnings)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Code-Tag-Sanitierung...',
-                    'tool' => 'code_tag_check',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Code-Tags pruefen...']);
                 foreach ($codeTagWarnings as $ctw) {
                     $messages[] = $ctw;
                 }
@@ -285,11 +308,7 @@ trait ExecutesToolLoop
 
             $toolMismatch = $this->injectToolMismatchCorrection($latestUserMessage, $toolResults);
             if (!empty($toolMismatch)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Tool-Korrektur...',
-                    'tool' => 'tool_mismatch_check',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Tool-Korrektur...']);
                 foreach ($toolMismatch as $tm) {
                     $messages[] = $tm;
                 }
@@ -307,7 +326,11 @@ trait ExecutesToolLoop
                 return;
             }
 
-            $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
+            $this->emitSSE('progress', [
+                'message' => 'Levi denkt nach...',
+                'phase' => 'thinking',
+                'iteration' => $iteration,
+            ]);
 
             $loopMessages = $this->compactMessagesForToolLoop($messages, $iteration);
             $nextResponse = $this->streamContinuation($loopMessages, $this->getToolDefs(), $webSearch);
@@ -497,9 +520,9 @@ trait ExecutesToolLoop
         $name = $humanNames[$toolName] ?? $toolName;
 
         return match ($phase) {
-            'start' => 'Levi fuehrt ' . $name . ' aus...',
-            'done' => 'Levi hat ' . $name . ' ausgefuehrt',
-            'failed' => 'Levi: ' . $name . ' fehlgeschlagen',
+            'start' => $name . '...',
+            'done' => $name,
+            'failed' => $name . ' fehlgeschlagen',
             default => $name,
         };
     }
@@ -1321,5 +1344,64 @@ trait ExecutesToolLoop
             }
         }
         return [$readCalls, $nonReadCalls];
+    }
+
+    /**
+     * Extract a short, user-facing context string from tool arguments.
+     */
+    private function buildToolContext(string $toolName, array $args): string {
+        return match (true) {
+            str_contains($toolName, 'plugin_file') || str_contains($toolName, 'theme_file')
+                => $args['relative_path'] ?? '',
+            str_contains($toolName, 'grep_')
+                => $args['pattern'] ?? '',
+            str_contains($toolName, 'list_plugin') || str_contains($toolName, 'list_theme')
+                => $args['plugin_slug'] ?? $args['theme_slug'] ?? '',
+            $toolName === 'check_plugin_health'
+                => $args['plugin_slug'] ?? '',
+            $toolName === 'http_fetch'
+                => mb_strimwidth($args['url'] ?? '', 0, 60, '...'),
+            str_contains($toolName, 'rename_in_plugin')
+                => ($args['old_name'] ?? '') . ' → ' . ($args['new_name'] ?? ''),
+            str_contains($toolName, 'create_plugin') || str_contains($toolName, 'create_theme')
+                => $args['slug'] ?? $args['plugin_slug'] ?? $args['theme_slug'] ?? '',
+            str_contains($toolName, 'revert_file')
+                => $args['relative_path'] ?? '',
+            in_array($toolName, ['get_post', 'update_post', 'delete_post'], true)
+                => isset($args['post_id']) ? '#' . $args['post_id'] : '',
+            default => '',
+        };
+    }
+
+    /**
+     * Extract a compact result summary for the "done" progress event.
+     */
+    private function buildToolResultSummary(string $toolName, array $result): string {
+        if (!($result['success'] ?? false)) {
+            $err = $result['error'] ?? '';
+            return $err !== '' ? mb_strimwidth($err, 0, 80, '...') : 'Fehler';
+        }
+
+        return match (true) {
+            str_contains($toolName, 'read_plugin_file') || str_contains($toolName, 'read_theme_file')
+                => ($result['meta']['line_count'] ?? $result['total_lines'] ?? '?') . ' Zeilen',
+            str_contains($toolName, 'write_plugin_file') || str_contains($toolName, 'write_theme_file')
+                => ($result['bytes_written'] ?? '?') . ' Bytes',
+            str_contains($toolName, 'patch_')
+                => ($result['patches_applied'] ?? 0) . ' Ersetzungen',
+            str_contains($toolName, 'grep_')
+                => ($result['total_matches'] ?? 0) . ' Treffer in ' . ($result['files_matched'] ?? 0) . ' Dateien',
+            str_contains($toolName, 'list_plugin') || str_contains($toolName, 'list_theme')
+                => ($result['total'] ?? count($result['entries'] ?? [])) . ' Dateien',
+            $toolName === 'check_plugin_health'
+                => ($result['healthy'] ?? false) ? 'gesund' : count($result['issues'] ?? []) . ' Issues',
+            $toolName === 'read_error_log'
+                => ($result['total_lines'] ?? 0) === 0 ? 'keine Fehler' : ($result['total_lines'] ?? 0) . ' Zeilen',
+            str_contains($toolName, 'create_plugin') || str_contains($toolName, 'create_theme')
+                => 'erstellt',
+            str_contains($toolName, 'rename_in_plugin')
+                => ($result['files_changed'] ?? 0) . ' Dateien geaendert',
+            default => '',
+        };
     }
 }
