@@ -17,15 +17,12 @@ trait ExecutesToolLoop
         bool $webSearch = false
     ): void {
         $toolResults = [];
-        $pendingConfirmation = null;
         $runtimeSettings = $this->settings->getSettings();
         $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 25));
-        $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
         $mutationNudgeCount = 0;
         $completionGateCount = 0;
-        $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
 
         while ($iteration < $maxIterations) {
             $toolCalls = $messageData['tool_calls'] ?? [];
@@ -35,6 +32,16 @@ trait ExecutesToolLoop
 
             $iteration++;
             $messages[] = $messageData;
+
+            [$readBatch, $nonReadCalls] = $this->partitionToolCalls($toolCalls);
+            $isBatchableReadOnly = !empty($readBatch) && empty($nonReadCalls) && count($readBatch) > 1;
+            if ($isBatchableReadOnly) {
+                $this->emitSSE('progress', [
+                    'message' => count($readBatch) . ' Dateien lesen...',
+                    'tool' => 'batch_read',
+                    'iteration' => $iteration,
+                ]);
+            }
 
             foreach ($toolCalls as $toolCall) {
                 $functionName = trim($toolCall['function']['name'] ?? '');
@@ -58,6 +65,7 @@ trait ExecutesToolLoop
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -66,6 +74,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -78,11 +88,9 @@ trait ExecutesToolLoop
                 $guardResult = $this->toolGuard->evaluate($functionName, $functionArgs);
 
                 error_log(sprintf(
-                    'Levi ToolGuard [streaming]: tool=%s verdict=%s requireConfirm=%s hasConfirm=%s reason=%s',
+                    'Levi ToolGuard [streaming]: tool=%s verdict=%s reason=%s',
                     $functionName,
                     $guardResult['verdict'] ?? 'null',
-                    $requireConfirmation ? 'true' : 'false',
-                    $hasConfirmation ? 'true' : 'false',
                     $guardResult['reason'] ?? '-'
                 ));
 
@@ -97,6 +105,7 @@ trait ExecutesToolLoop
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -105,6 +114,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -114,39 +125,49 @@ trait ExecutesToolLoop
                     continue;
                 }
 
-                $this->emitSSE('progress', [
-                    'message' => $this->getToolProgressLabel($functionName, 'start'),
-                    'tool' => $functionName,
-                    'iteration' => $iteration,
-                ]);
+                $toolContext = $this->buildToolContext($functionName, $functionArgs);
 
-                if ($requireConfirmation && $guardResult['verdict'] === ToolGuard::ESCALATE && !$hasConfirmation) {
-                    $actionId = wp_generate_uuid4();
-                    set_transient('levi_pending_' . $actionId, [
-                        'tool_name' => $functionName,
-                        'tool_args' => $functionArgs,
-                        'session_id' => $sessionId,
-                        'user_id' => $userId,
-
-                        'created_at' => time(),
-                    ], 300);
-                    $pendingConfirmation = [
-                        'action_id' => $actionId,
-                        'tool' => $functionName,
-                        'description' => $this->describeToolAction($functionName, $functionArgs),
-                    ];
+                if (!$this->toolRegistry->get($functionName)) {
                     $result = [
                         'success' => false,
-                        'needs_confirmation' => true,
-                        'action_id' => $actionId,
-                        'error' => $guardResult['reason'] ?? 'Fuer diese Aktion brauche ich eine explizite Bestaetigung.',
+                        'error' => "Tool '{$functionName}' nicht gefunden.",
                         'tool' => $functionName,
                     ];
+                    $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCallId,
+                        'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
+                    ];
+                    continue;
+                }
 
+                if (!$isBatchableReadOnly) {
+                    $this->emitSSE('progress', [
+                        'message' => $this->getToolProgressLabel($functionName, 'start'),
+                        'tool' => $functionName,
+                        'iteration' => $iteration,
+                        'phase' => 'start',
+                        'context' => $toolContext,
+                    ]);
+                }
+
+                $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
+                if ($loopNudge !== null) {
+                    error_log('Levi: loop detection triggered for ' . $functionName);
+                    $result = [
+                        'success' => false,
+                        'loop_detected' => true,
+                        'error' => 'Wiederholter Aufruf erkannt. Waehle einen anderen Ansatz.',
+                        'tool' => $functionName,
+                    ];
                     $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -155,11 +176,30 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
-                    break;
-                } else {
-                    $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => $loopNudge,
+                    ];
+
+                    if (!$isBatchableReadOnly) {
+                        $this->emitSSE('progress', [
+                            'message' => $this->getToolProgressLabel($functionName, 'failed'),
+                            'tool' => $functionName,
+                            'iteration' => $iteration,
+                            'phase' => 'failed',
+                            'context' => $toolContext,
+                            'result_summary' => 'Loop erkannt',
+                        ]);
+                    }
+                    continue;
                 }
+
+                $toolStartTime = hrtime(true);
+                $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                $toolDurationMs = (int) ((hrtime(true) - $toolStartTime) / 1_000_000);
 
                 if ($functionName === 'search_tools' && !empty($result['tools'])) {
                     $this->addDiscoveredTools(array_column($result['tools'], 'name'));
@@ -167,51 +207,51 @@ trait ExecutesToolLoop
 
                 $this->trackOwnedPluginFromToolResult($functionName, $functionArgs, $result);
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                $this->setWorkingSetIteration($iteration);
+                $this->trackFileAccessFromToolResult($functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
                     'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                    'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                     'result' => $result,
                     'seq' => count($toolResults),
                     'iteration' => $iteration,
                 ];
 
-                $this->emitSSE('progress', [
-                    'message' => $this->getToolProgressLabel($functionName, ($result['success'] ?? false) ? 'done' : 'failed'),
-                    'tool' => $functionName,
-                    'iteration' => $iteration,
-                    'success' => $result['success'] ?? false,
-                ]);
+                $toolPhase = ($result['success'] ?? false) ? 'done' : 'failed';
+                if (!$isBatchableReadOnly) {
+                    $this->emitSSE('progress', [
+                        'message' => $this->getToolProgressLabel($functionName, $toolPhase),
+                        'tool' => $functionName,
+                        'iteration' => $iteration,
+                        'success' => $result['success'] ?? false,
+                        'phase' => $toolPhase,
+                        'context' => $toolContext,
+                        'result_summary' => $this->buildToolResultSummary($functionName, $result),
+                        'duration_ms' => $toolDurationMs,
+                    ]);
+                }
+
+                $toolContent = $this->compactToolResultForModel($result);
+                $toolContent .= $this->buildWriteBudgetWarning($functionName);
 
                 $messages[] = [
                     'role' => 'tool',
                     'tool_call_id' => $toolCallId,
-                    'content' => $this->compactToolResultForModel($result),
+                    'content' => $toolContent,
+                    '_levi_iteration' => $iteration,
+                    '_levi_tool' => $functionName,
                 ];
             }
 
-            if ($pendingConfirmation !== null) {
-                $confirmDesc = $pendingConfirmation['description']
-                    ?? $this->describeToolAction($pendingConfirmation['tool'] ?? '', []);
-                $finalMessage = "Ich moechte: **{$confirmDesc}**\n\nBitte bestaetige ueber den Button. 🔒";
-                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
-                $this->emitSSE('done', [
-                    'session_id' => $sessionId,
-                    'message' => $finalMessage,
-                    'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
-                    'pending_confirmation' => $pendingConfirmation,
-                    'usage' => $this->usageAccumulator,
-                ]);
-                $this->flushUsage($sessionId, $userId);
-                return;
+            $autoList = $this->injectAutoListOnMissingFile($toolCalls, $toolResults);
+            foreach ($autoList as $al) {
+                $messages[] = $al;
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
             if (!empty($postWriteMessages)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Prüfe Error-Logs...',
-                    'tool' => 'read_error_log',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Validierung...']);
                 foreach ($postWriteMessages as $pwm) {
                     $messages[] = $pwm;
                 }
@@ -229,35 +269,38 @@ trait ExecutesToolLoop
 
             $smokeTest = $this->injectPostPluginSmokeTest($toolCalls, $toolResults);
             if (!empty($smokeTest)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Smoke-Test: Plugin wird aktiviert und getestet...',
-                    'tool' => 'http_fetch',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Smoke-Test...']);
                 foreach ($smokeTest as $st) {
                     $messages[] = $st;
                 }
             }
 
+            $envWarnings = $this->injectPostWriteEnvironmentWarnings($toolCalls, $toolResults);
+            foreach ($envWarnings as $ew) {
+                $messages[] = $ew;
+            }
+
             $integrationCheck = $this->injectPostWriteIntegrationCheck($toolCalls, $toolResults);
             if (!empty($integrationCheck)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Prüfe Datei-Integration...',
-                    'tool' => 'integration_check',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Datei-Integration pruefen...']);
                 foreach ($integrationCheck as $ic) {
                     $messages[] = $ic;
                 }
             }
 
+            $depWarnings = $this->injectPostWriteReverseDependencyWarnings($toolCalls, $toolResults);
+            foreach ($depWarnings as $dw) {
+                $messages[] = $dw;
+            }
+
+            $refCheck = $this->injectPostWriteReferenceCheck($toolCalls, $toolResults);
+            foreach ($refCheck as $rc) {
+                $messages[] = $rc;
+            }
+
             $codeTagWarnings = $this->injectCodeTagWarnings($toolResults);
             if (!empty($codeTagWarnings)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Code-Tag-Sanitierung...',
-                    'tool' => 'code_tag_check',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Code-Tags pruefen...']);
                 foreach ($codeTagWarnings as $ctw) {
                     $messages[] = $ctw;
                 }
@@ -265,13 +308,16 @@ trait ExecutesToolLoop
 
             $toolMismatch = $this->injectToolMismatchCorrection($latestUserMessage, $toolResults);
             if (!empty($toolMismatch)) {
-                $this->emitSSE('progress', [
-                    'message' => 'Tool-Korrektur...',
-                    'tool' => 'tool_mismatch_check',
-                    'iteration' => $iteration,
-                ]);
+                $this->emitSSE('status', ['message' => 'Tool-Korrektur...']);
                 foreach ($toolMismatch as $tm) {
                     $messages[] = $tm;
+                }
+            }
+
+            if ($iteration >= 2) {
+                $wsSummary = $this->getWorkingSetSummary();
+                if ($wsSummary !== '') {
+                    $messages[] = ['role' => 'system', 'content' => $wsSummary];
                 }
             }
 
@@ -280,7 +326,11 @@ trait ExecutesToolLoop
                 return;
             }
 
-            $this->emitSSE('status', ['message' => 'Levi antwortet...']);
+            $this->emitSSE('progress', [
+                'message' => 'Levi denkt nach...',
+                'phase' => 'thinking',
+                'iteration' => $iteration,
+            ]);
 
             $loopMessages = $this->compactMessagesForToolLoop($messages, $iteration);
             $nextResponse = $this->streamContinuation($loopMessages, $this->getToolDefs(), $webSearch);
@@ -303,7 +353,11 @@ trait ExecutesToolLoop
                         'tool' => 'completion_gate',
                         'iteration' => $iteration,
                     ]);
-                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $assistantHistoryEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    if (!empty($messageData['reasoning_content'])) {
+                        $assistantHistoryEntry['reasoning_content'] = $messageData['reasoning_content'];
+                    }
+                    $messages[] = $assistantHistoryEntry;
                     $messages[] = [
                         'role' => 'system',
                         'content' => "[SYSTEM – COMPLETION CHECK FAILED]\n" . $completionIssues
@@ -319,7 +373,7 @@ trait ExecutesToolLoop
                     }
                 }
 
-                if ($pendingConfirmation === null && $this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
+                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
                     $mutationNudgeCount++;
                     $messages[] = [
                         'role' => 'system',
@@ -346,28 +400,13 @@ trait ExecutesToolLoop
                     (string) ($messageData['content'] ?? '')
                 );
 
-                if ($pendingConfirmation === null && $this->looksLikeFakeConfirmation($finalMessage)) {
-                    $messages[] = ['role' => 'assistant', 'content' => $finalMessage];
-                    $messages[] = [
-                        'role' => 'system',
-                        'content' => '[SYSTEM] Du hast eine Bestaetigungsanfrage als TEXT geschrieben. Das ist FALSCH. '
-                            . 'Der Nutzer sieht keinen Button und haengt fest. '
-                            . 'Fuehre den destruktiven Tool-Call (delete_post, switch_theme, install_plugin, etc.) JETZT aus. '
-                            . 'Das Backend zeigt dem Nutzer automatisch einen Bestaetigungs-Button.',
-                    ];
-                    $retryResponse = $this->chatWithTracking($messages, $this->getToolDefs(), $heartbeat, $webSearch);
-                    if (!is_wp_error($retryResponse)) {
-                        $retryData = $retryResponse['choices'][0]['message'] ?? [];
-                        if (!empty($retryData['tool_calls'])) {
-                            $messageData = $retryData;
-                            continue;
-                        }
-                    }
-                }
-
                 if ($finalMessage === '') {
                     error_log('Levi: empty AI response after tool loop, nudging for summary');
-                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $assistantHistoryEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    if (!empty($messageData['reasoning_content'])) {
+                        $assistantHistoryEntry['reasoning_content'] = $messageData['reasoning_content'];
+                    }
+                    $messages[] = $assistantHistoryEntry;
                     $messages[] = [
                         'role' => 'system',
                         'content' => '[SYSTEM] Deine letzte Antwort war leer. Fasse jetzt kurz und freundlich zusammen, '
@@ -384,7 +423,7 @@ trait ExecutesToolLoop
                         );
                     }
                     if ($finalMessage === '') {
-                        $finalMessage = $this->buildToolLoopFallbackMessage($toolResults);
+                        $finalMessage = $this->recoverStreamedContentOrFallback($toolResults);
                     }
                 }
 
@@ -403,9 +442,6 @@ trait ExecutesToolLoop
                     'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
                     'truncated' => $this->wasResponseTruncated($nextResponse),
                 ];
-                if ($pendingConfirmation !== null) {
-                    $donePayload['pending_confirmation'] = $pendingConfirmation;
-                }
                 $donePayload['usage'] = $this->usageAccumulator;
                 $this->emitSSE('done', $donePayload);
                 $this->flushUsage($sessionId, $userId);
@@ -413,7 +449,7 @@ trait ExecutesToolLoop
             }
         }
 
-        $finalMessage = $this->buildToolLoopFallbackMessage($toolResults);
+        $finalMessage = $this->recoverStreamedContentOrFallback($toolResults);
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
         $fallbackPayload = [
@@ -421,9 +457,6 @@ trait ExecutesToolLoop
             'message' => $finalMessage,
             'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
         ];
-        if ($pendingConfirmation !== null) {
-            $fallbackPayload['pending_confirmation'] = $pendingConfirmation;
-        }
         $fallbackPayload['usage'] = $this->usageAccumulator;
         $this->emitSSE('done', $fallbackPayload);
         $this->flushUsage($sessionId, $userId);
@@ -467,14 +500,29 @@ trait ExecutesToolLoop
             'discover_content_types' => 'Inhaltstypen erkennen',
             'discover_rest_api' => 'REST-API erkennen',
             'execute_wp_code' => 'Code ausfuehren',
+            'grep_plugin_files' => 'Plugin-Dateien durchsuchen',
+            'grep_theme_files' => 'Theme-Dateien durchsuchen',
+            'patch_theme_file' => 'Theme-Datei patchen',
+            'delete_plugin_file' => 'Plugin-Datei loeschen',
+            'delete_theme_file' => 'Theme-Datei loeschen',
+            'check_plugin_health' => 'Plugin-Gesundheit pruefen',
+            'rename_in_plugin' => 'Umbenennung in Plugin',
+            'revert_file' => 'Datei-Revert',
+            'search_tools' => 'Tools suchen',
+            'http_fetch' => 'HTTP-Abfrage',
+            'manage_user' => 'Benutzer verwalten',
+            'update_any_option' => 'Option aendern',
+            'store_session_image' => 'Bild speichern',
+            'switch_theme' => 'Theme wechseln',
+            'create_theme' => 'Theme erstellen',
         ];
 
         $name = $humanNames[$toolName] ?? $toolName;
 
         return match ($phase) {
-            'start' => 'Levi fuehrt ' . $name . ' aus...',
-            'done' => 'Levi hat ' . $name . ' ausgefuehrt',
-            'failed' => 'Levi: ' . $name . ' fehlgeschlagen',
+            'start' => $name . '...',
+            'done' => $name,
+            'failed' => $name . ' fehlgeschlagen',
             default => $name,
         };
     }
@@ -485,15 +533,12 @@ trait ExecutesToolLoop
     private function handleToolCalls(array $messageData, array $messages, string $sessionId, int $userId, string $latestUserMessage, bool $webSearch = false): WP_REST_Response {
         $toolResults = [];
         $executionTrace = [];
-        $pendingConfirmation = null;
         $runtimeSettings = $this->settings->getSettings();
         $maxIterations = max(1, (int) ($runtimeSettings['max_tool_iterations'] ?? 25));
-        $requireConfirmation = !empty($runtimeSettings['require_confirmation_destructive']);
         $taskIntent = $this->inferTaskIntent($latestUserMessage, $messages);
         $iteration = 0;
         $mutationNudgeCount = 0;
         $completionGateCount = 0;
-        $hasConfirmation = $this->hasUserConfirmationSignal($latestUserMessage);
 
         while ($iteration < $maxIterations) {
             $toolCalls = $messageData['tool_calls'] ?? [];
@@ -528,6 +573,7 @@ trait ExecutesToolLoop
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -544,6 +590,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -556,11 +604,9 @@ trait ExecutesToolLoop
                 $guardResult = $this->toolGuard->evaluate($functionName, $functionArgs);
 
                 error_log(sprintf(
-                    'Levi ToolGuard [classic]: tool=%s verdict=%s requireConfirm=%s hasConfirm=%s reason=%s',
+                    'Levi ToolGuard [classic]: tool=%s verdict=%s reason=%s',
                     $functionName,
                     $guardResult['verdict'] ?? 'null',
-                    $requireConfirmation ? 'true' : 'false',
-                    $hasConfirmation ? 'true' : 'false',
                     $guardResult['reason'] ?? '-'
                 ));
 
@@ -575,6 +621,7 @@ trait ExecutesToolLoop
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -591,6 +638,8 @@ trait ExecutesToolLoop
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
                     $messages[] = [
                         'role' => 'system',
@@ -611,33 +660,20 @@ trait ExecutesToolLoop
                     ],
                 ];
 
-                if ($requireConfirmation && $guardResult['verdict'] === ToolGuard::ESCALATE && !$hasConfirmation) {
-                    $actionId = wp_generate_uuid4();
-                    set_transient('levi_pending_' . $actionId, [
-                        'tool_name' => $functionName,
-                        'tool_args' => $functionArgs,
-                        'session_id' => $sessionId,
-                        'user_id' => $userId,
-
-                        'created_at' => time(),
-                    ], 300);
-                    $pendingConfirmation = [
-                        'action_id' => $actionId,
-                        'tool' => $functionName,
-                        'description' => $this->describeToolAction($functionName, $functionArgs),
-                    ];
+                $loopNudge = $this->detectToolLoop($toolResults, $functionName, $functionArgs);
+                if ($loopNudge !== null) {
+                    error_log('Levi: loop detection triggered for ' . $functionName);
                     $result = [
                         'success' => false,
-                        'needs_confirmation' => true,
-                        'action_id' => $actionId,
-                        'error' => $guardResult['reason'] ?? 'Fuer diese Aktion brauche ich eine explizite Bestaetigung.',
+                        'loop_detected' => true,
+                        'error' => 'Wiederholter Aufruf erkannt. Waehle einen anderen Ansatz.',
                         'tool' => $functionName,
                     ];
-
                     $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
                     $toolResults[] = [
                         'tool' => $functionName,
                         'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                        'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                         'result' => $result,
                         'seq' => count($toolResults),
                         'iteration' => $iteration,
@@ -646,19 +682,25 @@ trait ExecutesToolLoop
                         'iteration' => $iteration,
                         'step' => count($executionTrace) + 1,
                         'tool' => $functionName,
-                        'status' => 'awaiting_confirmation',
+                        'status' => 'loop_detected',
                         'timestamp' => current_time('mysql'),
-                        'summary' => $this->summarizeToolResult($result),
+                        'summary' => 'Loop-Detection: wiederholter Aufruf blockiert',
                     ];
                     $messages[] = [
                         'role' => 'tool',
                         'tool_call_id' => $toolCallId,
                         'content' => $this->compactToolResultForModel($result),
+                        '_levi_iteration' => $iteration,
+                        '_levi_tool' => $functionName,
                     ];
-                    break;
-                } else {
-                    $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
+                    $messages[] = [
+                        'role' => 'system',
+                        'content' => $loopNudge,
+                    ];
+                    continue;
                 }
+
+                $result = $this->executeToolWithAutopaging($functionName, $functionArgs, $latestUserMessage);
 
                 if ($functionName === 'search_tools' && !empty($result['tools'])) {
                     $this->addDiscoveredTools(array_column($result['tools'], 'name'));
@@ -666,9 +708,12 @@ trait ExecutesToolLoop
 
                 $this->trackOwnedPluginFromToolResult($functionName, $functionArgs, $result);
                 $this->logToolExecution($sessionId, $userId, $functionName, $functionArgs, $result);
+                $this->setWorkingSetIteration($iteration);
+                $this->trackFileAccessFromToolResult($functionName, $functionArgs, $result);
                 $toolResults[] = [
                     'tool' => $functionName,
                     'args_key' => $this->buildToolArgsKey($functionName, $functionArgs),
+                    'fingerprint' => $this->buildToolCallFingerprint($functionName, $functionArgs),
                     'result' => $result,
                     'seq' => count($toolResults),
                     'iteration' => $iteration,
@@ -683,28 +728,21 @@ trait ExecutesToolLoop
                     'summary' => $this->summarizeToolResult($result),
                 ];
 
-                // Add tool result to conversation
+                $toolContent = $this->compactToolResultForModel($result);
+                $toolContent .= $this->buildWriteBudgetWarning($functionName);
+
                 $messages[] = [
                     'role' => 'tool',
                     'tool_call_id' => $toolCallId,
-                    'content' => $this->compactToolResultForModel($result),
+                    'content' => $toolContent,
+                    '_levi_iteration' => $iteration,
+                    '_levi_tool' => $functionName,
                 ];
             }
 
-            if ($pendingConfirmation !== null) {
-                $confirmDesc = $pendingConfirmation['description']
-                    ?? $this->describeToolAction($pendingConfirmation['tool'] ?? '', []);
-                $finalMessage = "Ich moechte: **{$confirmDesc}**\n\nBitte bestaetige ueber den Button. 🔒";
-                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
-                $responsePayload = [
-                    'session_id' => $sessionId,
-                    'message' => $finalMessage,
-                    'execution_trace' => $executionTrace,
-                    'pending_confirmation' => $pendingConfirmation,
-                    'usage' => $this->usageAccumulator,
-                ];
-                $this->flushUsage($sessionId, $userId);
-                return new WP_REST_Response($responsePayload, 200);
+            $autoList = $this->injectAutoListOnMissingFile($toolCalls, $toolResults);
+            foreach ($autoList as $al) {
+                $messages[] = $al;
             }
 
             $postWriteMessages = $this->injectPostWriteValidation($toolCalls, $toolResults);
@@ -729,9 +767,24 @@ trait ExecutesToolLoop
                 $messages[] = $st;
             }
 
+            $envWarnings = $this->injectPostWriteEnvironmentWarnings($toolCalls, $toolResults);
+            foreach ($envWarnings as $ew) {
+                $messages[] = $ew;
+            }
+
             $integrationCheck = $this->injectPostWriteIntegrationCheck($toolCalls, $toolResults);
             foreach ($integrationCheck as $ic) {
                 $messages[] = $ic;
+            }
+
+            $depWarnings = $this->injectPostWriteReverseDependencyWarnings($toolCalls, $toolResults);
+            foreach ($depWarnings as $dw) {
+                $messages[] = $dw;
+            }
+
+            $refCheckClassic = $this->injectPostWriteReferenceCheck($toolCalls, $toolResults);
+            foreach ($refCheckClassic as $rc) {
+                $messages[] = $rc;
             }
 
             $codeTagWarnings = $this->injectCodeTagWarnings($toolResults);
@@ -742,6 +795,13 @@ trait ExecutesToolLoop
             $toolMismatch = $this->injectToolMismatchCorrection($message, $toolResults);
             foreach ($toolMismatch as $tm) {
                 $messages[] = $tm;
+            }
+
+            if ($iteration >= 2) {
+                $wsSummary = $this->getWorkingSetSummary();
+                if ($wsSummary !== '') {
+                    $messages[] = ['role' => 'system', 'content' => $wsSummary];
+                }
             }
 
             $loopMessages = $this->compactMessagesForToolLoop($messages, $iteration);
@@ -779,7 +839,11 @@ trait ExecutesToolLoop
                 $completionIssues = $this->checkWriteCompleteness($toolResults);
                 if ($completionIssues !== null && $completionGateCount < 2) {
                     $completionGateCount++;
-                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $assistantHistoryEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    if (!empty($messageData['reasoning_content'])) {
+                        $assistantHistoryEntry['reasoning_content'] = $messageData['reasoning_content'];
+                    }
+                    $messages[] = $assistantHistoryEntry;
                     $messages[] = [
                         'role' => 'system',
                         'content' => "[SYSTEM – COMPLETION CHECK FAILED]\n" . $completionIssues
@@ -795,7 +859,7 @@ trait ExecutesToolLoop
                     }
                 }
 
-                if ($pendingConfirmation === null && $this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
+                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
                     $mutationNudgeCount++;
                     $messages[] = [
                         'role' => 'system',
@@ -824,7 +888,11 @@ trait ExecutesToolLoop
 
                 if ($finalMessage === '') {
                     error_log('Levi: empty AI response after tool loop (classic), nudging for summary');
-                    $messages[] = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    $assistantHistoryEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                    if (!empty($messageData['reasoning_content'])) {
+                        $assistantHistoryEntry['reasoning_content'] = $messageData['reasoning_content'];
+                    }
+                    $messages[] = $assistantHistoryEntry;
                     $messages[] = [
                         'role' => 'system',
                         'content' => '[SYSTEM] Deine letzte Antwort war leer. Fasse jetzt kurz und freundlich zusammen, '
@@ -842,7 +910,7 @@ trait ExecutesToolLoop
                         );
                     }
                     if ($finalMessage === '') {
-                        $finalMessage = $this->buildToolLoopFallbackMessage($toolResults);
+                        $finalMessage = $this->recoverStreamedContentOrFallback($toolResults);
                     }
                 }
 
@@ -863,16 +931,13 @@ trait ExecutesToolLoop
                     'truncated' => $this->wasResponseTruncated($nextResponse),
                     'timestamp' => current_time('mysql'),
                 ];
-                if ($pendingConfirmation !== null) {
-                    $responsePayload['pending_confirmation'] = $pendingConfirmation;
-                }
                 $responsePayload['usage'] = $this->usageAccumulator;
                 $this->flushUsage($sessionId, $userId);
                 return new WP_REST_Response($responsePayload, 200);
             }
         }
 
-        $finalMessage = $this->buildToolLoopFallbackMessage($toolResults);
+        $finalMessage = $this->recoverStreamedContentOrFallback($toolResults);
         $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $finalMessage);
 
         $fallbackPayload = [
@@ -882,19 +947,12 @@ trait ExecutesToolLoop
             'execution_trace' => $executionTrace,
             'timestamp' => current_time('mysql'),
         ];
-        if ($pendingConfirmation !== null) {
-            $fallbackPayload['pending_confirmation'] = $pendingConfirmation;
-        }
         $fallbackPayload['usage'] = $this->usageAccumulator;
         $this->flushUsage($sessionId, $userId);
         return new WP_REST_Response($fallbackPayload, 200);
     }
 
     private function summarizeToolResult(array $result): string {
-        if (($result['needs_confirmation'] ?? false) === true) {
-            return 'Warte auf explizite Bestätigung';
-        }
-
         if (($result['success'] ?? false) === true) {
             if (!empty($result['message']) && is_string($result['message'])) {
                 return $result['message'];
@@ -1009,7 +1067,7 @@ trait ExecutesToolLoop
 
     private function isDestructiveTool(string $toolName, array $args = []): bool {
         $result = $this->toolGuard->evaluate($toolName, $args);
-        return $result['verdict'] === ToolGuard::ESCALATE || $result['verdict'] === ToolGuard::BLOCK;
+        return $result['verdict'] === ToolGuard::BLOCK;
     }
 
     private function isWriteTool(string $toolName): bool {
@@ -1017,10 +1075,13 @@ trait ExecutesToolLoop
             'write_plugin_file',
             'patch_plugin_file',
             'write_theme_file',
+            'patch_theme_file',
             'create_plugin',
             'create_theme',
             'execute_wp_code',
             'elementor_build',
+            'rename_in_plugin',
+            'revert_file',
         ], true);
     }
 
@@ -1148,6 +1209,99 @@ trait ExecutesToolLoop
         return $value;
     }
 
+    /**
+     * Detect repetitive tool calls (same tool + same primary arg 3+ times without a write in between).
+     * Returns a system-message nudge string if a loop is detected, null otherwise.
+     */
+    private function buildToolCallFingerprint(string $toolName, array $args): string {
+        ksort($args);
+        return $toolName . ':' . md5(json_encode($args));
+    }
+
+    private function detectToolLoop(array $toolResults, string $currentTool, array $currentArgs): ?string {
+        $currentFingerprint = $this->buildToolCallFingerprint($currentTool, $currentArgs);
+        $consecutiveCount = 0;
+
+        for ($i = count($toolResults) - 1; $i >= 0; $i--) {
+            $prevFingerprint = $toolResults[$i]['fingerprint'] ?? '';
+            if ($prevFingerprint === $currentFingerprint) {
+                $consecutiveCount++;
+            } else {
+                break;
+            }
+        }
+
+        if ($consecutiveCount >= 2) {
+            return '[SYSTEM] Du rufst dasselbe Tool (' . $currentTool . ') wiederholt mit exakt denselben Argumenten auf. '
+                . 'Das deutet auf eine Schleife hin. Waehle einen anderen Ansatz: '
+                . 'Wenn patch_plugin_file fehlgeschlagen ist, nutze write_plugin_file zum Neuschreiben. '
+                . 'Wenn du eine Datei bereits gelesen hast, lies sie nicht nochmal – handele stattdessen.';
+        }
+
+        $errorLoopMsg = $this->detectErrorLoop($toolResults, $currentTool);
+        if ($errorLoopMsg !== null) {
+            return $errorLoopMsg;
+        }
+
+        return null;
+    }
+
+    /**
+     * Detect when the same tool produces the same error repeatedly (even with different arguments).
+     * This catches cases like write_plugin_file → activate → "invalid header" repeated
+     * with slightly different content each time.
+     */
+    private function detectErrorLoop(array $toolResults, string $currentTool): ?string {
+        $recentErrors = [];
+        $lookback = min(count($toolResults), 8);
+
+        for ($i = count($toolResults) - 1; $i >= max(0, count($toolResults) - $lookback); $i--) {
+            $tr = $toolResults[$i];
+            if (($tr['tool'] ?? '') !== $currentTool) {
+                continue;
+            }
+            $res = $tr['result'] ?? [];
+            if (($res['success'] ?? true) === false && !empty($res['error'])) {
+                $recentErrors[] = $res['error'];
+            }
+        }
+
+        if (count($recentErrors) < 2) {
+            return null;
+        }
+
+        $firstError = $recentErrors[0];
+        $sameErrorCount = 0;
+        foreach ($recentErrors as $err) {
+            if ($err === $firstError) {
+                $sameErrorCount++;
+            }
+        }
+
+        if ($sameErrorCount >= 2) {
+            return "[SYSTEM] ACHTUNG: Das Tool '$currentTool' hat {$sameErrorCount}x denselben Fehler produziert: \"{$firstError}\". "
+                . "Wiederhole NICHT denselben Ansatz. Analysiere die Ursache: "
+                . "Lies die betroffene Datei mit read_plugin_file, pruefe das Error-Log mit read_error_log, "
+                . "oder nutze ein anderes Tool. Falls ein Plugin nicht aktiviert werden kann, pruefe ob die Datei "
+                . "existiert und einen gueltigen Plugin-Header hat.";
+        }
+
+        return null;
+    }
+
+    private function buildWriteBudgetWarning(string $toolName): string {
+        if (!$this->isWriteTool($toolName)) {
+            return '';
+        }
+        $remaining = $this->toolGuard->getMaxWriteCalls() - $this->toolGuard->getWriteCallCount();
+        if ($remaining > 5 || $remaining < 0) {
+            return '';
+        }
+        return "\n\n[BUDGET-WARNUNG] Noch {$remaining} von {$this->toolGuard->getMaxWriteCalls()} "
+            . "Schreiboperationen uebrig. Plane die verbleibenden Writes sorgfaeltig. "
+            . "Vermeide Trial-and-Error — lies Dateien und analysiere Fehler bevor du schreibst.";
+    }
+
     private function isSensitiveAuditKey(string $key): bool {
         return in_array($key, [
             'password',
@@ -1162,5 +1316,92 @@ trait ExecutesToolLoop
             'confirm_password',
             'confirmation_password',
         ], true);
+    }
+
+    private const BATCHABLE_READ_TOOLS = [
+        'read_plugin_file', 'read_theme_file',
+        'list_plugin_files', 'list_theme_files',
+        'grep_plugin_files', 'grep_theme_files',
+        'get_posts', 'get_post', 'get_pages',
+        'get_plugins', 'get_options', 'get_users', 'get_media',
+        'read_error_log', 'check_plugin_health',
+        'search_tools', 'discover_content_types', 'discover_rest_api',
+    ];
+
+    /**
+     * Partition tool calls into batchable read-only tools and non-read tools.
+     * @return array{0: array, 1: array} [$readCalls, $nonReadCalls]
+     */
+    private function partitionToolCalls(array $toolCalls): array {
+        $readCalls = [];
+        $nonReadCalls = [];
+        foreach ($toolCalls as $tc) {
+            $name = trim($tc['function']['name'] ?? '');
+            if (in_array($name, self::BATCHABLE_READ_TOOLS, true)) {
+                $readCalls[] = $tc;
+            } else {
+                $nonReadCalls[] = $tc;
+            }
+        }
+        return [$readCalls, $nonReadCalls];
+    }
+
+    /**
+     * Extract a short, user-facing context string from tool arguments.
+     */
+    private function buildToolContext(string $toolName, array $args): string {
+        return match (true) {
+            str_contains($toolName, 'plugin_file') || str_contains($toolName, 'theme_file')
+                => $args['relative_path'] ?? '',
+            str_contains($toolName, 'grep_')
+                => $args['pattern'] ?? '',
+            str_contains($toolName, 'list_plugin') || str_contains($toolName, 'list_theme')
+                => $args['plugin_slug'] ?? $args['theme_slug'] ?? '',
+            $toolName === 'check_plugin_health'
+                => $args['plugin_slug'] ?? '',
+            $toolName === 'http_fetch'
+                => mb_strimwidth($args['url'] ?? '', 0, 60, '...'),
+            str_contains($toolName, 'rename_in_plugin')
+                => ($args['old_name'] ?? '') . ' → ' . ($args['new_name'] ?? ''),
+            str_contains($toolName, 'create_plugin') || str_contains($toolName, 'create_theme')
+                => $args['slug'] ?? $args['plugin_slug'] ?? $args['theme_slug'] ?? '',
+            str_contains($toolName, 'revert_file')
+                => $args['relative_path'] ?? '',
+            in_array($toolName, ['get_post', 'update_post', 'delete_post'], true)
+                => isset($args['post_id']) ? '#' . $args['post_id'] : '',
+            default => '',
+        };
+    }
+
+    /**
+     * Extract a compact result summary for the "done" progress event.
+     */
+    private function buildToolResultSummary(string $toolName, array $result): string {
+        if (!($result['success'] ?? false)) {
+            $err = $result['error'] ?? '';
+            return $err !== '' ? mb_strimwidth($err, 0, 80, '...') : 'Fehler';
+        }
+
+        return match (true) {
+            str_contains($toolName, 'read_plugin_file') || str_contains($toolName, 'read_theme_file')
+                => ($result['meta']['line_count'] ?? $result['total_lines'] ?? '?') . ' Zeilen',
+            str_contains($toolName, 'write_plugin_file') || str_contains($toolName, 'write_theme_file')
+                => ($result['bytes_written'] ?? '?') . ' Bytes',
+            str_contains($toolName, 'patch_')
+                => ($result['patches_applied'] ?? 0) . ' Ersetzungen',
+            str_contains($toolName, 'grep_')
+                => ($result['total_matches'] ?? 0) . ' Treffer in ' . ($result['files_matched'] ?? 0) . ' Dateien',
+            str_contains($toolName, 'list_plugin') || str_contains($toolName, 'list_theme')
+                => ($result['total'] ?? count($result['entries'] ?? [])) . ' Dateien',
+            $toolName === 'check_plugin_health'
+                => ($result['healthy'] ?? false) ? 'gesund' : count($result['issues'] ?? []) . ' Issues',
+            $toolName === 'read_error_log'
+                => ($result['total_lines'] ?? 0) === 0 ? 'keine Fehler' : ($result['total_lines'] ?? 0) . ' Zeilen',
+            str_contains($toolName, 'create_plugin') || str_contains($toolName, 'create_theme')
+                => 'erstellt',
+            str_contains($toolName, 'rename_in_plugin')
+                => ($result['files_changed'] ?? 0) . ' Dateien geaendert',
+            default => '',
+        };
     }
 }

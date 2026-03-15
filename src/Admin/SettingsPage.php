@@ -251,7 +251,7 @@ class SettingsPage {
         }
 
         if (in_array($safetyMode, ['strict', 'standard'], true)) {
-            $sanitized['require_confirmation_destructive'] = $safetyMode === 'strict' ? 1 : 0;
+            $sanitized['allow_destructive'] = $safetyMode === 'strict' ? 0 : 1;
         }
 
         if (in_array($speedMode, ['fast', 'balanced', 'careful'], true)) {
@@ -1133,7 +1133,7 @@ class SettingsPage {
                     if (!is_array($tuningMode)) { $tuningMode = []; }
                     $curHistoryLimit = (int) ($settings['history_context_limit'] ?? 20);
                     $curThoroughness = $this->deriveThoroughness($curHistoryLimit, $tuningMode);
-                    $curSafety = !empty($settings['require_confirmation_destructive']) ? 'strict' : 'standard';
+                    $curSafety = empty($settings['allow_destructive']) ? 'strict' : 'standard';
                     $curMaxIterations = (int) ($settings['max_tool_iterations'] ?? 25);
                     $curSpeed = $this->deriveSpeed($curMaxIterations, $tuningMode);
                     ?>
@@ -1159,14 +1159,14 @@ class SettingsPage {
                     </div>
 
                     <div class="levi-form-group">
-                        <label class="levi-form-label" for="levi_safety_mode"><?php echo esc_html($this->tr('Confirmation before critical actions?', 'Bestaetigung vor kritischen Aktionen?')); ?></label>
+                        <label class="levi-form-label" for="levi_safety_mode"><?php echo esc_html($this->tr('Allow destructive actions?', 'Destruktive Aktionen erlauben?')); ?></label>
                         <select id="levi_safety_mode" name="<?php echo esc_attr($this->optionName); ?>[levi_safety_mode]" class="levi-form-select">
-                            <option value="strict" <?php selected($curSafety, 'strict'); ?>><?php echo esc_html($this->tr('Yes — Levi asks before deleting or changing', 'Ja — Levi fragt vor dem Loeschen oder Aendern')); ?></option>
-                            <option value="standard" <?php selected($curSafety, 'standard'); ?>><?php echo esc_html($this->tr('No — Levi executes directly', 'Nein — Levi fuehrt direkt aus')); ?></option>
+                            <option value="strict" <?php selected($curSafety, 'strict'); ?>><?php echo esc_html($this->tr('No — Levi cannot delete or remove anything (safer)', 'Nein — Levi darf nichts loeschen oder entfernen (sicherer)')); ?></option>
+                            <option value="standard" <?php selected($curSafety, 'standard'); ?>><?php echo esc_html($this->tr('Yes — Levi may delete posts, users, etc.', 'Ja — Levi darf Beitraege, Benutzer usw. loeschen')); ?></option>
                         </select>
                         <p class="levi-form-help"><?php echo esc_html($this->tr(
-                            'When active, Levi asks for your confirmation before destructive actions (deleting, theme switch, plugin install).',
-                            'Wenn aktiv, fragt Levi bei destruktiven Aktionen (Loeschen, Theme-Wechsel, Plugin-Installation) erst nach deiner Bestaetigung.'
+                            'When disabled, Levi will refuse destructive actions like deleting posts or managing users. He will inform you that this setting needs to be changed.',
+                            'Wenn deaktiviert, verweigert Levi destruktive Aktionen wie Beitraege loeschen oder Benutzer verwalten. Er weist dich darauf hin, dass diese Einstellung geaendert werden muss.'
                         )); ?></p>
                     </div>
 
@@ -1603,10 +1603,10 @@ class SettingsPage {
             'history_context_limit' => 20,
             'tool_profile' => 'standard',
             'allowed_plugin_slugs_manual' => '',
-            'require_confirmation_destructive' => 1,
+            'allow_destructive' => 0,
             'memory_identity_k' => 5,
-            'memory_reference_k' => 5,
-            'memory_min_similarity' => 0.6,
+            'memory_reference_k' => 8,
+            'memory_min_similarity' => 0.5,
             'pii_redaction' => 1,
             'blocked_post_types' => '',
             'web_search_enabled' => 0,
@@ -1622,6 +1622,11 @@ class SettingsPage {
         }
         if (!is_array($settings)) {
             $settings = [];
+        }
+
+        // Migrate old setting key (inverted logic: old 1=confirm → new 0=not allowed)
+        if (isset($settings['require_confirmation_destructive']) && !isset($settings['allow_destructive'])) {
+            $settings['allow_destructive'] = empty($settings['require_confirmation_destructive']) ? 1 : 0;
         }
 
         return array_merge($this->getDefaults(), $settings);

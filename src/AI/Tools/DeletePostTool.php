@@ -9,7 +9,10 @@ class DeletePostTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Delete a WordPress post or move to trash. Use with caution.';
+        return 'Delete a WordPress post, page, or custom post type entry by ID. '
+            . 'By default moves to trash (recoverable); set force=true to permanently delete. '
+            . 'Works for any post type including WooCommerce products and custom types. '
+            . 'Returns the deleted post data on success.';
     }
 
     public function getParameters(): array {

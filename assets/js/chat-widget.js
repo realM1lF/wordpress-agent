@@ -41,6 +41,67 @@
         const webSearchBtn = document.getElementById('levi-chat-web-search-btn');
         let titleInterval = null;
         let titleOriginal = null;
+        const widget = document.getElementById('levi-chat-widget');
+
+        function parseRgb(str) {
+            if (!str || str === 'transparent' || str === 'rgba(0, 0, 0, 0)') return null;
+            const m = str.match(/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/);
+            if (!m) return null;
+            const a = m[4] !== undefined ? parseFloat(m[4]) : 1;
+            if (a < 0.1) return null;
+            return { r: parseFloat(m[1]) / 255, g: parseFloat(m[2]) / 255, b: parseFloat(m[3]) / 255 };
+        }
+
+        function srgbLuminance(c) {
+            const lin = v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+            return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+        }
+
+        function detectBackgroundBrightness() {
+            if (!widget || !window_) return;
+            const prevVis = window_.style.visibility;
+            const prevToggleVis = toggle.style.visibility;
+            window_.style.visibility = 'hidden';
+            toggle.style.visibility = 'hidden';
+
+            const rect = window_.getBoundingClientRect();
+            const cols = 5, rows = 7;
+            let darkCount = 0, total = 0;
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const x = rect.left + (rect.width * (c + 0.5)) / cols;
+                    const y = rect.top + (rect.height * (r + 0.5)) / rows;
+                    const el = document.elementFromPoint(x, y);
+                    if (!el) { total++; continue; }
+
+                    let rgb = null;
+                    let node = el;
+                    while (node && node !== document.documentElement) {
+                        rgb = parseRgb(getComputedStyle(node).backgroundColor);
+                        if (rgb) break;
+                        node = node.parentElement;
+                    }
+
+                    total++;
+                    if (rgb && srgbLuminance(rgb) < 0.4) darkCount++;
+                }
+            }
+
+            window_.style.visibility = prevVis || '';
+            toggle.style.visibility = prevToggleVis || '';
+
+            const darkRatio = total > 0 ? darkCount / total : 0;
+            const isDark = darkRatio >= 0.85;
+            widget.classList.toggle('levi-chat-light', !isDark);
+        }
+
+        let resizeTimer = null;
+        window.addEventListener('resize', function() {
+            if (window_.style.display === 'none') return;
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(detectBackgroundBrightness, 500);
+        });
 
         function startTitleWorking() {
             if (titleInterval) return;
@@ -83,6 +144,7 @@
             window_.style.display = isOpen ? 'flex' : 'none';
             localStorage.setItem(openKey, isOpen ? '1' : '0');
             if (isOpen) {
+                requestAnimationFrame(detectBackgroundBrightness);
                 input.focus();
             }
         }
@@ -103,6 +165,9 @@
             }
             if (expand) {
                 expand.title = enabled ? 'Standardgröße' : 'Full Width';
+            }
+            if (window_.style.display !== 'none') {
+                requestAnimationFrame(detectBackgroundBrightness);
             }
         }
 
@@ -176,6 +241,13 @@
             });
         }
 
+        // Auto-resize textarea as content grows (up to max-height)
+        function autoResizeInput() {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+        }
+        input.addEventListener('input', autoResizeInput);
+
         // Send message on Enter (Shift+Enter for new line)
         input.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -200,6 +272,7 @@
             if (!text) return;
 
             const messageAttachments = uploadedFiles.length > 0 ? [...uploadedFiles] : null;
+            const msgUsedWebSearch = webSearchActive;
 
             // If editing, remove the old user message and its assistant reply from DOM
             const isEdit = editingMessageEl !== null;
@@ -213,8 +286,9 @@
             }
 
             currentAbortController = new AbortController();
-            addMessage(text, 'user', messageAttachments);
+            addMessage(text, 'user', messageAttachments, undefined, undefined, msgUsedWebSearch);
             input.value = '';
+            input.style.height = 'auto';
 
             // Clear attachments from input area (consumed by this message)
             if (messageAttachments) {
@@ -318,7 +392,9 @@
                     return false;
 
                 case 'progress':
-                    if (data.message) {
+                    if (data.phase && typing.addToolCard) {
+                        typing.addToolCard(data);
+                    } else if (data.message) {
                         typing.setLabel(data.message);
                     }
                     return false;
@@ -334,7 +410,7 @@
                     return false;
 
                 case 'stream_end':
-                    typing.clearStream();
+                    typing.clearStream(data.preserve === true);
                     return false;
 
                 case 'heartbeat':
@@ -342,6 +418,7 @@
 
                 case 'done':
                     clearPhaseTimers(phaseTimers);
+                    var persisted = typing.getPersistedContent ? typing.getPersistedContent() : '';
                     typing.complete();
                     setSendingState(false);
                     notifyIfHidden('✅ Levi ist fertig!');
@@ -351,10 +428,21 @@
                         localStorage.setItem(sessionKey, sessionId);
                     }
 
-                    const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
-                    addMessage(cleanedMessage, 'assistant', undefined, undefined, data.usage);
-                    if (data.pending_confirmation) {
-                        appendConfirmationCard(data.pending_confirmation);
+                    var serverMsg = data.message || '';
+                    var isFallback = serverMsg.indexOf('konnte keinen sauberen') !== -1
+                        || serverMsg.indexOf('nicht ganz fertig') !== -1;
+                    var finalMsg = (isFallback && persisted) ? persisted : serverMsg;
+
+                    var isDuplicate = typing.isPersistedDuplicate
+                        && typing.isPersistedDuplicate(finalMsg);
+                    if (!isDuplicate) {
+                        var cleanedMessage = sanitizeAssistantMessage(finalMsg || 'Keine Antwort erhalten');
+                        addMessage(cleanedMessage, 'assistant', undefined, undefined, data.usage);
+                    } else if (data.usage) {
+                        var lastMsg = messages.querySelector('.levi-message-assistant:last-of-type .levi-message-main');
+                        if (lastMsg && !lastMsg.querySelector('.levi-usage-badge')) {
+                            lastMsg.insertAdjacentHTML('beforeend', formatUsageBadge(data.usage));
+                        }
                     }
                     clearSessionFilesQuietly();
                     return true;
@@ -425,9 +513,6 @@
 
                 const cleanedMessage = sanitizeAssistantMessage(data.message || 'Keine Antwort erhalten');
                 addMessage(cleanedMessage, 'assistant', undefined, undefined, data.usage);
-                if (data.pending_confirmation) {
-                    appendConfirmationCard(data.pending_confirmation);
-                }
                 clearSessionFilesQuietly();
             })
             .catch(error => {
@@ -774,28 +859,37 @@
                 + parts.join(' · ') + '</span>';
         }
 
-        function addMessage(text, role, attachments, timestamp, usage) {
+        function addMessage(text, role, attachments, timestamp, usage, webSearch) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'levi-message levi-message-' + role;
 
             let inner = '';
-            if (role === 'user' && attachments && attachments.length > 0) {
-                inner += '<div class="levi-message-attachments">';
-                attachments.forEach(function(f) {
-                    const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
-                    const fileType = (f && f.type) ? String(f.type) : '';
-                    const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
-                    const preview = (f && f.preview) ? escapeHtml(f.preview) : '';
-                    let thumb;
-                    if (isImage && preview) {
-                        thumb = '<img src="' + preview + '" class="levi-msg-file-thumb" alt="">';
-                    } else {
-                        const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
-                        thumb = '<span class="dashicons ' + icon + '"></span>';
+            if (role === 'user') {
+                var hasBadges = (attachments && attachments.length > 0) || webSearch;
+                if (hasBadges) {
+                    inner += '<div class="levi-message-attachments">';
+                    if (webSearch) {
+                        inner += '<span class="levi-msg-file levi-msg-web-search">'
+                            + '<span class="dashicons dashicons-search"></span>Web-Suche</span>';
                     }
-                    inner += '<span class="levi-msg-file">' + thumb + name + '</span>';
-                });
-                inner += '</div>';
+                    if (attachments && attachments.length > 0) {
+                        attachments.forEach(function(f) {
+                            const name = escapeHtml((f && f.name) ? String(f.name) : 'Datei');
+                            const fileType = (f && f.type) ? String(f.type) : '';
+                            const isImage = /^(jpg|jpeg|png|gif|webp)$/i.test(fileType);
+                            const preview = (f && f.preview) ? escapeHtml(f.preview) : '';
+                            let thumb;
+                            if (isImage && preview) {
+                                thumb = '<img src="' + preview + '" class="levi-msg-file-thumb" alt="">';
+                            } else {
+                                const icon = isImage ? 'dashicons-format-image' : 'dashicons-media-text';
+                                thumb = '<span class="dashicons ' + icon + '"></span>';
+                            }
+                            inner += '<span class="levi-msg-file">' + thumb + name + '</span>';
+                        });
+                    }
+                    inner += '</div>';
+                }
             }
             inner += renderMessageContent(text, role);
 
@@ -824,110 +918,6 @@
             }
 
             messages.appendChild(messageDiv);
-            messages.scrollTop = messages.scrollHeight;
-        }
-
-        function appendConfirmationCard(pending) {
-            if (!pending || !pending.action_id) return;
-
-            var card = document.createElement('div');
-            card.className = 'levi-confirmation-card';
-            card.setAttribute('data-action-id', pending.action_id);
-
-            var label = document.createElement('div');
-            label.className = 'levi-confirmation-label';
-            label.textContent = 'Levi möchte: ' + (pending.description || pending.tool || 'Aktion ausführen');
-            card.appendChild(label);
-
-            var btnRow = document.createElement('div');
-            btnRow.className = 'levi-confirmation-buttons';
-
-            var confirmBtn = document.createElement('button');
-            confirmBtn.type = 'button';
-            confirmBtn.className = 'levi-confirm-btn levi-confirm-btn-primary';
-            confirmBtn.textContent = 'Bestätigen';
-
-            var cancelBtn = document.createElement('button');
-            cancelBtn.type = 'button';
-            cancelBtn.className = 'levi-confirm-btn levi-confirm-btn-secondary';
-            cancelBtn.textContent = 'Abbrechen';
-
-            btnRow.appendChild(confirmBtn);
-            btnRow.appendChild(cancelBtn);
-            card.appendChild(btnRow);
-
-            confirmBtn.addEventListener('click', async function() {
-                confirmBtn.disabled = true;
-                cancelBtn.disabled = true;
-                confirmBtn.textContent = 'Wird ausgeführt...';
-                card.classList.add('levi-confirmation-loading');
-
-                var typing = addTypingIndicator();
-                typing.setLabel('Levi führt bestätigte Aktion aus...');
-                setSendingState(true);
-
-                try {
-                    var resp = await fetch(leviAgent.restUrl + 'chat/confirm-action', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-WP-Nonce': leviAgent.nonce,
-                        },
-                        body: JSON.stringify({ action_id: pending.action_id }),
-                    });
-
-                    if (!resp.ok && !resp.body) {
-                        throw new Error('Server error: ' + resp.status);
-                    }
-
-                    var reader = resp.body.getReader();
-                    var decoder = new TextDecoder();
-                    var buffer = '';
-                    var finalHandled = false;
-                    var phaseTimers = {};
-
-                    while (true) {
-                        var chunk = await reader.read();
-                        if (chunk.done) break;
-
-                        buffer += decoder.decode(chunk.value, { stream: true });
-
-                        while (buffer.includes('\n\n')) {
-                            var eventEnd = buffer.indexOf('\n\n');
-                            var eventStr = buffer.substring(0, eventEnd);
-                            buffer = buffer.substring(eventEnd + 2);
-
-                            var lines = eventStr.split('\n');
-                            for (var li = 0; li < lines.length; li++) {
-                                if (!lines[li].startsWith('data: ')) continue;
-                                try {
-                                    var data = JSON.parse(lines[li].substring(6));
-                                    finalHandled = handleSSEEvent(data, typing, phaseTimers) || finalHandled;
-                                } catch (e) {
-                                    console.warn('SSE parse error:', e, lines[li]);
-                                }
-                            }
-                        }
-                    }
-
-                    card.remove();
-                    if (!finalHandled) {
-                        typing.complete();
-                        setSendingState(false);
-                    }
-                } catch (err) {
-                    typing.remove();
-                    card.remove();
-                    setSendingState(false);
-                    addMessage('❌ Bestätigung fehlgeschlagen: ' + err.message, 'assistant');
-                }
-            });
-
-            cancelBtn.addEventListener('click', function() {
-                card.remove();
-            });
-
-            messages.appendChild(card);
             messages.scrollTop = messages.scrollHeight;
         }
 
@@ -986,10 +976,9 @@
             typingDiv.innerHTML =
                 buildAvatarHtml('assistant') +
                 '<div class="levi-message-main"><div class="levi-message-content levi-typing">' +
-                '<div class="levi-typing-row">' +
-                '<span></span><span></span><span></span>' +
-                '<small class="levi-typing-label"></small>' +
-                '</div>' +
+                '<div class="levi-typing-dots"><span></span><span></span><span></span></div>' +
+                '<small class="levi-typing-label">Levi verarbeitet die Anfrage...</small>' +
+                '<div class="levi-tool-timeline"></div>' +
                 '<div class="levi-chat-progress-track levi-chat-progress-indeterminate"><div class="levi-chat-progress-shimmer"></div></div>' +
                 '</div></div>';
             messages.appendChild(typingDiv);
@@ -997,23 +986,120 @@
 
             const labelEl = typingDiv.querySelector('.levi-typing-label');
             const contentEl = typingDiv.querySelector('.levi-message-content');
-            const typingRow = typingDiv.querySelector('.levi-typing-row');
+            const dotsEl = typingDiv.querySelector('.levi-typing-dots');
             const progressTrack = typingDiv.querySelector('.levi-chat-progress-track');
+            const timelineEl = typingDiv.querySelector('.levi-tool-timeline');
             let streamEl = null;
             let isStreaming = false;
             let streamBuffer = '';
+            let activeCardEl = null;
+            let dotsHidden = false;
+
+            const hideDots = () => {
+                if (!dotsHidden && dotsEl) {
+                    dotsEl.style.display = 'none';
+                    dotsHidden = true;
+                }
+            };
 
             const setLabel = (label) => {
                 if (labelEl) {
                     labelEl.textContent = label;
+                    messages.scrollTop = messages.scrollHeight;
+                }
+            };
+
+            const addToolCard = (data) => {
+                if (!timelineEl) return;
+                const phase = data.phase || '';
+                const tool = data.tool || '';
+                const ctx = data.context || '';
+                const label = data.message || tool;
+                const resultSummary = data.result_summary || '';
+                const durationMs = (typeof data.duration_ms === 'number' && data.duration_ms > 0) ? data.duration_ms : null;
+                const success = data.success !== false;
+
+                hideDots();
+
+                if (phase === 'start' || phase === 'preview') {
+                    var existingCard = (phase === 'start' && tool)
+                        ? timelineEl.querySelector('.levi-tool-card-running[data-tool="' + tool + '"]')
+                        : null;
+                    if (existingCard) {
+                        activeCardEl = existingCard;
+                        if (ctx) {
+                            var lbl = existingCard.querySelector('.levi-tool-label');
+                            if (lbl) lbl.textContent = ctx || label;
+                        }
+                    } else {
+                        const card = document.createElement('div');
+                        card.className = 'levi-tool-card levi-tool-card-running';
+                        card.setAttribute('data-tool', tool);
+                        card.innerHTML =
+                            '<span class="levi-tool-icon levi-tool-running"><span class="levi-tool-spinner"></span></span>' +
+                            '<span class="levi-tool-label">' + escapeHtml(ctx || label) + '</span>' +
+                            '<span class="levi-tool-result"></span>' +
+                            '<span class="levi-tool-duration"></span>';
+                        timelineEl.appendChild(card);
+                        activeCardEl = card;
+                    }
+                    setLabel(label);
+                    messages.scrollTop = messages.scrollHeight;
+                } else if (phase === 'done' || phase === 'failed') {
+                    var targetCard = activeCardEl;
+                    if (!targetCard) {
+                        var cards = timelineEl.querySelectorAll('.levi-tool-card-running');
+                        targetCard = cards.length > 0 ? cards[cards.length - 1] : null;
+                    }
+                    if (targetCard) {
+                        targetCard.className = 'levi-tool-card ' + (success ? 'levi-tool-card-done' : 'levi-tool-card-failed');
+                        var iconEl = targetCard.querySelector('.levi-tool-icon');
+                        if (iconEl) {
+                            iconEl.className = 'levi-tool-icon ' + (success ? 'levi-tool-done' : 'levi-tool-failed');
+                            iconEl.innerHTML = success ? '&#10003;' : '&#10007;';
+                        }
+                        if (resultSummary) {
+                            var resEl = targetCard.querySelector('.levi-tool-result');
+                            if (resEl) resEl.textContent = resultSummary;
+                        }
+                        if (durationMs) {
+                            var durEl = targetCard.querySelector('.levi-tool-duration');
+                            if (durEl) durEl.textContent = durationMs < 1000
+                                ? durationMs + 'ms'
+                                : (durationMs / 1000).toFixed(1) + 's';
+                        }
+                        activeCardEl = null;
+                    } else {
+                        var card = document.createElement('div');
+                        card.className = 'levi-tool-card ' + (success ? 'levi-tool-card-done' : 'levi-tool-card-failed');
+                        card.setAttribute('data-tool', tool);
+                        var iconHtml = success ? '&#10003;' : '&#10007;';
+                        var iconClass = success ? 'levi-tool-done' : 'levi-tool-failed';
+                        var durText = '';
+                        if (durationMs) {
+                            durText = durationMs < 1000 ? durationMs + 'ms' : (durationMs / 1000).toFixed(1) + 's';
+                        }
+                        card.innerHTML =
+                            '<span class="levi-tool-icon ' + iconClass + '">' + iconHtml + '</span>' +
+                            '<span class="levi-tool-label">' + escapeHtml(ctx || label) + '</span>' +
+                            '<span class="levi-tool-result">' + escapeHtml(resultSummary) + '</span>' +
+                            '<span class="levi-tool-duration">' + durText + '</span>';
+                        timelineEl.appendChild(card);
+                    }
+                    setLabel(label);
+                    messages.scrollTop = messages.scrollHeight;
+                } else if (phase === 'thinking') {
+                    setLabel(data.message || 'Levi denkt nach...');
                 }
             };
 
             const appendDelta = (text) => {
                 if (!isStreaming) {
                     isStreaming = true;
-                    if (typingRow) typingRow.style.display = 'none';
+                    hideDots();
+                    if (labelEl) labelEl.style.display = 'none';
                     if (progressTrack) progressTrack.style.display = 'none';
+                    if (timelineEl) timelineEl.style.display = 'none';
                     streamEl = document.createElement('div');
                     streamEl.className = 'levi-stream-content';
                     contentEl.appendChild(streamEl);
@@ -1026,19 +1112,30 @@
                 }
             };
 
-            const clearStream = () => {
+            let persistedTexts = [];
+
+            const clearStream = (preserve) => {
                 if (isStreaming) {
+                    if (preserve && streamBuffer && streamBuffer.trim()) {
+                        persistedTexts.push(streamBuffer.trim());
+                        var msgDiv = document.createElement('div');
+                        msgDiv.className = 'levi-message levi-message-assistant';
+                        msgDiv.innerHTML = buildAvatarHtml('assistant')
+                            + '<div class="levi-message-main"><div class="levi-message-content">'
+                            + renderMessageContent(streamBuffer, 'assistant')
+                            + '</div></div>';
+                        messages.insertBefore(msgDiv, typingDiv);
+                    }
+
                     isStreaming = false;
                     streamBuffer = '';
-                    streamEl = null;
-                    if (typingRow) {
-                        contentEl.appendChild(typingRow);
-                        typingRow.style.display = '';
-                    }
-                    if (progressTrack) {
-                        contentEl.appendChild(progressTrack);
-                        progressTrack.style.display = '';
-                    }
+                    if (streamEl) { streamEl.remove(); streamEl = null; }
+                    contentEl.classList.add('levi-typing');
+                    if (labelEl) labelEl.style.display = '';
+                    if (progressTrack) progressTrack.style.display = '';
+                    if (timelineEl) timelineEl.style.display = '';
+                    setLabel('Levi bereitet naechste Schritte vor...');
+                    messages.scrollTop = messages.scrollHeight;
                 }
             };
 
@@ -1046,8 +1143,20 @@
 
             return {
                 setLabel,
+                addToolCard,
                 appendDelta,
                 clearStream,
+                getPersistedContent: () => persistedTexts.length > 0 ? persistedTexts[persistedTexts.length - 1] : '',
+                isPersistedDuplicate: (text) => {
+                    if (!text || persistedTexts.length === 0) return false;
+                    var trimmed = text.trim();
+                    for (var i = 0; i < persistedTexts.length; i++) {
+                        if (persistedTexts[i] === trimmed) return true;
+                        if (trimmed.length > 50 && persistedTexts[i].length > 50
+                            && trimmed.substring(0, 80) === persistedTexts[i].substring(0, 80)) return true;
+                    }
+                    return false;
+                },
                 complete: () => {
                     typingDiv.classList.add('levi-typing-complete');
                     setTimeout(() => typingDiv.remove(), 200);

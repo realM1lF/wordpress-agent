@@ -13,6 +13,23 @@ class Registry {
         self::PROFILE_FULL,
     ];
 
+    /**
+     * Tools always sent to the model (covers ~80% of common tasks).
+     * Everything else is discoverable via search_tools (deferred loading).
+     */
+    private const CORE_TOOL_NAMES = [
+        'get_posts', 'get_post', 'get_pages', 'get_plugins',
+        'get_options', 'get_users', 'get_media',
+        'create_plugin', 'list_plugin_files', 'read_plugin_file',
+        'write_plugin_file', 'patch_plugin_file', 'grep_plugin_files',
+        'create_post', 'create_page', 'update_post',
+        'read_error_log', 'http_fetch',
+        'check_plugin_health',
+        'search_tools',
+    ];
+
+    private const DEFERRED_LOADING_THRESHOLD = 20;
+
     /** @var ToolInterface[] */
     private array $tools = [];
 
@@ -72,7 +89,7 @@ class Registry {
                 'type' => 'function',
                 'function' => [
                     'name' => $tool->getName(),
-                    'description' => $tool->getDescription(),
+                    'description' => $this->buildDescription($tool),
                     'parameters' => [
                         'type' => 'object',
                         'properties' => $properties,
@@ -104,7 +121,7 @@ class Registry {
             'type' => 'function',
             'function' => [
                 'name' => $tool->getName(),
-                'description' => $tool->getDescription(),
+                'description' => $this->buildDescription($tool),
                 'parameters' => [
                     'type' => 'object',
                     'properties' => $properties,
@@ -115,10 +132,58 @@ class Registry {
     }
 
     /**
-     * Search tools by query (BM25-like scoring on name + description).
+     * Get definitions for core tools + explicitly discovered tools only.
+     * When total tools <= DEFERRED_LOADING_THRESHOLD, returns all (no benefit from deferring).
+     *
+     * @param string[] $discoveredNames Tool names discovered via search_tools
+     */
+    public function getCoreAndDiscoveredDefinitions(array $discoveredNames = []): array {
+        $totalAvailable = count(array_filter($this->tools, fn($t) => $t->checkPermission()));
+        $useDeferred = $totalAvailable > self::DEFERRED_LOADING_THRESHOLD;
+
+        if (!$useDeferred) {
+            return $this->getDefinitions();
+        }
+
+        $allowedNames = array_unique(array_merge(self::CORE_TOOL_NAMES, $discoveredNames));
+        $definitions = [];
+
+        foreach ($this->tools as $tool) {
+            if (!$tool->checkPermission()) {
+                continue;
+            }
+            if (!in_array($tool->getName(), $allowedNames, true)) {
+                continue;
+            }
+
+            $rawParams = $tool->getParameters();
+            $properties = [];
+            foreach ($rawParams as $name => $config) {
+                $properties[$name] = array_intersect_key($config, array_flip(['type', 'description', 'enum', 'items']));
+            }
+
+            $definitions[] = [
+                'type' => 'function',
+                'function' => [
+                    'name' => $tool->getName(),
+                    'description' => $this->buildDescription($tool),
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => $properties,
+                        'required' => $this->getRequiredParameters($rawParams),
+                    ],
+                ],
+            ];
+        }
+
+        return $definitions;
+    }
+
+    /**
+     * Search tools by query (BM25-like scoring on name + description + parameters + examples).
      * Excludes search_tools itself from results.
      *
-     * @return array<array{name: string, description: string, score: float}>
+     * @return array<array{name: string, description: string, parameters_summary: string, score: float}>
      */
     public function searchTools(string $query, int $limit = 5): array {
         $query = mb_strtolower(trim($query));
@@ -137,8 +202,8 @@ class Registry {
                 continue;
             }
 
+            $corpus = $this->getSearchCorpus($tool);
             $name = mb_strtolower($tool->getName());
-            $desc = mb_strtolower($tool->getDescription());
 
             $score = 0.0;
             foreach ($queryWords as $word) {
@@ -148,7 +213,7 @@ class Registry {
                 if (str_contains($name, $word)) {
                     $score += 3.0;
                 }
-                if (str_contains($desc, $word)) {
+                if (str_contains($corpus, $word)) {
                     $score += 1.0;
                 }
             }
@@ -157,6 +222,7 @@ class Registry {
                 $scored[] = [
                     'name' => $tool->getName(),
                     'description' => $tool->getDescription(),
+                    'parameters_summary' => $this->getParameterSummary($tool),
                     'score' => $score,
                 ];
             }
@@ -164,6 +230,49 @@ class Registry {
 
         usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
         return array_slice($scored, 0, $limit);
+    }
+
+    /**
+     * Build a rich search corpus for BM25 matching.
+     * Includes name, description, parameter names/descriptions/enums, and input examples.
+     */
+    private function getSearchCorpus(ToolInterface $tool): string {
+        $parts = [
+            $tool->getName(),
+            $tool->getDescription(),
+        ];
+
+        foreach ($tool->getParameters() as $name => $config) {
+            $parts[] = $name;
+            if (!empty($config['description'])) {
+                $parts[] = $config['description'];
+            }
+            if (!empty($config['enum']) && is_array($config['enum'])) {
+                $parts[] = implode(' ', $config['enum']);
+            }
+        }
+
+        if (method_exists($tool, 'getInputExamples')) {
+            foreach ($tool->getInputExamples() as $example) {
+                $parts[] = json_encode($example, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
+        }
+
+        return mb_strtolower(implode(' ', $parts));
+    }
+
+    /**
+     * Compact parameter summary for search results (e.g. "action* (string), product_id (integer)").
+     */
+    private function getParameterSummary(ToolInterface $tool): string {
+        $params = $tool->getParameters();
+        $parts = [];
+        foreach ($params as $name => $config) {
+            $req = ($config['required'] ?? false) ? '*' : '';
+            $type = $config['type'] ?? 'string';
+            $parts[] = "{$name}{$req} ({$type})";
+        }
+        return implode(', ', $parts);
     }
 
     /**
@@ -217,6 +326,8 @@ class Registry {
             new ListThemeFilesTool(),
             new ReadThemeFileTool(),
             new ReadErrorLogTool(),
+            new GrepPluginFilesTool(),
+            new CheckPluginHealthTool(),
         ];
 
         $commonWriteTools = [
@@ -249,7 +360,11 @@ class Registry {
             new SwitchThemeTool(),
             new CreateThemeTool(),
             new WriteThemeFileTool(),
+            new PatchThemeFileTool(),
+            new GrepThemeFilesTool(),
             new DeleteThemeFileTool(),
+            new RevertFileTool(),
+            new RenameInPluginTool(),
             new StoreSessionImageTool(),
         ];
 
@@ -291,6 +406,30 @@ class Registry {
                 'description' => 'Alle Tools (~44) inkl. User-Management, Cron, WooCommerce, Elementor, PHP-Ausfuehrung.',
             ],
         ];
+    }
+
+    /**
+     * Build the full description, appending input_examples when available.
+     * Works with any LLM provider (OpenAI, Anthropic via OpenRouter, etc.).
+     */
+    private function buildDescription(ToolInterface $tool): string {
+        $description = $tool->getDescription();
+
+        if (!method_exists($tool, 'getInputExamples')) {
+            return $description;
+        }
+
+        $examples = $tool->getInputExamples();
+        if (empty($examples)) {
+            return $description;
+        }
+
+        $lines = [];
+        foreach ($examples as $example) {
+            $lines[] = json_encode($example, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+
+        return $description . "\n\nExample inputs:\n" . implode("\n", $lines);
     }
 
     /**

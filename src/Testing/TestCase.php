@@ -9,8 +9,6 @@ abstract class TestCase {
     protected string $sessionId;
     protected TestResult $result;
     protected bool $verbose;
-    private int $confirmationCount = 0;
-    private const MAX_CONFIRMATIONS = 8;
 
     abstract public function name(): string;
     abstract public function description(): string;
@@ -44,11 +42,9 @@ abstract class TestCase {
             $this->log('info', ['message' => 'Setup complete']);
 
             $response = $this->sendMessage($this->message());
-            $response = $this->processConfirmationLoop($response);
 
             foreach ($this->followUpMessages() as $msg) {
                 $response = $this->sendMessage($msg);
-                $response = $this->processConfirmationLoop($response);
             }
 
             $this->validate();
@@ -88,7 +84,6 @@ abstract class TestCase {
             'status' => $status,
             'message' => mb_substr($data['message'] ?? $data['error'] ?? '', 0, 500),
             'tools_used' => $data['tools_used'] ?? [],
-            'has_confirmation' => isset($data['pending_confirmation']),
         ]);
 
         if ($status >= 400) {
@@ -96,55 +91,6 @@ abstract class TestCase {
         }
 
         return $data;
-    }
-
-    protected function confirmAction(string $actionId): array {
-        $this->confirmationCount++;
-        $this->log('confirm', ['action_id' => $actionId, 'count' => $this->confirmationCount]);
-
-        $request = new WP_REST_Request('POST', '/levi-agent/v1/chat/confirm-action-sync');
-        $request->set_param('action_id', $actionId);
-
-        $controller = $this->getController();
-        $response = $controller->confirmActionNonStreaming($request);
-        $data = $response->get_data();
-        $status = $response->get_status();
-
-        $this->log('confirm_response', [
-            'status' => $status,
-            'message' => mb_substr($data['message'] ?? $data['error'] ?? '', 0, 500),
-            'tools_used' => $data['tools_used'] ?? [],
-            'tool_executed' => $data['tool_executed'] ?? null,
-            'has_confirmation' => isset($data['pending_confirmation']),
-        ]);
-
-        if ($status >= 400) {
-            throw new \RuntimeException('Confirm error (' . $status . '): ' . ($data['error'] ?? 'unknown'));
-        }
-
-        return $data;
-    }
-
-    private function processConfirmationLoop(array $response): array {
-        while (isset($response['pending_confirmation']) && $this->confirmationCount < self::MAX_CONFIRMATIONS) {
-            $actionId = $response['pending_confirmation']['action_id'];
-            $tool = $response['pending_confirmation']['tool'] ?? '?';
-            $desc = $response['pending_confirmation']['description'] ?? '';
-
-            $this->log('info', [
-                'message' => "Auto-confirming: {$tool} – {$desc}",
-            ]);
-
-            $response = $this->confirmAction($actionId);
-        }
-
-        if (isset($response['pending_confirmation'])) {
-            throw new \RuntimeException(
-                'Max confirmations (' . self::MAX_CONFIRMATIONS . ') reached, test cannot proceed.'
-            );
-        }
-
-        return $response;
     }
 
     // ── Assertions ───────────────────────────────────────────────────

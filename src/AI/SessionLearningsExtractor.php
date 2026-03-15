@@ -10,20 +10,32 @@ class SessionLearningsExtractor {
     private const EXTRACT_PROMPT = <<<'PROMPT'
 Analysiere diesen Chat-Verlauf zwischen einem WordPress-Admin und seinem KI-Assistenten "Levi".
 
-Extrahiere zeitlose Learnings für zukünftige Sessions.
+Extrahiere konkrete, spezifische Learnings für zukünftige Sessions.
+
+GUTE Learnings (KONKRET — so sollen sie aussehen):
+- "User bevorzugt Kadence-Theme CSS-Variablen statt eigener Farbwerte"
+- "Bei REST-API-Endpunkten: Admin-Klassen sind im Frontend-Kontext nicht verfügbar — get_option() direkt nutzen"
+- "Option-Keys zwischen Admin-Settings und Frontend-Code müssen identisch sein — Mismatch war Fehlerursache"
+- "User will bei Plugin-Erstellung immer erst einen kurzen Plan sehen"
+
+SCHLECHTE Learnings (VAGE — diese NICHT extrahieren):
+- "Features müssen funktionieren und testbar sein"
+- "Code muss korrekt gerendert werden"
+- "Fehler sofort beheben"
+- "Vollständige Implementierungen liefern"
 
 EXTRAHIEREN:
-- Präferenzen des Users (explizit geäußert ODER erkennbar aus seinem Verhalten/Korrekturen)
-- Design-Entscheidungen die der User getroffen oder bestätigt hat
-- Korrekturen: wenn der User den Assistenten korrigiert, ist das eine Regel für die Zukunft
-- Wiederkehrende Muster: wenn der User mehrfach ähnlich handelt, ist das eine Präferenz
+- User-Präferenzen (Design, Kommunikation, Workflows)
+- Konkrete technische Fehler: Was war falsch → was ist richtig? (mit Detail)
+- Site-spezifische Fakten (Naming-Konventionen, bevorzugte Patterns)
+- Korrekturen des Users als Regel für die Zukunft
 
 NICHT EXTRAHIEREN:
-- Smalltalk, Höflichkeitsfloskeln, allgemeine Fragen ohne Handlungsrelevanz
-- Wissen das nur vom Assistenten kam und vom User nicht aufgegriffen wurde
-- Einmalige erledigte Aktionen
-- Aktueller Systemzustand (Plugins, Themes, Umgebung — kann sich ändern)
-- Allgemeines WordPress/PHP/Coding-Wissen das jeder Entwickler kennt
+- Smalltalk, Höflichkeiten
+- Einmalige erledigte Aktionen ("hat Post X erstellt")
+- Aktueller Systemzustand (Plugins, Themes — kann sich ändern)
+- Selbstverständlichkeiten die jeder Entwickler weiß
+- Vage Meta-Aussagen ("sorgfältig arbeiten", "Fehler vermeiden", "vollständig implementieren")
 
 Wenn der Chat keine verwertbaren Learnings enthält: antworte mit []
 

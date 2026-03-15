@@ -9,7 +9,10 @@ class ManageUserTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Create or update WordPress users.';
+        return 'Create or update WordPress users with role assignment. '
+            . 'Actions: create (new user with username, email, password, role) and update (change role, email, display name, or password). '
+            . 'Supported roles: administrator, editor, author, contributor, subscriber. '
+            . 'Cannot delete users — only creation and updates are supported.';
     }
 
     public function getParameters(): array {

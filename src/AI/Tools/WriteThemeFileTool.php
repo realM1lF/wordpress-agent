@@ -3,17 +3,26 @@
 namespace Levi\Agent\AI\Tools;
 
 use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
+use Levi\Agent\AI\Tools\Concerns\ValidatesSyntax;
+use Levi\Agent\AI\Tools\Concerns\ResolvesThemePaths;
+use Levi\Agent\AI\Tools\Concerns\TracksFileHistory;
 
-class WriteThemeFileTool implements ToolInterface {
+class WriteThemeFileTool extends AbstractTool {
 
     use SanitizesHtmlOutput;
+    use ValidatesSyntax;
+    use ResolvesThemePaths;
+    use TracksFileHistory;
 
     public function getName(): string {
         return 'write_theme_file';
     }
 
     public function getDescription(): string {
-        return 'Write or overwrite a file inside a theme directory. Useful for creating theme PHP, JS, CSS, and template files.';
+        return 'Create a NEW file inside a theme directory. '
+            . 'If the file already exists, this tool REJECTS the write — use patch_theme_file to edit existing files. '
+            . 'Set overwrite=true only for complete rewrites where more than 50% of the file changes. '
+            . 'The theme header in style.css is automatically preserved.';
     }
 
     public function getParameters(): array {
@@ -30,13 +39,26 @@ class WriteThemeFileTool implements ToolInterface {
             ],
             'content' => [
                 'type' => 'string',
-                'description' => 'Full file content to write',
+                'description' => 'File content to write. For style.css, the existing theme header is preserved automatically.',
                 'required' => true,
             ],
             'create_dirs' => [
                 'type' => 'boolean',
                 'description' => 'Create missing directories automatically',
                 'default' => true,
+            ],
+            'preserve_header' => [
+                'type' => 'boolean',
+                'description' => 'Keep the existing theme header when writing style.css. Only set false to update theme metadata.',
+                'default' => true,
+            ],
+            'overwrite' => [
+                'type' => 'boolean',
+                'description' => 'DANGER: Set to true to overwrite an existing file completely. '
+                    . 'Only use when rewriting MORE than 50% of the file. '
+                    . 'You MUST read the entire file first and include ALL existing code you want to keep. '
+                    . 'For normal edits, use patch_theme_file instead.',
+                'default' => false,
             ],
         ];
     }
@@ -50,110 +72,126 @@ class WriteThemeFileTool implements ToolInterface {
         $relativePath = ltrim((string) ($params['relative_path'] ?? ''), '/');
         $content = (string) ($params['content'] ?? '');
         $createDirs = (bool) ($params['create_dirs'] ?? true);
+        $preserveHeader = (bool) ($params['preserve_header'] ?? true);
 
         if ($slug === '' || $relativePath === '') {
-            return [
-                'success' => false,
-                'error' => 'theme_slug and relative_path are required.',
-            ];
+            return ['success' => false, 'error' => 'theme_slug and relative_path are required.'];
         }
 
-        // Prevent path traversal
-        if (str_contains($relativePath, '..')) {
-            return [
-                'success' => false,
-                'error' => 'Path traversal is not allowed.',
-            ];
+        $resolved = $this->resolveThemeRoot($slug);
+        if (isset($resolved['error'])) {
+            return ['success' => false] + $resolved;
         }
+        $themeRoot = $resolved['root'];
+        $slug = $resolved['slug'];
 
-        $themeRoot = trailingslashit(get_theme_root()) . $slug;
-        if (!is_dir($themeRoot)) {
-            $resolved = $this->resolveThemeDirectory($slug);
-            if ($resolved !== null) {
-                $themeRoot = $resolved;
-                $slug = basename($resolved);
-            } else {
-                return [
-                    'success' => false,
-                    'error' => 'Theme directory does not exist. Create theme first.',
-                    'suggestion' => 'Use get_themes to list installed themes and find the correct theme_slug.',
-                ];
-            }
+        $pathCheck = $this->validateThemeFilePath($themeRoot, $relativePath);
+        if (isset($pathCheck['error'])) {
+            return ['success' => false, 'error' => $pathCheck['error']];
         }
-
-        $targetPath = $themeRoot . '/' . $relativePath;
-        $targetDir = dirname($targetPath);
+        $targetPath = $pathCheck['target_path'];
+        $targetDir = $pathCheck['target_dir'];
 
         if (!is_dir($targetDir)) {
             if (!$createDirs || !wp_mkdir_p($targetDir)) {
-                return [
-                    'success' => false,
-                    'error' => 'Target directory does not exist and could not be created.',
-                ];
+                return ['success' => false, 'error' => 'Target directory does not exist and could not be created.'];
             }
         }
 
-        $themeRootReal = realpath($themeRoot);
         $targetDirReal = realpath($targetDir);
-        if ($themeRootReal === false || $targetDirReal === false || !str_starts_with($targetDirReal, $themeRootReal)) {
-            return [
-                'success' => false,
-                'error' => 'Resolved path is outside theme directory.',
-            ];
+        $themeRootReal = realpath($themeRoot);
+        if ($targetDirReal === false || $themeRootReal === false || !str_starts_with($targetDirReal, $themeRootReal)) {
+            return ['success' => false, 'error' => 'Resolved path is outside theme directory.'];
         }
 
         [$content, $strippedCount] = $this->stripCodeTagsFromOutput($content, $relativePath);
 
         $filesystem = $this->getFilesystem();
         if ($filesystem === null) {
-            return [
-                'success' => false,
-                'error' => 'WordPress filesystem is not available.',
-            ];
+            return ['success' => false, 'error' => 'WordPress filesystem is not available.'];
         }
+
         $hadExistingFile = $filesystem->exists($targetPath);
         $previousContent = null;
         if ($hadExistingFile) {
             $previousContent = $filesystem->get_contents($targetPath);
             if (!is_string($previousContent)) {
-                return [
-                    'success' => false,
-                    'error' => 'Could not read existing file content for safety backup.',
-                ];
+                return ['success' => false, 'error' => 'Could not read existing file content for safety backup.'];
             }
         }
-        $written = $filesystem->put_contents($targetPath, $content, FS_CHMOD_FILE);
-        if (!$written) {
+
+        $overwrite = (bool) ($params['overwrite'] ?? false);
+        if ($hadExistingFile && !$overwrite) {
+            $existingLines = substr_count($previousContent, "\n") + 1;
             return [
                 'success' => false,
-                'error' => 'Could not write file content via WordPress filesystem.',
+                'error' => "File already exists ({$existingLines} lines). "
+                    . "Use patch_theme_file for targeted changes to existing files. "
+                    . "write_theme_file is only for creating NEW files.",
+                'suggestion' => 'Read the file with read_theme_file first, then use patch_theme_file '
+                    . 'with {search, replace} pairs to change only the specific parts you need. '
+                    . 'This prevents accidental code loss. '
+                    . 'If you truly need a complete rewrite (>50% change), set overwrite=true.',
+                'existing_lines' => $existingLines,
             ];
         }
+
+        // --- Header protection for style.css ---
+        $headerProtected = false;
+        if ($this->isThemeStylesheet($relativePath) && $preserveHeader && is_string($previousContent)) {
+            $merged = $this->applyStylesheetHeaderProtection($previousContent, $content);
+            if ($merged !== null) {
+                $content = $merged;
+                $headerProtected = true;
+            }
+        }
+
+        $written = $filesystem->put_contents($targetPath, $content, FS_CHMOD_FILE);
+        if (!$written) {
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
+            return ['success' => false, 'error' => 'Could not write file content via WordPress filesystem.'];
+        }
+
         $lint = $this->validatePhpSyntax($targetPath);
         if (($lint['valid'] ?? false) !== true) {
-            if ($hadExistingFile && is_string($previousContent)) {
-                $filesystem->put_contents($targetPath, $previousContent, FS_CHMOD_FILE);
-            } else {
-                $filesystem->delete($targetPath, false, 'f');
-            }
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
             return [
                 'success' => false,
                 'error' => 'Write reverted: PHP syntax check failed. ' . ($lint['error'] ?? 'Unknown lint error.'),
+                'suggestion' => 'Common issues: missing semicolons, unclosed brackets, undefined constants. Fix the syntax error and try again.',
             ];
         }
-        $bytes = strlen($content);
+
+        $cssLint = $this->validateCssSyntax($targetPath);
+        if (($cssLint['valid'] ?? true) === false) {
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
+            return [
+                'success' => false,
+                'error' => 'Write reverted: ' . ($cssLint['error'] ?? 'CSS syntax check failed.'),
+            ];
+        }
+
+        if (is_string($previousContent)) {
+            $this->recordFileVersion($targetPath, $previousContent, $this->getName());
+        }
 
         $result = [
             'success' => true,
             'theme_slug' => $slug,
             'relative_path' => $relativePath,
-            'bytes_written' => $bytes,
+            'bytes_written' => strlen($content),
             'message' => 'Theme file written successfully.',
         ];
+
+        $result += $this->buildReadBackData($filesystem, $targetPath);
+
+        if ($headerProtected) {
+            $result['header_protected'] = true;
+            $result['header_notice'] = 'The existing theme header (Theme Name, Version, etc.) in style.css was preserved.';
+        }
         if (!empty($lint['warning'])) {
             $result['warning'] = $lint['warning'];
         }
-
         if ($strippedCount > 0) {
             $result['stripped_tags'] = $strippedCount;
             $result['strip_notice'] = "$strippedCount <code>/<pre>-Tag(s) wurden automatisch entfernt.";
@@ -164,76 +202,64 @@ class WriteThemeFileTool implements ToolInterface {
             $result['code_tag_warning'] = $codeTagCheck;
         }
 
+        if ($hadExistingFile && is_string($previousContent)) {
+            $oldLines = substr_count($previousContent, "\n") + 1;
+            $newLines = substr_count($content, "\n") + 1;
+            $lostLines = $oldLines - $newLines;
+            if ($lostLines > 5 && $lostLines > (int) ($oldLines * 0.1)) {
+                $result['content_loss_warning'] = "[WARNUNG] Die Datei hatte vorher {$oldLines} Zeilen, "
+                    . "jetzt nur noch {$newLines} Zeilen ({$lostLines} Zeilen weniger). "
+                    . "Pruefe ob du versehentlich bestehenden Code entfernt hast. "
+                    . "Falls ja, lies die vorherige Version und stelle den fehlenden Code wieder her.";
+            }
+
+            $diff = $this->buildCompactDiff($previousContent, $content);
+            if ($diff !== null) {
+                $result['diff_summary'] = $diff;
+            }
+        }
+
         return $result;
     }
 
-    private function resolveThemeDirectory(string $requestedSlug): ?string {
-        $themesDir = get_theme_root();
-        if (!is_dir($themesDir)) {
+    // ── style.css Header Protection ──────────────────────────────────────
+
+    /**
+     * Split style.css into its theme header comment and CSS body.
+     *
+     * @return array{header: string, body: string}|null
+     */
+    private function splitStylesheetHeaderAndBody(string $content): ?array {
+        if (!preg_match('/\A(\/\*\n(?:[^\n]*\n)*?\*\/\s*\n)(.*)\z/s', $content, $matches)) {
             return null;
         }
-        $entries = scandir($themesDir);
-        if ($entries === false) {
+
+        if (!str_contains($matches[1], 'Theme Name:')) {
             return null;
         }
-        $normalized = $this->normalizeSlug($requestedSlug);
-        foreach ($entries as $entry) {
-            if ($entry === '.' || $entry === '..' || !is_dir($themesDir . '/' . $entry)) {
-                continue;
-            }
-            if ($entry === $requestedSlug) {
-                continue;
-            }
-            if ($this->normalizeSlug($entry) === $normalized) {
-                return $themesDir . '/' . $entry;
-            }
-        }
-        return null;
+
+        return ['header' => $matches[1], 'body' => $matches[2]];
     }
 
-    private function normalizeSlug(string $slug): string {
-        return strtolower(str_replace(['-', '_'], '', $slug));
-    }
-
-    private function getFilesystem(): ?\WP_Filesystem_Base {
-        if (!function_exists('WP_Filesystem')) {
-            require_once ABSPATH . 'wp-admin/includes/file.php';
-        }
-
-        if (!WP_Filesystem()) {
+    private function applyStylesheetHeaderProtection(string $existingContent, string $newContent): ?string {
+        $existingParts = $this->splitStylesheetHeaderAndBody($existingContent);
+        if ($existingParts === null) {
             return null;
         }
 
-        global $wp_filesystem;
-        if (!($wp_filesystem instanceof \WP_Filesystem_Base)) {
-            return null;
+        $newParts = $this->splitStylesheetHeaderAndBody($newContent);
+        if ($newParts !== null) {
+            return $existingParts['header'] . $newParts['body'];
         }
 
-        return $wp_filesystem;
+        return $existingParts['header'] . $newContent;
     }
 
-    private function validatePhpSyntax(string $path): array {
-        if (strtolower((string) pathinfo($path, PATHINFO_EXTENSION)) !== 'php') {
-            return ['valid' => true];
-        }
-
-        if (!function_exists('exec')) {
-            return [
-                'valid' => true,
-                'warning' => 'PHP lint skipped (exec unavailable).',
-            ];
-        }
-
-        $output = [];
-        $exitCode = 0;
-        @exec('php -l ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
-        if ($exitCode !== 0) {
-            return [
-                'valid' => false,
-                'error' => trim(implode("\n", $output)) ?: 'PHP lint failed.',
-            ];
-        }
-
-        return ['valid' => true];
+    public function getInputExamples(): array
+    {
+        return [
+            ['theme_slug' => 'my-theme', 'relative_path' => 'functions.php', 'content' => "<?php\nadd_action('wp_enqueue_scripts', function() {\n    wp_enqueue_style('custom', get_stylesheet_uri());\n});"],
+            ['theme_slug' => 'my-theme', 'relative_path' => 'parts/header.html', 'content' => '<!-- wp:site-title /-->'],
+        ];
     }
 }

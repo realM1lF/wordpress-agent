@@ -3,6 +3,13 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.7.3] – 2026-03-11
+- **Glass-Optik für den Chat:** Das Chat-Widget nutzt jetzt einen Blur-Effekt (backdrop-filter) und halbtransparente Hintergründe – ähnlich dem Header auf der Levi-Website. Hell/Dunkel wird automatisch anhand des Hintergrunds erkannt.
+- **Status-Label sofort sichtbar:** Der Typing-Indicator zeigt direkt „Levi verarbeitet die Anfrage…“, sobald Levi anfängt – nicht erst, wenn die erste Server-Nachricht eintrifft.
+- **Chat-Eingabe wächst mit:** Die Textarea passt sich automatisch der Textmenge an (bis max. 150px Höhe), ähnlich wie bei Cursor-Chat. Nach dem Absenden wird sie wieder auf eine Zeile zurückgesetzt.
+- **OpenRouter bevorzugt Baseten:** Kimi-Anfragen über OpenRouter nutzen jetzt bevorzugt den Baseten-Provider für stabilere Antwortzeiten.
+- **Keine Tool-Loops mehr:** Levi dreht sich nicht mehr im Kreis. Eine neue Regel („Nicht im Kreis drehen") verbietet, dieselbe Datei mehrfach hintereinander zu lesen – einmal lesen, dann handeln. Wenn `patch_plugin_file` fehlschlägt, soll Levi `write_plugin_file` nutzen statt endlos weiterzulesen. Zusätzlich erkennt das System wiederholte identische Tool-Aufrufe und blockiert sie ab dem dritten Mal mit einem Hinweis, einen anderen Ansatz zu wählen.
+
 ## [0.7.2] – 2026-03-11
 - **Session-Learnings deutlich verbessert:** Levi merkt sich jetzt nur noch zeitlose Regeln und Präferenzen – keine Systemzustände („DDEV aktiv“, „Theme XY“), kein allgemeines WordPress-Wissen und keine Prompt-Beispiele mehr. Nutzt dafür Kimi 2.5 statt eines Billig-Modells. Erfasst sowohl explizite Wünsche als auch implizite Präferenzen aus Korrekturen.
 - **Kein „database is locked“ mehr:** Die SQLite-Vector-DB nutzt jetzt WAL-Mode und einen 5-Sekunden-Busy-Timeout. Learnings-Extraktion und Chat können parallel laufen, ohne sich gegenseitig zu blockieren.

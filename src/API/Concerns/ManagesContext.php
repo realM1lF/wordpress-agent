@@ -226,8 +226,14 @@ trait ManagesContext {
         if ($fillRatio > 0.35 || $iteration >= 3) {
             $effectiveRatio = max($fillRatio, $iteration >= 5 ? 0.60 : 0.0);
             $protectCount = $iteration >= 8 ? 2 : 3;
-            $compacted = $this->trimOlderToolResults($compacted, $protectCount, $effectiveRatio);
+            $compacted = $this->trimOlderToolResults($compacted, $protectCount, $effectiveRatio, $iteration);
         }
+
+        // Strip internal metadata before sending to the API
+        foreach ($compacted as &$msg) {
+            unset($msg['_levi_iteration'], $msg['_levi_tool']);
+        }
+        unset($msg);
 
         return $compacted;
     }
@@ -244,7 +250,7 @@ trait ManagesContext {
      *
      * @param float $fillRatio Current context fill ratio (0.0–1.0)
      */
-    private function trimOlderToolResults(array $messages, int $protectLast = 4, float $fillRatio = 0.0): array {
+    private function trimOlderToolResults(array $messages, int $protectLast = 4, float $fillRatio = 0.0, int $currentIteration = 0): array {
         $toolIndices = [];
         foreach ($messages as $i => $msg) {
             if (($msg['role'] ?? '') === 'tool') {
@@ -284,7 +290,20 @@ trait ManagesContext {
                 }
                 $content = (string) ($msg['content'] ?? '');
                 $len = mb_strlen($content);
-                if ($len > 500) {
+                if ($len <= 500) {
+                    continue;
+                }
+
+                $msgIteration = ($msg['_levi_iteration'] ?? null);
+                if ($msgIteration === null) {
+                    $msgIteration = $currentIteration;
+                }
+                $resultAge = $currentIteration - (int) $msgIteration;
+                $toolName = (string) ($msg['_levi_tool'] ?? $this->extractToolNameFromContext($messages, $i));
+
+                if ($resultAge >= 3 && $toolName !== '') {
+                    $msg['content'] = $this->summarizeOldToolResult($content, $toolName);
+                } else {
                     $head = mb_substr($content, 0, 800);
                     $tail = mb_substr($content, -300);
                     $msg['content'] = $head . "\n...[soft-trimmed, original " . $len . " chars]...\n" . $tail;
@@ -388,6 +407,115 @@ trait ManagesContext {
         }
         // Fallback: first 200 chars as identity (catches truly identical results)
         return md5(mb_substr($content, 0, 200));
+    }
+
+    /**
+     * Create a semantic one-line summary of a tool result for context compression.
+     * Used for tool results older than 3 iterations to drastically reduce token usage
+     * while preserving the essential information the model needs.
+     */
+    private function summarizeOldToolResult(string $content, string $toolName): string {
+        $data = @json_decode($content, true);
+        if (!is_array($data)) {
+            return '[' . $toolName . ': ' . mb_substr($content, 0, 150) . '...]';
+        }
+
+        $success = ($data['success'] ?? false) ? 'Erfolg' : 'Fehler';
+
+        switch ($toolName) {
+            case 'read_plugin_file':
+            case 'read_theme_file':
+                $slug = $data['plugin_slug'] ?? $data['theme_slug'] ?? '?';
+                $path = $data['relative_path'] ?? '?';
+                $lines = $data['meta']['line_count'] ?? $data['total_lines'] ?? '?';
+                $symbols = [];
+                $raw = $data['content'] ?? '';
+                if (is_string($raw) && $raw !== '') {
+                    if (preg_match_all('/\bfunction\s+(\w+)\s*\(/m', $raw, $m)) {
+                        $symbols = array_merge($symbols, array_map(fn($f) => $f . '()', array_slice($m[1], 0, 8)));
+                    }
+                    if (preg_match_all('/\bclass\s+(\w+)/m', $raw, $m)) {
+                        $symbols = array_merge($symbols, array_slice($m[1], 0, 4));
+                    }
+                }
+                $sym = !empty($symbols) ? ', Symbole: ' . implode(', ', $symbols) : '';
+                return "[Gelesen: {$slug}/{$path}, {$lines} Zeilen{$sym}]";
+
+            case 'list_plugin_files':
+            case 'list_theme_files':
+                $slug = $data['plugin_slug'] ?? $data['theme_slug'] ?? '?';
+                $total = $data['total'] ?? count($data['entries'] ?? []);
+                $dirs = [];
+                foreach (($data['entries'] ?? []) as $entry) {
+                    if (($entry['type'] ?? '') === 'dir' && !str_contains(($entry['path'] ?? ''), '/')) {
+                        $dirs[] = $entry['path'] . '/';
+                    }
+                }
+                $dirStr = !empty($dirs) ? ', Verzeichnisse: ' . implode(', ', array_slice($dirs, 0, 6)) : '';
+                return "[Dateiliste: {$slug}, {$total} Dateien{$dirStr}]";
+
+            case 'grep_plugin_files':
+            case 'grep_theme_files':
+                $pattern = $data['pattern'] ?? '?';
+                $totalMatches = $data['total_matches'] ?? 0;
+                $filesMatched = $data['files_matched'] ?? 0;
+                $fileNames = [];
+                foreach (array_slice($data['results'] ?? [], 0, 5) as $r) {
+                    $f = basename($r['file'] ?? '');
+                    if ($f !== '' && !in_array($f, $fileNames, true)) {
+                        $fileNames[] = $f;
+                    }
+                }
+                $files = !empty($fileNames) ? ': ' . implode(', ', $fileNames) : '';
+                return "[Suche: '{$pattern}' → {$totalMatches} Treffer in {$filesMatched} Dateien{$files}]";
+
+            case 'get_posts':
+            case 'get_pages':
+                $type = $data['queried_post_type'] ?? ($toolName === 'get_pages' ? 'page' : 'post');
+                $count = $data['count'] ?? count($data['posts'] ?? $data['pages'] ?? []);
+                $items = $data['posts'] ?? $data['pages'] ?? [];
+                $ids = array_slice(array_column($items, 'id'), 0, 5);
+                $idStr = !empty($ids) ? ', IDs: ' . implode(', ', $ids) : '';
+                return "[Gelesen: {$count} Eintraege ({$type}){$idStr}]";
+
+            case 'get_post':
+                $id = $data['post']['id'] ?? $data['id'] ?? '?';
+                $title = $data['post']['title'] ?? $data['title'] ?? '';
+                $titleStr = $title !== '' ? ": {$title}" : '';
+                return "[Gelesen: Beitrag #{$id}{$titleStr}]";
+
+            case 'write_plugin_file':
+            case 'write_theme_file':
+                $slug = $data['plugin_slug'] ?? $data['theme_slug'] ?? '?';
+                $path = $data['relative_path'] ?? '?';
+                $bytes = $data['bytes_written'] ?? '?';
+                return "[Geschrieben: {$slug}/{$path}, {$bytes} Bytes, {$success}]";
+
+            case 'patch_plugin_file':
+            case 'patch_theme_file':
+                $slug = $data['plugin_slug'] ?? $data['theme_slug'] ?? '?';
+                $path = $data['relative_path'] ?? '?';
+                $count = $data['patches_applied'] ?? 0;
+                return "[Gepatcht: {$slug}/{$path}, {$count} Ersetzungen, {$success}]";
+
+            case 'check_plugin_health':
+                $slug = $data['plugin_slug'] ?? '?';
+                $healthy = ($data['healthy'] ?? false) ? 'gesund' : 'Probleme';
+                $checked = $data['files_checked'] ?? 0;
+                $issues = count($data['issues'] ?? []);
+                return "[Health-Check: {$slug}, {$checked} Dateien, {$healthy}, {$issues} Issues]";
+
+            case 'read_error_log':
+                $lineCount = $data['total_lines'] ?? count($data['lines'] ?? []);
+                return "[Error-Log: {$lineCount} Zeilen gelesen]";
+
+            default:
+                if (!($data['success'] ?? true)) {
+                    $err = $data['error'] ?? 'unbekannt';
+                    return "[{$toolName}: Fehler — " . mb_substr($err, 0, 100) . "]";
+                }
+                return '[' . $toolName . ': ' . mb_substr($content, 0, 150) . '...]';
+        }
     }
 
     private function compactToolResultForModel(array $result): string {

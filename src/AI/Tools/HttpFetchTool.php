@@ -35,6 +35,14 @@ class HttpFetchTool implements ToolInterface {
         ];
     }
 
+    public function getInputExamples(): array {
+        return [
+            ['url' => '/sample-page/'],
+            ['url' => '/cart/', 'extract' => 'body'],
+            ['url' => '/shop/', 'extract' => 'styles'],
+        ];
+    }
+
     public function checkPermission(): bool {
         return current_user_can('manage_options');
     }
@@ -132,6 +140,15 @@ class HttpFetchTool implements ToolInterface {
         $result['body'] = $body;
         $result['body_length'] = strlen($body);
 
+        $wcHints = $this->detectWcRenderingMode($body);
+        if (!empty($wcHints)) {
+            $result = array_merge($result, $wcHints);
+        }
+
+        if ($statusCode === 404) {
+            $result['suggestion'] = 'Page may not exist. Use get_pages or get_posts to find available pages.';
+        }
+
         return $result;
     }
 
@@ -214,6 +231,55 @@ class HttpFetchTool implements ToolInterface {
                 $result[$key] = $value;
             }
         }
+        return $result;
+    }
+
+    /**
+     * Detect whether a WooCommerce page uses Block-based or Shortcode-based rendering.
+     * Returns hints for the AI so it can choose the right approach (Custom Block vs PHP hooks).
+     */
+    private function detectWcRenderingMode(string $body): array {
+        $hasBlockCart = str_contains($body, 'wp-block-woocommerce-cart')
+            || str_contains($body, 'wc-block-cart');
+        $hasBlockCheckout = str_contains($body, 'wp-block-woocommerce-checkout')
+            || str_contains($body, 'wc-block-checkout');
+        $hasClassicCart = str_contains($body, 'woocommerce-cart-form')
+            || str_contains($body, '[woocommerce_cart]');
+        $hasClassicCheckout = str_contains($body, 'woocommerce-checkout')
+            && !$hasBlockCheckout;
+
+        if (!$hasBlockCart && !$hasBlockCheckout && !$hasClassicCart && !$hasClassicCheckout) {
+            return [];
+        }
+
+        $result = [];
+        $blockPages = [];
+        $classicPages = [];
+
+        if ($hasBlockCart) {
+            $blockPages[] = 'Cart';
+        }
+        if ($hasBlockCheckout) {
+            $blockPages[] = 'Checkout';
+        }
+        if ($hasClassicCart) {
+            $classicPages[] = 'Cart';
+        }
+        if ($hasClassicCheckout) {
+            $classicPages[] = 'Checkout';
+        }
+
+        if (!empty($blockPages)) {
+            $result['wc_rendering'] = 'block';
+            $result['wc_block_pages'] = $blockPages;
+            $result['wc_note'] = 'This page uses WooCommerce Blocks (' . implode(', ', $blockPages) . '). '
+                . 'Classic PHP hooks (woocommerce_before_cart, woocommerce_after_cart_table, etc.) will NOT fire here. '
+                . 'Use a Custom Block or JavaScript/DOM manipulation instead.';
+        } elseif (!empty($classicPages)) {
+            $result['wc_rendering'] = 'shortcode';
+            $result['wc_classic_pages'] = $classicPages;
+        }
+
         return $result;
     }
 }

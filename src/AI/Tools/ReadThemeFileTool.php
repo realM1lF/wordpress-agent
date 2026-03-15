@@ -235,4 +235,12 @@ class ReadThemeFileTool implements ToolInterface {
     private function normalizeSlug(string $slug): string {
         return strtolower(str_replace(['-', '_'], '', $slug));
     }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['theme_slug' => 'twentytwentyfour', 'relative_path' => 'style.css'],
+            ['theme_slug' => 'twentytwentyfour', 'relative_path' => 'functions.php', 'max_bytes' => 20000],
+        ];
+    }
 }

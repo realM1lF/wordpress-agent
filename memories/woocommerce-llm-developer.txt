@@ -4233,6 +4233,20 @@ Example response:
 
 The store products API provides public product data so it can be rendered on the client side.
 
+## Product Visibility
+
+### Draft and non-published products
+
+Only published products are accessible via the Store API. Requesting a draft, pending, or other non-published product by ID or slug returns a `404` error. Non-published products are also excluded from the collection endpoint.
+
+### Password-protected products
+
+Password-protected products are visible in the API, but their `description` and `short_description` fields are redacted (returned as empty strings) until the correct password has been submitted. The response includes an `is_password_protected` boolean field so clients can detect this state and prompt the user.
+
+Password verification uses WordPress's native `wp-postpass_*` cookie, set when a user submits the password form on the frontend. The Store API does not accept passwords directly.
+
+Other product data (price, images, categories, etc.) remains accessible regardless of password status.
+
 ## List Products
 
 ```http
@@ -4350,6 +4364,7 @@ curl "https://example-store.com/wp-json/wc/store/v1/products"
 		"has_options": false,
 		"is_purchasable": true,
 		"is_in_stock": true,
+		"is_password_protected": false,
 		"low_stock_remaining": null,
 		"add_to_cart": {
 			"text": "Add to cart",
@@ -4418,6 +4433,7 @@ curl "https://example-store.com/wp-json/wc/store/v1/products/34"
 	"has_options": false,
 	"is_purchasable": true,
 	"is_in_stock": true,
+	"is_password_protected": false,
 	"low_stock_remaining": null,
 	"add_to_cart": {
 		"text": "Add to cart",
@@ -4485,6 +4501,7 @@ curl "https://example-store.com/wp-json/wc/store/v1/products/wordpress-pennant"
 	"has_options": false,
 	"is_purchasable": true,
 	"is_in_stock": true,
+	"is_password_protected": false,
 	"low_stock_remaining": null,
 	"add_to_cart": {
 		"text": "Add to cart",
@@ -37414,7 +37431,7 @@ Follow this guide to get your billing powered by WooCommerce's world-class billi
 
 To complete integrating WooCommerce Billing into your SaaS app, you'll need a sandbox and the API reference. The various API flows are described below.
 
-To get started, please [submit your product](https://woocommerce.com/document/submitting-your-product-to-the-woo-marketplace/) to the WooCommerce Marketplace. Include details about your product and upload a zip file to test whether your product utilizes a WordPress plugin to connect to your app. We will review your product to determine if it is a good fit before granting sandbox access.
+To get started, please [submit your product](/docs/woo-marketplace/submitting-your-product/) to the WooCommerce Marketplace. Include details about your product and upload a zip file to test whether your product utilizes a WordPress plugin to connect to your app. We will review your product to determine if it is a good fit before granting sandbox access.
 
 ### Sandbox for testing
 
@@ -37853,11 +37870,11 @@ For product page structure, required elements, and asset specifications, refer t
 
 Use the format "Product Name for WooCommerce" rather than "WooCommerce Product Name" throughout the product copy.
 
-This format ensures your product name complies with [trademark rules](https://automattic.com/trademark-policy/) and leads with its unique identifier, improving discoverability and clarity.
+This format ensures your product name complies with [trademark rules](https://woocommerce.com/trademark-guidelines/) and leads with its unique identifier, improving discoverability and clarity.
 
 ### Grammar and Punctuation
 
-Follow the [WooCommerce Grammar, Punctuation, and Capitalization Guide](https://woocommerce.com/document/woocommerce-grammar-punctuation-and-capitalization-guide/) for comprehensive guidance. Key points include:
+Follow the [WooCommerce grammar, punctuation, and capitalization guide](/docs/best-practices/coding-standards/grammar-punctuation-capitalization/) for comprehensive guidance. Key points include:
 
 **Use the Oxford comma** when listing three or more items:
 
@@ -38045,7 +38062,7 @@ When creating documentation for your product, follow these additional guidelines
 - Document all your product's features and settings
 - Provide troubleshooting guidance for common issues
 
-For detailed documentation frameworks, refer to [Support and Documentation Best Practices](https://woocommerce.com/document/extension-development-best-practices/#support-and-documentation).
+For detailed documentation frameworks, refer to [Support and Documentation Best Practices](/docs/extensions/best-practices-extensions/support-and-documentation/).
 
 ### Images and Screenshots
 
@@ -38083,7 +38100,7 @@ We are looking for products that:
 
 - Solve real merchant problems
 - Are secure, well-documented, and well-maintained
-- Follow [security](https://developer.wordpress.org/apis/security/), [development](https://developer.woocommerce.com/docs/extensions/best-practices-extensions/extension-development-best-practices/), and [user experience](https://developer.woocommerce.com/docs/extensions/ux-guidelines-extensions/best-practices/) best practices
+- Follow [security](https://developer.wordpress.org/apis/security/), [development](/docs/extensions/best-practices-extensions/extension-development-best-practices/), and [user experience](/docs/extensions/ux-guidelines-extensions/best-practices/) best practices
 - Offer high-quality merchant support
 - Include a clear and sustainable monetization model, whether through direct sales, subscriptions, or another approach
 
@@ -38098,8 +38115,8 @@ To join the WooCommerce Marketplace, vendors must offer high-quality, secure pro
 ### Step 1: Prepare your product
 
 1. Build and thoroughly test your extension or theme.
-2. Ensure it meets our [technical](https://developer.woocommerce.com/docs/extensions/best-practices-extensions/extension-development-best-practices/), [user experience](https://developer.woocommerce.com/docs/extensions/ux-guidelines-extensions/best-practices/) (UX), and [security standards](https://developer.wordpress.org/apis/security/).
-3. Write clear and comprehensive [documentation](https://developer.woocommerce.com/docs/extensions/best-practices-extensions/support-and-documentation/).
+2. Ensure it meets our [technical](/docs/extensions/best-practices-extensions/extension-development-best-practices/), [user experience](/docs/extensions/ux-guidelines-extensions/best-practices/) (UX), and [security standards](https://developer.wordpress.org/apis/security/).
+3. Write clear and comprehensive [documentation](/docs/extensions/best-practices-extensions/support-and-documentation/).
 
 ### Step 2: Apply to the Marketplace
 
@@ -38117,17 +38134,17 @@ Submit detailed product information, demo links, and test instructions for revie
 
 ## Helpful resources
 
-- [Submission guidelines](https://woocommerce.com/document/submitting-your-product-to-the-woo-marketplace/)
-- [Extension developer handbook](https://developer.woocommerce.com/docs/extensions/getting-started-extensions/)
-- [Block theme developer handbook](https://developer.woocommerce.com/docs/theming/block-theme-development/theming-woo-blocks)
-- [SaaS Billing API](https://woocommerce.com/document/billing-api-for-saas-products/)
+- [Submission guidelines](/docs/woo-marketplace/submitting-your-product/)
+- [Extension developer handbook](/docs/extensions/getting-started-extensions/)
+- [Block theme developer handbook](/docs/theming/block-theme-development/theming-woo-blocks)
+- [SaaS Billing API](/docs/woo-marketplace/billing-api-saas/)
 - [Marketplace Vendor Agreement](https://woocommerce.com/woo-vendor-agreement/)
 
 ## Ready to apply?
 
 1. [Become a Marketplace partner](https://woocommerce.com/partners/).
-2. Before you submit, we recommend reviewing the full [submission guidelines](https://woocommerce.com/document/submitting-your-product-to-the-woo-marketplace/#section-1) for detailed steps.
-3. When you're ready, [submit your product](https://woocommerce.com/document/submitting-your-product-to-the-woo-marketplace/).
+2. Before you submit, we recommend reviewing the full [submission guidelines](/docs/woo-marketplace/submitting-your-product/#pre-submission-checklist) for detailed steps.
+3. When you're ready, [submit your product](/docs/woo-marketplace/submitting-your-product/).
 
 We look forward to helping you succeed in the WooCommerce Marketplace!
 
@@ -38162,7 +38179,7 @@ Most of the work for managing products can be done via the [vendor dashboard](ht
 - From your vendor dashboard, navigate to _Products > All Products_.
 - Select the product you want to work on.
 
-From there, you can see information about usage, upload a new version, or edit the product page. [Review our product page guidelines](https://woocommerce.com/document/marketing-product-pages-writing/).
+From there, you can see information about usage, upload a new version, or edit the product page. [Review our product page guidelines](/docs/woo-marketplace/product-page-content-and-assets/).
 
 ![Product management interface in vendor dashboard](./_media/manage-products-overview.png)
 
@@ -38170,11 +38187,11 @@ From there, you can see information about usage, upload a new version, or edit t
 
 To maintain a high-quality and competitive Marketplace, we encourage all vendors to regularly update their products. Consistent updates ensure compatibility with the latest versions of WooCommerce and WordPress, improve security and performance, and deliver ongoing value to customers.
 
-[Review our product update guidelines and best practices](https://woocommerce.com/document/product-update-guidelines/).
+[Review our product update guidelines and best practices](/docs/woo-marketplace/product-update-guidelines/).
 
 ### Adding or editing documentation
 
-To review, edit, or add documentation, navigate to _Documentation_ in your vendor dashboard. [Review our guidelines for creating effective documentation](https://woocommerce.com/document/writing-documentation/).
+To review, edit, or add documentation, navigate to _Documentation_ in your vendor dashboard. [Review our guidelines for creating effective documentation](/docs/extensions/best-practices-extensions/support-and-documentation).
 
 ![Documentation management interface](./_media/manage-products-documentation.png)
 
@@ -38263,7 +38280,7 @@ Need to know how to reach another vendor? Type the vendor name and hit Enter to 
 
 ### Changelog validator
 
-Test your `changelog.txt` file to ensure that it meets [Woo Marketplace standards](https://woocommerce.com/document/create-a-plugin/#section-9) by copying the text of the file and pasting it into the text box. You can also use our ChatGPT [Changelog Formatter](https://chatgpt.com/g/g-9b3SlOWTF-woocommerce-com-changelog-formatter) to automatically revise your existing changelog to use in your extension.
+Test your `changelog.txt` file to ensure that it meets [Woo Marketplace standards](/docs/extensions/core-concepts/changelog-txt/) by copying the text of the file and pasting it into the text box. You can also use our ChatGPT [Changelog Formatter](https://chatgpt.com/g/g-9b3SlOWTF-woocommerce-com-changelog-formatter) to automatically revise your existing changelog to use in your extension.
 
 ## FAQs
 
@@ -38272,21 +38289,6 @@ Test your `changelog.txt` file to ensure that it meets [Woo Marketplace standard
 
 - We can add additional Vendor Admins to your profile at your request. Vendor Admins can assist with updating products and documentation as well as view sales reports, reviews, and feature requests.
 - To request another admin, [contact us via the link in your dashboard](https://woocommerce.com/wp-admin/admin.php?page=wcpv-vendor-support) or email [partners@woocommerce.com](mailto:partners@woocommerce.com) using your current partner account email. Please first ensure that they have [created a WooCommerce.com account](https://woocommerce.com/sso?new=1&next=%2Fwoocommerce%2F) with [two-step authentication enabled](https://wordpress.com/support/security/two-step-authentication/).
-
-</details>
-
-<details>
-<summary>Why does my QIT test result link show "Invalid URL" or say it has expired?</summary>
-
-- QIT test result links are temporary signed URLs. They expire after a short period of time. This is expected and not an error.
-- To get fresh results, re-run the test from your [Vendor Dashboard](https://woocommerce.com/wp-admin/). New links will be generated with the updated results.
-
-</details>
-
-<details>
-<summary>How do I resubmit after making changes?</summary>
-
-- When your submission is in **Changes required** status, you can upload a corrected zip file directly from your [Vendor Dashboard](https://woocommerce.com/wp-admin/) and resubmit.
 
 </details>
 
@@ -38818,8 +38820,8 @@ We look forward to reviewing your extension, theme, or integration for listing i
 
 This includes an analysis of the product's business model and revenue share structure with Woo, as well as product rationale, competition, and developer/company history.
 
-- **Mutually beneficial partnership**: Products must share revenue with Woo, exclude spam links, affiliate links, or links to upsell products outside of the Woo Marketplace. See our [monetization expectations](./monetization-expectations.md).
-- **Trademark compliance**: Ensure that product names do not violate Woo's [trademark guidelines](https://woocommerce.com/trademark-guidelines/#sg-trademarks). Select a unique name that builds your brand and sets your product apart from others. [Review our product name guidelines](https://woocommerce.com/document/product-page-content-and-assets/#section-14).
+- **Mutually beneficial partnership**: Products must share revenue with Woo, exclude spam links, affiliate links, or links to upsell products outside of the Woo Marketplace. See our [monetization expectations](/docs/woo-marketplace/monetization-expectations/).
+- **Trademark compliance**: Ensure that product names do not violate Woo's [trademark guidelines](https://woocommerce.com/trademark-guidelines/#sg-trademarks). Select a unique name that builds your brand and sets your product apart from others. [Review our product name guidelines](/docs/woo-marketplace/product-page-content-and-assets/#naming-guidelines).
 - **Competitive pricing**: Is the proposed price equal to or less than the price of the product sold in other environments? Select a suggested price that matches the price you sell elsewhere.
 
 </details>
@@ -38836,7 +38838,7 @@ PHP 7.4 reached [End of Life](https://www.php.net/supported-versions.php) (EOL) 
 
 - Products must support the two latest **major releases** of both [WooCommerce](https://wordpress.org/plugins/woocommerce/) and [WordPress](https://wordpress.org/download/).
 - Products must adhere to foundational guidelines outlined in our [developer hub](https://developer.woocommerce.com/).
-- If your pricing model is based on a standard, tiered monthly subscription, we require you to implement the [SaaS Billing API](https://woocommerce.com/document/billing-api-for-saas-products/). API keys and sandbox access are granted manually after products are submitted for Marketplace consideration.
+- If your pricing model is based on a standard, tiered monthly subscription, you will be required to implement the [SaaS Billing API](/docs/woo-marketplace/billing-api-saas/) before launch. API keys and sandbox access are granted manually after products are submitted for Marketplace consideration.
 - Products must be able to pass the following [Quality Insights Toolkit](https://qit.woo.com/docs/) (QIT) tests:
     - [API](https://qit.woo.com/docs/managed-tests/woo-api)
     - [End-to-end](https://qit.woo.com/docs/managed-tests/woo-e2e) (E2E)
@@ -38852,9 +38854,9 @@ PHP 7.4 reached [End of Life](https://www.php.net/supported-versions.php) (EOL) 
 <summary>User experience compliance</summary>
 
 - The product review includes a deeper analysis of the product's user experience (UX) and user interface (UI).
-- Ensure that your product's [critical flows](https://developer.woocommerce.com/testing-extensions-and-maintaining-quality-code/critical-flows/) have been thoroughly tested. See an example of [critical flows in the core WooCommerce plugin](https://developer.woocommerce.com/docs/contribution/testing/core-critical-flows/).
-- Extensions must adhere to [development best practices](https://developer.woocommerce.com/docs/extensions/best-practices-extensions/extension-development-best-practices/) and [UX guidelines](https://developer.woocommerce.com/docs/extensions/ux-guidelines-extensions/).
-- Themes must adhere to [theme development](https://developer.woocommerce.com/docs/theming/block-theme-development/theming-woo-blocks/), [design](https://developer.woocommerce.com/docs/user-experience-guidelines/ux-guidelines-themes/), and [UX guidelines](https://developer.woocommerce.com/docs/user-experience-guidelines/ux-guidelines-themes/).
+- Ensure that your product's [critical flows](https://developer.woocommerce.com/testing-extensions-and-maintaining-quality-code/critical-flows/) have been thoroughly tested. See an example of [critical flows in the core WooCommerce plugin](/docs/contribution/testing/core-critical-flows/).
+- Extensions must adhere to [development best practices](/docs/extensions/best-practices-extensions/extension-development-best-practices/) and [UX guidelines](/docs/extensions/ux-guidelines-extensions/).
+- Themes must adhere to [design](/docs/theming/theme-development/theme-design-ux-guidelines/), and [UX guidelines](/docs/user-experience-guidelines/ux-guidelines-themes/). If you are submitting a block theme, also review [theme development](/docs/theming/block-theme-development/theming-woo-blocks/).
 - **Accessibility**: It is important that all customers can use the stores where your extension is installed. Extension submissions must meet the [WordPress Accessibility Coding Standards](https://developer.wordpress.org/coding-standards/wordpress-coding-standards/accessibility/). For more information, review WordPress's [accessibility quick start guide](https://make.wordpress.org/accessibility/handbook/best-practices/quick-start-guide/).
 - Does the product have a single core purpose and use WooCommerce features as much as possible?
 - Can the product function "out of the box" without much configuration?
@@ -38901,7 +38903,7 @@ As we evolve within the WordPress ecosystem, we're placing a strong emphasis on 
 High-Performance Order Storage (HPOS) is the **default experience for new WooCommerce stores**. It moves order data from the WordPress post and postmeta tables to dedicated order tables to improve scalability and reliability.
 
 :::info
-**All new extension submissions must be HPOS-compatible.** View our [HPOS recipe book](https://developer.woocommerce.com/docs/hpos-extension-recipe-book/) for ways to support HPOS in your product.
+**All new extension submissions must be HPOS-compatible.** View our [HPOS recipe book](/docs/features/high-performance-order-storage/recipe-book/) for ways to support HPOS in your product.
 :::
 
 </details>
@@ -38971,6 +38973,14 @@ Once the submission is in business review, you can expect a formal decision from
 <summary>Can I resubmit a previously rejected product?</summary>
 
 Yes. You are welcome to resubmit products, providing the previously-received feedback was incorporated and your product was improved to comply with our guidelines and quality standards.
+
+</details>
+
+<details>
+<summary>Why does my QIT test result link show "Invalid URL" or say it has expired?</summary>
+
+- QIT test result links are temporary signed URLs. They expire after a short period of time. This is expected and not an error.
+- To get fresh results, re-run the test from the submission in your [Vendor Dashboard](https://woocommerce.com/wp-admin/). New links will be generated with the updated results.
 
 </details>
 

@@ -3,75 +3,13 @@
 namespace Levi\Agent\API\Concerns;
 
 use Levi\Agent\Agent\Identity;
+use Levi\Agent\AI\QueryClassifier;
 use Levi\Agent\Memory\EmbeddingCache;
 use Levi\Agent\Memory\StateSnapshotService;
 use Levi\Agent\Memory\VectorStore;
 
 trait BuildsContext
 {
-    private function buildMessagesForConfirmation(
-        string $sessionId,
-        string $toolName,
-        array $toolArgs,
-        string $compactResult
-    ): array {
-        $messages = [];
-
-        $messages[] = [
-            'role' => 'system',
-            'content' => $this->getSystemPrompt('', $sessionId, false),
-        ];
-
-        $summary = $this->conversationRepo->getLatestSummary($sessionId);
-        if ($summary !== null) {
-            $messages[] = [
-                'role' => 'system',
-                'content' => "[SESSION-ZUSAMMENFASSUNG – aeltere Nachrichten komprimiert]\n\n" . $summary['content'],
-            ];
-        }
-
-        $runtimeSettings = $this->settings->getSettings();
-        $historyLimit = max(10, (int) ($runtimeSettings['history_context_limit'] ?? 20));
-        $history = $this->conversationRepo->getHistory($sessionId, $historyLimit);
-        $lastChatRole = null;
-        foreach ($history as $msg) {
-            if (!in_array($msg['role'], ['user', 'assistant'], true)) {
-                continue;
-            }
-            if ($msg['role'] === $lastChatRole) {
-                if ($lastChatRole === 'user') {
-                    $messages[] = ['role' => 'assistant', 'content' => '[Vorherige Antwort nicht verfuegbar]'];
-                } else {
-                    $messages[] = ['role' => 'user', 'content' => '(Fortsetzen)'];
-                }
-            }
-            $messages[] = ['role' => $msg['role'], 'content' => $msg['content']];
-            $lastChatRole = $msg['role'];
-        }
-
-        $fakeToolCallId = 'confirmed_' . substr(md5($toolName . wp_json_encode($toolArgs)), 0, 12);
-        $messages[] = [
-            'role' => 'assistant',
-            'content' => null,
-            'tool_calls' => [[
-                'id' => $fakeToolCallId,
-                'type' => 'function',
-                'function' => [
-                    'name' => $toolName,
-                    'arguments' => wp_json_encode($toolArgs),
-                ],
-            ]],
-        ];
-
-        $messages[] = [
-            'role' => 'tool',
-            'tool_call_id' => $fakeToolCallId,
-            'content' => $compactResult,
-        ];
-
-        return $this->trimMessagesToBudget($messages, $sessionId);
-    }
-
     private function getLatestUserMessage(string $sessionId): string {
         $history = $this->conversationRepo->getHistory($sessionId, 10);
         for ($i = count($history) - 1; $i >= 0; $i--) {
@@ -149,7 +87,7 @@ trait BuildsContext
     }
 
     /**
-     * Legacy single-string system prompt (used by buildMessagesForConfirmation etc.).
+     * Legacy single-string system prompt.
      */
     private function getSystemPrompt(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): string {
         [$stable, $dynamic] = $this->getSystemPromptParts($query, $sessionId, $includeUploadedContext);
@@ -163,7 +101,7 @@ trait BuildsContext
      * All rule modules — always loaded so the model always has full context.
      * Domain modules (elementor, woocommerce, cron) are tiny and cost <1% of context.
      */
-    private const ALL_RULE_MODULES = ['core', 'tools', 'coding', 'planning', 'elementor', 'woocommerce', 'cron'];
+    private const ALL_RULE_MODULES = ['core', 'tools', 'coding', 'planning', 'frontend', 'elementor', 'woocommerce', 'cron'];
 
     /**
      * Returns [stablePrompt, dynamicPrompt].
@@ -192,11 +130,11 @@ trait BuildsContext
             // non-critical
         }
 
-        // Always search vector DB for relevant context (model benefits from having it)
         if (!empty($query)) {
-            $fullStrategy = ['identity' => true, 'reference' => true, 'snapshot' => true, 'full_tools' => true];
+            $classifier = new QueryClassifier();
+            $strategy = $classifier->getRetrievalStrategy($query);
             try {
-                $contextMemories = $this->getContextMemories($query, $fullStrategy);
+                $contextMemories = $this->getContextMemories($query, $strategy);
                 if (!empty($contextMemories)) {
                     $dynamicParts[] = "# Relevant Context\n\n" . $contextMemories;
                 }
@@ -335,10 +273,17 @@ PROMPT;
 
     
     /**
-     * Fetch context memories from Vector DB based on the retrieval strategy.
-     * Only searches reference and state_snapshot -- identity comes from transient cache.
+     * Fetch context memories from Vector DB using hybrid search (Semantic + BM25),
+     * confidence-based reranking with the primary model, and retrieval gating.
      */
     private function getContextMemories(string $query, array $strategy): string {
+        $needsReference = !empty($strategy['reference']);
+        $needsSnapshot = !empty($strategy['snapshot']);
+
+        if (!$needsReference && !$needsSnapshot) {
+            return $this->getEpisodicMemoriesOnly($query);
+        }
+
         try {
             $vectorStore = new VectorStore();
         } catch (\Throwable $e) {
@@ -349,6 +294,8 @@ PROMPT;
         $cache = new EmbeddingCache();
         $expander = new \Levi\Agent\AI\QueryExpander();
         $searchQueries = $expander->expand($query);
+        $isComplex = $expander->isLastQueryComplex();
+        $needsReferenceRetrieval = $expander->needsRetrieval();
 
         $embeddings = [];
         foreach ($searchQueries as $q) {
@@ -368,18 +315,42 @@ PROMPT;
             return '';
         }
 
+        // Initialize BM25 for hybrid search
+        $bm25 = null;
+        $db = $vectorStore->getDatabase();
+        if ($db !== null) {
+            try {
+                $bm25 = new \Levi\Agent\Memory\BM25Index($db);
+            } catch (\Throwable $e) {
+                error_log('Levi BM25 init: ' . $e->getMessage());
+            }
+        }
+
         $memories = [];
         try {
             $runtimeSettings = $this->settings->getSettings();
-            $referenceK = max(1, (int) ($runtimeSettings['memory_reference_k'] ?? 5));
-            $similarity = (float) ($runtimeSettings['memory_min_similarity'] ?? 0.6);
+            $referenceK = max(1, (int) ($runtimeSettings['memory_reference_k'] ?? 8));
+            $similarity = (float) ($runtimeSettings['memory_min_similarity'] ?? 0.5);
 
-            if (!empty($strategy['reference'])) {
-                $mergedResults = $this->multiQuerySearch(
-                    $vectorStore, $embeddings, 'reference', $referenceK, $similarity
+            if ($isComplex) {
+                $referenceK = (int) ceil($referenceK * 1.6);
+            }
+
+            // Retrieval gating: skip reference docs for simple CRUD/status queries.
+            // Snapshots and episodic memory are always fetched.
+            if (!empty($strategy['reference']) && $needsReferenceRetrieval) {
+                // Overfetch 2x for reranking, then let the reranker filter down
+                $overfetchK = $referenceK * 2;
+                $candidates = $this->hybridSearch(
+                    $vectorStore, $bm25, $embeddings, $searchQueries, 'reference', $overfetchK, $similarity
                 );
-                if (!empty($mergedResults)) {
-                    $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $mergedResults));
+
+                if (!empty($candidates)) {
+                    $reranker = new \Levi\Agent\AI\ChunkReranker();
+                    $reranked = $reranker->rerank($query, $candidates, $referenceK);
+                    if (!empty($reranked)) {
+                        $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $reranked));
+                    }
                 }
             }
 
@@ -416,14 +387,53 @@ PROMPT;
     }
 
     /**
-     * Search with multiple embeddings and merge results, keeping the highest similarity per chunk.
+     * Hybrid search: combine semantic vector search with BM25 keyword search
+     * using Reciprocal Rank Fusion (RRF).
      *
-     * @param VectorStore $store
-     * @param array[]     $embeddings  Array of embedding vectors
-     * @param string      $memoryType  'reference' | 'state_snapshot'
-     * @param int         $limit       Max results to return
-     * @param float       $minSimilarity
-     * @return array  Merged results sorted by similarity desc
+     * Falls back to vector-only when BM25 is unavailable.
+     */
+    private function hybridSearch(
+        VectorStore $store,
+        ?\Levi\Agent\Memory\BM25Index $bm25,
+        array $embeddings,
+        array $searchQueries,
+        string $memoryType,
+        int $limit,
+        float $minSimilarity
+    ): array {
+        // Each source fetches slightly more than $limit so RRF has enough
+        // overlap to merge effectively. The caller controls the total
+        // overfetch (e.g. 2x for reranking) via $limit itself.
+        $sourceLimit = (int) ceil($limit * 1.5);
+
+        $vectorResults = $this->multiQuerySearch($store, $embeddings, $memoryType, $sourceLimit, $minSimilarity);
+
+        if ($bm25 === null) {
+            return array_slice($vectorResults, 0, $limit);
+        }
+
+        $bm25Merged = [];
+        foreach ($searchQueries as $q) {
+            $bm25Results = $bm25->search($q, $memoryType, $sourceLimit);
+            foreach ($bm25Results as $r) {
+                $key = $r['chunk_id'] ?? md5($r['content'] ?? '');
+                if (!isset($bm25Merged[$key]) || ($r['score'] ?? 0) > ($bm25Merged[$key]['score'] ?? 0)) {
+                    $bm25Merged[$key] = $r;
+                }
+            }
+        }
+        usort($bm25Merged, fn($a, $b) => ($b['score'] ?? 0) <=> ($a['score'] ?? 0));
+        $bm25Top = array_slice($bm25Merged, 0, $sourceLimit);
+
+        if (empty($bm25Top)) {
+            return array_slice($vectorResults, 0, $limit);
+        }
+
+        return \Levi\Agent\Memory\BM25Index::reciprocalRankFusion($vectorResults, $bm25Top, $limit);
+    }
+
+    /**
+     * Search with multiple embeddings and merge results, keeping the highest similarity per chunk.
      */
     private function multiQuerySearch(VectorStore $store, array $embeddings, string $memoryType, int $limit, float $minSimilarity): array {
         $merged = [];
@@ -441,5 +451,40 @@ PROMPT;
         usort($merged, fn($a, $b) => ($b['similarity'] ?? 0) <=> ($a['similarity'] ?? 0));
 
         return array_slice($merged, 0, $limit);
+    }
+
+    /**
+     * Fast-path: only fetch episodic memories (local DB, ~20ms).
+     * Skips QueryExpander, Embeddings API, and ChunkReranker entirely.
+     */
+    private function getEpisodicMemoriesOnly(string $query): string {
+        $userId = get_current_user_id();
+        if ($userId <= 0) {
+            return '';
+        }
+
+        try {
+            $vectorStore = new VectorStore();
+        } catch (\Throwable $e) {
+            return '';
+        }
+
+        $cache = new EmbeddingCache();
+        $emb = $cache->get($query);
+        if ($emb === null) {
+            $emb = $vectorStore->generateEmbedding($query);
+            if (is_wp_error($emb) || empty($emb)) {
+                return '';
+            }
+            $cache->set($query, $emb);
+        }
+
+        $episodic = $vectorStore->searchEpisodicMemories($emb, $userId, 5, 0.70);
+        if (empty($episodic)) {
+            return '';
+        }
+
+        $facts = array_map(fn($r) => '- ' . $r['fact'], $episodic);
+        return "## Learnings from previous sessions\n" . implode("\n", $facts);
     }
 }

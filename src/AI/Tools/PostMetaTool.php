@@ -11,7 +11,18 @@ class PostMetaTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Read, write, or delete metadata for any post/page/product/custom post type. Post meta stores extended data like WooCommerce prices (_regular_price, _sale_price), stock (_stock, _stock_status), SKU (_sku), ACF fields, etc. Use action "get" to read, "set" to write, "delete" to remove.';
+        return 'Read, write, or delete metadata for any post/page/product/custom post type. '
+            . 'Post meta stores extended data like WooCommerce prices (_regular_price, _sale_price), stock (_stock, _stock_status), SKU (_sku), ACF fields, etc. '
+            . 'Use action "get" to read all or specific meta, "set" to write, "delete" to remove. '
+            . 'For WooCommerce product prices, prefer manage_woocommerce over direct meta manipulation.';
+    }
+
+    public function getInputExamples(): array {
+        return [
+            ['action' => 'get', 'post_id' => 42],
+            ['action' => 'set', 'post_id' => 42, 'meta_key' => '_thumbnail_id', 'meta_value' => '99'],
+            ['action' => 'delete', 'post_id' => 42, 'meta_key' => 'old_custom_field'],
+        ];
     }
 
     public function getParameters(): array {

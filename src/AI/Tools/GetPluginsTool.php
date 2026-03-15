@@ -9,7 +9,10 @@ class GetPluginsTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get a list of installed WordPress plugins with their status. CRITICAL: Returns ONLY actual plugins from the database - never invent, assume, or hallucinate plugins that are not in the result.';
+        return 'List all installed WordPress plugins with their activation status and update availability. '
+            . 'Returns plugin name, version, author, active/inactive state, and whether updates are pending. '
+            . 'Use this before creating or modifying plugins to check for slug conflicts. '
+            . 'Also includes must-use plugins. Does not return plugin file contents — use read_plugin_file for that.';
     }
 
     public function getParameters(): array {

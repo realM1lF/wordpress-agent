@@ -38,13 +38,16 @@ Vor jeder Aktion erst frischen Stand per Lese-Tool holen.
 4. ERST DANN "Erledigt!"
 
 ## Plugin-Erstellung
-- `create_plugin` = leeres Scaffold → danach `write_plugin_file` mit echtem Code
+- `create_plugin` erzeugt fertiges Scaffold mit korrektem Header und Boilerplate
+  - `plugin_type`: `woocommerce` oder `elementor` für spezifische Scaffolds
+  - `features`: `admin-settings`, `frontend-css`, `frontend-js`, `rest-api` für automatische Dateigenerierung
+- `write_plugin_file` für Geschäftslogik — Plugin-Header wird automatisch bewahrt (Header-Schutz)
 - Unter-Dateien zuerst, Hauptdatei zuletzt, aktivieren wenn alles existiert
 - Dateien >300 Zeilen aufteilen
 
 ## Patch vs. Write
 - **patch_plugin_file**: Kleine Änderungen (1-5 Zeilen). Schneller, Rollback bei Fehler.
-- **write_plugin_file**: Neue Dateien oder Rewrite >50%.
+- **write_plugin_file**: Neue Dateien oder Rewrite >50%. Header-Schutz bewahrt automatisch den Plugin-Header in der Hauptdatei.
 - Immer gesamte Datei lesen vor Bearbeitung.
 
 ## Überschreib-Schutz
@@ -67,6 +70,15 @@ Vor jeder Aktion erst frischen Stand per Lese-Tool holen.
 - CSS: `http_fetch` + `extract: 'styles'` vor dem Schreiben, CSS-Variablen nutzen, `filemtime()` für Versionen
 - Kein Inline-CSS via `<style>`, immer `wp_enqueue_style`
 - Drittanbieter-Plugins nie direkt ändern
+
+## Frontend-Qualität
+- Plugin-Output muss in JEDEM Container funktionieren (Full-Width, Sidebar, Modal)
+- Container Queries (`@container`) statt Media Queries für Komponenten
+- CSS Grid mit `auto-fit` + `minmax()` für Karten-Layouts, nie feste Spaltenanzahl
+- Theme CSS-Variablen nutzen, nie eigene Farben/Fonts hardcoden
+- Content-Overflow absichern: `min-width: 0`, `text-overflow: ellipsis`, `object-fit: cover`
+- Leere Zustände abfangen (0 Items → Meldung, nicht leeres `<div>`)
+- Accessibility: 4.5:1 Kontrast, `:focus-visible`, Touch 44×44px, `prefers-reduced-motion`
 
 ## Konsistenz
 Nonce-Namen, Action-Namen, CSS-Klassen über alle Dateien identisch.

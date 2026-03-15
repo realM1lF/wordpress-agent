@@ -25,7 +25,10 @@ class UpdateOptionTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Update WordPress site options. Only safe options from whitelist.';
+        return 'Update WordPress site settings from a safe whitelist of options. '
+            . 'Allowed options: blogname, blogdescription, date_format, time_format, start_of_week, posts_per_page, show_on_front, page_on_front, page_for_posts. '
+            . 'Use get_option first to check current values before changing. '
+            . 'For options not on the whitelist, use update_any_option instead.';
     }
 
     public function getParameters(): array {

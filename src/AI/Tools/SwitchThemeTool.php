@@ -9,7 +9,10 @@ class SwitchThemeTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Switch the active WordPress theme.';
+        return 'Switch the active WordPress theme by providing the theme slug (directory name). '
+            . 'The theme must already be installed in wp-content/themes/. '
+            . 'This is a destructive action — widget assignments and menu locations may change. '
+            . 'Use list_theme_files or get_plugins to verify the theme exists before switching.';
     }
 
     public function getParameters(): array {
@@ -47,6 +50,14 @@ class SwitchThemeTool implements ToolInterface {
             'new_theme' => $theme,
             'theme_name' => $themeObj->get('Name'),
             'message' => "Switched from '$oldTheme' to '$theme'.",
+        ];
+    }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['slug' => 'twentytwentyfour'],
+            ['slug' => 'astra'],
         ];
     }
 }

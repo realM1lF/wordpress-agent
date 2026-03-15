@@ -16,7 +16,9 @@ class ReadPluginFileTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Read a file from a plugin directory. Returns numbered lines for precise referencing. Binary/minified files are auto-detected.';
+        return 'Read one or multiple files from a plugin directory. Returns numbered lines for precise referencing. Binary/minified files are auto-detected. '
+            . 'Use the "files" parameter to read up to 5 files in a single call (saves round-trips). '
+            . 'IMPORTANT: If you do not know the exact file path, call list_plugin_files FIRST to discover the directory structure. Never guess file paths.';
     }
 
     public function getParameters(): array {
@@ -46,6 +48,26 @@ class ReadPluginFileTool implements ToolInterface {
                 'description' => 'Prepend line numbers to each line (default true)',
                 'default' => true,
             ],
+            'start_line' => [
+                'type' => 'integer',
+                'description' => 'Start reading from this line number (1-based). Preferred over offset_bytes for targeted reads.',
+            ],
+            'end_line' => [
+                'type' => 'integer',
+                'description' => 'Stop reading at this line number (inclusive). Preferred over max_bytes for targeted reads.',
+            ],
+            'files' => [
+                'type' => 'array',
+                'description' => 'Read multiple files at once (max 5). Array of relative paths. Overrides relative_path when set. Total output capped at 200KB.',
+                'items' => ['type' => 'string'],
+            ],
+        ];
+    }
+
+    public function getInputExamples(): array {
+        return [
+            ['plugin_slug' => 'my-plugin', 'relative_path' => 'my-plugin.php'],
+            ['plugin_slug' => 'my-plugin', 'relative_path' => 'includes/class-settings.php', 'max_bytes' => 30000],
         ];
     }
 
@@ -53,12 +75,23 @@ class ReadPluginFileTool implements ToolInterface {
         return current_user_can('edit_plugins') || current_user_can('install_plugins');
     }
 
+    private const BATCH_MAX_FILES = 5;
+    private const BATCH_MAX_TOTAL_BYTES = 200000;
+
     public function execute(array $params): array {
         $slug = sanitize_title($params['plugin_slug'] ?? '');
+        $files = $params['files'] ?? null;
+
+        if (is_array($files) && !empty($files)) {
+            return $this->executeBatchRead($slug, $files, (bool) ($params['line_numbers'] ?? true));
+        }
+
         $relativePath = ltrim((string) ($params['relative_path'] ?? ''), '/');
         $maxBytes = (int) ($params['max_bytes'] ?? self::DEFAULT_MAX_BYTES);
         $offsetBytes = (int) ($params['offset_bytes'] ?? 0);
         $lineNumbers = (bool) ($params['line_numbers'] ?? true);
+        $startLine = isset($params['start_line']) ? (int) $params['start_line'] : null;
+        $endLine = isset($params['end_line']) ? (int) $params['end_line'] : null;
 
         if ($slug === '' || $relativePath === '') {
             return ['success' => false, 'error' => 'plugin_slug and relative_path are required.'];
@@ -126,6 +159,52 @@ class ReadPluginFileTool implements ToolInterface {
             }
         }
 
+        if ($startLine !== null) {
+            $fullContent = file_get_contents($targetPathReal, false, null, 0, self::ABSOLUTE_MAX_BYTES);
+            if ($fullContent === false) {
+                return ['success' => false, 'error' => 'Could not read file content.'];
+            }
+            $allLines = explode("\n", $fullContent);
+            $totalLines = count($allLines);
+            $startLine = max(1, $startLine);
+            $effectiveEnd = $endLine !== null ? min($endLine, $totalLines) : $totalLines;
+            if ($startLine > $totalLines) {
+                return [
+                    'success' => true,
+                    'plugin_slug' => $slug,
+                    'relative_path' => $relativePath,
+                    'size' => $size,
+                    'total_lines' => $totalLines,
+                    'content' => '',
+                    'has_more' => false,
+                ];
+            }
+            $slice = array_slice($allLines, $startLine - 1, $effectiveEnd - $startLine + 1);
+            $content = '';
+            if ($lineNumbers) {
+                $pad = max(3, strlen((string) $effectiveEnd));
+                $numbered = [];
+                foreach ($slice as $i => $line) {
+                    $num = str_pad((string) ($startLine + $i), $pad, ' ', STR_PAD_LEFT);
+                    $numbered[] = $num . '| ' . $line;
+                }
+                $content = implode("\n", $numbered);
+            } else {
+                $content = implode("\n", $slice);
+            }
+            return [
+                'success' => true,
+                'plugin_slug' => $slug,
+                'relative_path' => $relativePath,
+                'size' => $size,
+                'total_lines' => $totalLines,
+                'start_line' => $startLine,
+                'end_line' => $effectiveEnd,
+                'has_more' => $effectiveEnd < $totalLines,
+                'content' => $content,
+            ];
+        }
+
         if ($offsetBytes >= $size) {
             return [
                 'success' => true,
@@ -176,7 +255,7 @@ class ReadPluginFileTool implements ToolInterface {
             $content = $this->addLineNumbers($content, $offsetBytes === 0 ? 1 : null, $targetPathReal, $offsetBytes);
         }
 
-        return [
+        $result = [
             'success' => true,
             'plugin_slug' => $slug,
             'relative_path' => $relativePath,
@@ -188,6 +267,14 @@ class ReadPluginFileTool implements ToolInterface {
             'truncated' => $nextOffset < $size,
             'content' => $content,
         ];
+
+        if ($maxBytes < 5000 && $size > $maxBytes) {
+            $result['small_read_warning'] = "Du liest nur {$maxBytes} Bytes einer {$size}-Byte-Datei. "
+                . "Nutze max_bytes ohne Limit oder mindestens 50000, um die gesamte Datei zu sehen. "
+                . "Teilweises Lesen fuehrt zu Fehlern.";
+        }
+
+        return $result;
     }
 
     private function addLineNumbers(string $content, ?int $startLine, string $filePath, int $offsetBytes): string {
@@ -206,6 +293,113 @@ class ReadPluginFileTool implements ToolInterface {
             $numbered[] = $num . '| ' . $line;
         }
         return implode("\n", $numbered);
+    }
+
+    private function executeBatchRead(string $slug, array $files, bool $lineNumbers): array {
+        if ($slug === '') {
+            return ['success' => false, 'error' => 'plugin_slug is required.'];
+        }
+        if (count($files) > self::BATCH_MAX_FILES) {
+            return ['success' => false, 'error' => 'Maximum ' . self::BATCH_MAX_FILES . ' files per batch read.'];
+        }
+
+        $pluginRoot = trailingslashit(WP_PLUGIN_DIR) . $slug;
+        if (!is_dir($pluginRoot)) {
+            $resolved = $this->resolvePluginDirectory($slug);
+            if ($resolved !== null) {
+                $pluginRoot = $resolved;
+                $slug = basename($resolved);
+            } else {
+                return ['success' => false, 'error' => 'Plugin directory does not exist.'];
+            }
+        }
+
+        $pluginRootReal = realpath($pluginRoot);
+        if ($pluginRootReal === false) {
+            return ['success' => false, 'error' => 'Plugin directory could not be resolved.'];
+        }
+
+        $results = [];
+        $totalBytes = 0;
+
+        foreach ($files as $relPath) {
+            $relPath = ltrim((string) $relPath, '/');
+            if ($relPath === '' || str_contains($relPath, '..')) {
+                $results[] = ['relative_path' => $relPath, 'success' => false, 'error' => 'Invalid path.'];
+                continue;
+            }
+
+            $targetPath = $pluginRoot . '/' . $relPath;
+            if (!is_file($targetPath)) {
+                $results[] = ['relative_path' => $relPath, 'success' => false, 'error' => 'File does not exist.'];
+                continue;
+            }
+
+            $targetPathReal = realpath($targetPath);
+            if ($targetPathReal === false || !str_starts_with($targetPathReal, $pluginRootReal)) {
+                $results[] = ['relative_path' => $relPath, 'success' => false, 'error' => 'Path outside plugin directory.'];
+                continue;
+            }
+
+            $size = filesize($targetPathReal);
+            if ($size === false) {
+                $results[] = ['relative_path' => $relPath, 'success' => false, 'error' => 'Could not determine file size.'];
+                continue;
+            }
+
+            $remainingBudget = self::BATCH_MAX_TOTAL_BYTES - $totalBytes;
+            if ($remainingBudget <= 0) {
+                $results[] = ['relative_path' => $relPath, 'success' => false, 'error' => 'Batch size limit reached (200KB total).'];
+                continue;
+            }
+
+            $readBytes = min($size, $remainingBudget, self::DEFAULT_MAX_BYTES);
+            $content = file_get_contents($targetPathReal, false, null, 0, $readBytes);
+            if ($content === false) {
+                $results[] = ['relative_path' => $relPath, 'success' => false, 'error' => 'Could not read file.'];
+                continue;
+            }
+
+            if (str_contains(substr($content, 0, self::BINARY_PROBE_BYTES), "\0")) {
+                $results[] = [
+                    'relative_path' => $relPath,
+                    'success' => true,
+                    'size' => $size,
+                    'content' => '[Binary file — content not returned]',
+                ];
+                continue;
+            }
+
+            $totalBytes += strlen($content);
+
+            if ($lineNumbers) {
+                $content = $this->addLineNumbers($content, 1, $targetPathReal, 0);
+            }
+
+            $entry = [
+                'relative_path' => $relPath,
+                'success' => true,
+                'size' => $size,
+                'line_count' => substr_count($content, "\n") + 1,
+                'content' => $content,
+            ];
+
+            if ($readBytes < $size) {
+                $entry['truncated'] = true;
+                $entry['truncated_notice'] = "Only {$readBytes} of {$size} bytes returned due to batch size limit.";
+            }
+
+            $results[] = $entry;
+        }
+
+        return [
+            'success' => true,
+            'plugin_slug' => $slug,
+            'files_requested' => count($files),
+            'files_read' => count(array_filter($results, fn($r) => $r['success'] ?? false)),
+            'total_bytes' => $totalBytes,
+            'results' => $results,
+        ];
     }
 
     private function resolvePluginDirectory(string $requestedSlug): ?string {

@@ -35,7 +35,10 @@ class GetOptionsTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get WordPress site options/settings. Only safe options are accessible.';
+        return 'Read WordPress site options from a whitelist of safe settings. '
+            . 'Returns the current value for options like blogname, siteurl, permalink_structure, show_on_front, page_on_front, active_theme, and more. '
+            . 'Use this to understand the site configuration before making changes. '
+            . 'For writing options, use update_option (safe whitelist) or update_any_option (unrestricted).';
     }
 
     public function getParameters(): array {

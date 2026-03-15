@@ -3,18 +3,26 @@
 namespace Levi\Agent\AI\Tools;
 
 use Levi\Agent\AI\Tools\Concerns\SanitizesHtmlOutput;
+use Levi\Agent\AI\Tools\Concerns\ValidatesSyntax;
+use Levi\Agent\AI\Tools\Concerns\ResolvesPluginPaths;
+use Levi\Agent\AI\Tools\Concerns\TracksFileHistory;
 
-class WritePluginFileTool implements ToolInterface {
+class WritePluginFileTool extends AbstractTool {
 
     use SanitizesHtmlOutput;
+    use ValidatesSyntax;
+    use ResolvesPluginPaths;
+    use TracksFileHistory;
 
     public function getName(): string {
         return 'write_plugin_file';
     }
 
     public function getDescription(): string {
-        return 'Write or overwrite a file inside a plugin directory. Useful for creating plugin PHP, JS, CSS, and template files. '
-            . 'For small changes (rename, bugfix, value tweak) prefer patch_plugin_file instead — it is much faster.';
+        return 'Create a NEW file inside a plugin directory. '
+            . 'If the file already exists, this tool REJECTS the write — use patch_plugin_file to edit existing files. '
+            . 'Set overwrite=true only for complete rewrites where more than 50% of the file changes. '
+            . 'The plugin header in the main file (slug.php) is automatically preserved.';
     }
 
     public function getParameters(): array {
@@ -31,7 +39,7 @@ class WritePluginFileTool implements ToolInterface {
             ],
             'content' => [
                 'type' => 'string',
-                'description' => 'Full file content to write',
+                'description' => 'File content to write. For the main plugin file, the existing header block (Plugin Name, Version, etc.) is preserved automatically.',
                 'required' => true,
             ],
             'create_dirs' => [
@@ -39,6 +47,26 @@ class WritePluginFileTool implements ToolInterface {
                 'description' => 'Create missing directories automatically',
                 'default' => true,
             ],
+            'preserve_header' => [
+                'type' => 'boolean',
+                'description' => 'Keep the existing plugin header when writing the main file. Only set to false if you need to update metadata like version or description.',
+                'default' => true,
+            ],
+            'overwrite' => [
+                'type' => 'boolean',
+                'description' => 'DANGER: Set to true to overwrite an existing file completely. '
+                    . 'Only use when rewriting MORE than 50% of the file. '
+                    . 'You MUST read the entire file first and include ALL existing code you want to keep. '
+                    . 'For normal edits, use patch_plugin_file instead.',
+                'default' => false,
+            ],
+        ];
+    }
+
+    public function getInputExamples(): array {
+        return [
+            ['plugin_slug' => 'my-plugin', 'relative_path' => 'my-plugin.php', 'content' => '<?php\n// Main plugin logic...'],
+            ['plugin_slug' => 'my-plugin', 'relative_path' => 'includes/class-frontend.php', 'content' => '<?php\nclass My_Plugin_Frontend { ... }'],
         ];
     }
 
@@ -51,132 +79,147 @@ class WritePluginFileTool implements ToolInterface {
         $relativePath = ltrim((string) ($params['relative_path'] ?? ''), '/');
         $content = (string) ($params['content'] ?? '');
         $createDirs = (bool) ($params['create_dirs'] ?? true);
+        $preserveHeader = (bool) ($params['preserve_header'] ?? true);
 
         if ($slug === '' || $relativePath === '') {
-            return [
-                'success' => false,
-                'error' => 'plugin_slug and relative_path are required.',
-            ];
+            return ['success' => false, 'error' => 'plugin_slug and relative_path are required.'];
         }
 
-        // Prevent path traversal
-        if (str_contains($relativePath, '..')) {
-            return [
-                'success' => false,
-                'error' => 'Path traversal is not allowed.',
-            ];
+        $resolved = $this->resolvePluginRoot($slug);
+        if (isset($resolved['error'])) {
+            return ['success' => false] + $resolved;
         }
+        $pluginRoot = $resolved['root'];
+        $slug = $resolved['slug'];
 
-        $pluginRoot = trailingslashit(WP_PLUGIN_DIR) . $slug;
-        if (!is_dir($pluginRoot)) {
-            $resolved = $this->resolvePluginDirectory($slug);
-            if ($resolved !== null) {
-                $pluginRoot = $resolved;
-                $slug = basename($resolved);
-            } else {
-                return [
-                    'success' => false,
-                    'error' => 'Plugin directory does not exist. Create plugin first.',
-                    'suggestion' => 'Use get_plugins first to find the correct plugin_slug (directory name).',
-                ];
-            }
+        $pathCheck = $this->validatePluginFilePath($pluginRoot, $relativePath);
+        if (isset($pathCheck['error'])) {
+            return ['success' => false, 'error' => $pathCheck['error']];
         }
-
-        $targetPath = $pluginRoot . '/' . $relativePath;
-        $targetDir = dirname($targetPath);
+        $targetPath = $pathCheck['target_path'];
+        $targetDir = $pathCheck['target_dir'];
 
         if (!is_dir($targetDir)) {
             if (!$createDirs || !wp_mkdir_p($targetDir)) {
-                return [
-                    'success' => false,
-                    'error' => 'Target directory does not exist and could not be created.',
-                ];
+                return ['success' => false, 'error' => 'Target directory does not exist and could not be created.'];
             }
         }
 
-        $pluginRootReal = realpath($pluginRoot);
         $targetDirReal = realpath($targetDir);
-        if ($pluginRootReal === false || $targetDirReal === false || !str_starts_with($targetDirReal, $pluginRootReal)) {
-            return [
-                'success' => false,
-                'error' => 'Resolved path is outside plugin directory.',
-            ];
+        $pluginRootReal = realpath($pluginRoot);
+        if ($targetDirReal === false || $pluginRootReal === false || !str_starts_with($targetDirReal, $pluginRootReal)) {
+            return ['success' => false, 'error' => 'Resolved path is outside plugin directory.'];
         }
 
         [$content, $strippedCount] = $this->stripCodeTagsFromOutput($content, $relativePath);
 
         $filesystem = $this->getFilesystem();
         if ($filesystem === null) {
-            return [
-                'success' => false,
-                'error' => 'WordPress filesystem is not available.',
-            ];
+            return ['success' => false, 'error' => 'WordPress filesystem is not available.'];
         }
+
         $hadExistingFile = $filesystem->exists($targetPath);
         $previousContent = null;
         if ($hadExistingFile) {
             $previousContent = $filesystem->get_contents($targetPath);
             if (!is_string($previousContent)) {
-                return [
-                    'success' => false,
-                    'error' => 'Could not read existing file content for safety backup.',
-                ];
+                return ['success' => false, 'error' => 'Could not read existing file content for safety backup.'];
             }
         }
-        $written = $filesystem->put_contents($targetPath, $content, FS_CHMOD_FILE);
-        if (!$written) {
+
+        $overwrite = (bool) ($params['overwrite'] ?? false);
+        if ($hadExistingFile && !$overwrite) {
+            $existingLines = substr_count($previousContent, "\n") + 1;
             return [
                 'success' => false,
-                'error' => 'Could not write file content via WordPress filesystem.',
-            ];
-        }
-        $lint = $this->validatePhpSyntax($targetPath);
-        if (($lint['valid'] ?? false) !== true) {
-            if ($hadExistingFile && is_string($previousContent)) {
-                $filesystem->put_contents($targetPath, $previousContent, FS_CHMOD_FILE);
-            } else {
-                $filesystem->delete($targetPath, false, 'f');
-            }
-            return [
-                'success' => false,
-                'error' => 'Write reverted: PHP syntax check failed. ' . ($lint['error'] ?? 'Unknown lint error.'),
+                'error' => "File already exists ({$existingLines} lines). "
+                    . "Use patch_plugin_file for targeted changes to existing files. "
+                    . "write_plugin_file is only for creating NEW files.",
+                'suggestion' => 'Read the file with read_plugin_file first, then use patch_plugin_file '
+                    . 'with {search, replace} pairs to change only the specific parts you need. '
+                    . 'This prevents accidental code loss. '
+                    . 'If you truly need a complete rewrite (>50% change), set overwrite=true.',
+                'existing_lines' => $existingLines,
             ];
         }
 
-        $jsLint = $this->validateInlineJavaScript($targetPath);
+        // --- Header protection for main plugin file ---
+        $headerProtected = false;
+        if ($this->isMainPluginFile($slug, $relativePath) && $preserveHeader && is_string($previousContent)) {
+            $merged = $this->applyHeaderProtection($previousContent, $content);
+            if ($merged !== null) {
+                $content = $merged;
+                $headerProtected = true;
+            }
+        }
+
+        $written = $filesystem->put_contents($targetPath, $content, FS_CHMOD_FILE);
+        if (!$written) {
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
+            return ['success' => false, 'error' => 'Could not write file content via WordPress filesystem.'];
+        }
+
+        $lint = $this->validatePhpSyntax($targetPath);
+        if (($lint['valid'] ?? false) !== true) {
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
+            return [
+                'success' => false,
+                'error' => 'Write reverted: PHP syntax check failed. ' . ($lint['error'] ?? 'Unknown lint error.'),
+                'suggestion' => 'Common issues: missing semicolons, unclosed brackets, undefined constants. Fix the syntax error and try again.',
+            ];
+        }
+
+        $cssLint = $this->validateCssSyntax($targetPath);
+        if (($cssLint['valid'] ?? true) === false) {
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
+            return [
+                'success' => false,
+                'error' => 'Write reverted: ' . ($cssLint['error'] ?? 'CSS syntax check failed.'),
+            ];
+        }
+
+        $jsLint = $this->validateJsSyntax($targetPath);
         $fileExt = strtolower((string) pathinfo($relativePath, PATHINFO_EXTENSION));
         if (($jsLint['valid'] ?? true) === false && $fileExt === 'js') {
-            if ($hadExistingFile && is_string($previousContent)) {
-                $filesystem->put_contents($targetPath, $previousContent, FS_CHMOD_FILE);
-            } else {
-                $filesystem->delete($targetPath, false, 'f');
-            }
+            $this->rollbackWrite($filesystem, $targetPath, $hadExistingFile, $previousContent);
             return [
                 'success' => false,
                 'error' => 'Write reverted: ' . ($jsLint['error'] ?? 'JavaScript syntax check failed.'),
             ];
         }
 
-        $bytes = strlen($content);
+        if (preg_match('/\.php$/i', $relativePath)) {
+            wp_cache_delete('plugins', 'plugins');
+        }
+
+        if (is_string($previousContent)) {
+            $this->recordFileVersion($targetPath, $previousContent, $this->getName());
+        }
 
         $result = [
             'success' => true,
             'plugin_slug' => $slug,
             'relative_path' => $relativePath,
-            'bytes_written' => $bytes,
+            'bytes_written' => strlen($content),
             'message' => 'Plugin file written successfully.',
         ];
+
+        $result += $this->buildReadBackData($filesystem, $targetPath);
+
+        if ($headerProtected) {
+            $result['header_protected'] = true;
+            $result['header_notice'] = 'The existing plugin header (Plugin Name, Version, etc.) was preserved. Only the code body was updated.';
+        }
         if (!empty($lint['warning'])) {
             $result['warning'] = $lint['warning'];
         }
         if (($jsLint['valid'] ?? true) === false) {
             $result['js_error'] = $jsLint['error']
-                . ' The file was saved but likely contains broken frontend JavaScript. Please fix the syntax error.';
+                . ' The file was saved but likely contains broken frontend JavaScript.';
         }
         if (!empty($jsLint['warning'] ?? '')) {
             $result['js_warning'] = $jsLint['warning'];
         }
-
         if ($strippedCount > 0) {
             $result['stripped_tags'] = $strippedCount;
             $result['strip_notice'] = "$strippedCount <code>/<pre>-Tag(s) wurden automatisch entfernt.";
@@ -187,169 +230,134 @@ class WritePluginFileTool implements ToolInterface {
             $result['code_tag_warning'] = $codeTagCheck;
         }
 
+        if ($hadExistingFile && is_string($previousContent)) {
+            $oldLines = substr_count($previousContent, "\n") + 1;
+            $newLines = substr_count($content, "\n") + 1;
+            $lostLines = $oldLines - $newLines;
+            if ($lostLines > 5 && $lostLines > (int) ($oldLines * 0.1)) {
+                $result['content_loss_warning'] = "[WARNUNG] Die Datei hatte vorher {$oldLines} Zeilen, "
+                    . "jetzt nur noch {$newLines} Zeilen ({$lostLines} Zeilen weniger). "
+                    . "Pruefe ob du versehentlich bestehenden Code entfernt hast. "
+                    . "Falls ja, lies die vorherige Version und stelle den fehlenden Code mit patch_plugin_file wieder her.";
+            }
+
+            $diff = $this->buildCompactDiff($previousContent, $content);
+            if ($diff !== null) {
+                $result['diff_summary'] = $diff;
+            }
+        }
+
+        if (!$this->isMainPluginFile($slug, $relativePath)) {
+            $constantWarnings = $this->checkUndefinedConstants($filesystem, $pluginRoot, $slug, $content);
+            if (!empty($constantWarnings)) {
+                $result['constant_warning'] = $constantWarnings;
+            }
+        }
+
         return $result;
     }
 
-    private function getFilesystem(): ?\WP_Filesystem_Base {
-        if (!function_exists('WP_Filesystem')) {
-            require_once ABSPATH . 'wp-admin/includes/file.php';
+    // ── Constant Reference Check ─────────────────────────────────────────
+
+    /**
+     * Scan a sub-file for plugin constant references (e.g. MY_PLUGIN_FILE,
+     * MY_PLUGIN_DIR) and verify they are defined in the main plugin file.
+     *
+     * @return string[] Warnings for each undefined constant
+     */
+    private function checkUndefinedConstants(
+        \WP_Filesystem_Base $filesystem,
+        string $pluginRoot,
+        string $slug,
+        string $content
+    ): array {
+        $constPrefix = strtoupper(str_replace('-', '_', $slug));
+        $suffixes = ['_FILE', '_DIR', '_URL', '_VERSION', '_PATH', '_PLUGIN_FILE'];
+        $candidates = [];
+        foreach ($suffixes as $suffix) {
+            $candidates[] = $constPrefix . $suffix;
         }
 
-        if (!WP_Filesystem()) {
+        $referenced = [];
+        foreach ($candidates as $constName) {
+            if (str_contains($content, $constName)) {
+                $referenced[] = $constName;
+            }
+        }
+
+        if (empty($referenced)) {
+            return [];
+        }
+
+        $mainFile = $pluginRoot . '/' . $slug . '.php';
+        if (!$filesystem->exists($mainFile)) {
+            return [];
+        }
+
+        $mainContent = $filesystem->get_contents($mainFile);
+        if (!is_string($mainContent)) {
+            return [];
+        }
+
+        $warnings = [];
+        foreach ($referenced as $constName) {
+            if (!preg_match('/define\s*\(\s*[\'"]' . preg_quote($constName, '/') . '[\'"]\s*,/', $mainContent)) {
+                $warnings[] = "Constant {$constName} is used in this file but not defined in {$slug}.php. Add define('{$constName}', ...) to the main plugin file before require_once.";
+            }
+        }
+
+        return $warnings;
+    }
+
+    // ── Header Protection ────────────────────────────────────────────────
+
+    /**
+     * Split plugin file into header block and code body.
+     * Header = <?php + doc comment containing "Plugin Name:".
+     *
+     * @return array{header: string, body: string}|null
+     */
+    private function splitHeaderAndBody(string $content): ?array {
+        if (!preg_match(
+            '/\A(<\?php\s*\n\s*\/\*\*\n(?:\s*\*[^\n]*\n)*\s*\*\/\s*\n)(.*)\z/s',
+            $content,
+            $matches
+        )) {
             return null;
         }
 
-        global $wp_filesystem;
-        if (!($wp_filesystem instanceof \WP_Filesystem_Base)) {
+        if (!str_contains($matches[1], 'Plugin Name:')) {
             return null;
         }
 
-        return $wp_filesystem;
+        return ['header' => $matches[1], 'body' => $matches[2]];
     }
 
-    private function resolvePluginDirectory(string $requestedSlug): ?string {
-        if (!is_dir(WP_PLUGIN_DIR)) {
+    /**
+     * Merge existing header with new code body.
+     *
+     * Handles three scenarios:
+     * 1. AI sends full file with its own header → existing header + AI body
+     * 2. AI sends <?php without header → existing header + code after <?php
+     * 3. AI sends raw code body → existing header + raw code
+     */
+    private function applyHeaderProtection(string $existingContent, string $newContent): ?string {
+        $existingParts = $this->splitHeaderAndBody($existingContent);
+        if ($existingParts === null) {
             return null;
         }
-        $entries = scandir(WP_PLUGIN_DIR);
-        if ($entries === false) {
-            return null;
+
+        $newParts = $this->splitHeaderAndBody($newContent);
+        if ($newParts !== null) {
+            return $existingParts['header'] . $newParts['body'];
         }
-        $normalized = $this->normalizeSlug($requestedSlug);
-        foreach ($entries as $entry) {
-            if ($entry === '.' || $entry === '..' || !is_dir(WP_PLUGIN_DIR . '/' . $entry)) {
-                continue;
-            }
-            if ($entry === $requestedSlug) {
-                continue;
-            }
-            if ($this->normalizeSlug($entry) === $normalized) {
-                return WP_PLUGIN_DIR . '/' . $entry;
-            }
+
+        $trimmed = ltrim($newContent);
+        if (str_starts_with($trimmed, '<?php')) {
+            $bodyAfterTag = preg_replace('/\A<\?php\s*\n?/', '', $trimmed);
+            return $existingParts['header'] . $bodyAfterTag;
         }
-        return null;
+
+        return $existingParts['header'] . $newContent;
     }
-
-    private function normalizeSlug(string $slug): string {
-        return strtolower(str_replace(['-', '_'], '', $slug));
-    }
-
-    private function validateInlineJavaScript(string $path): array {
-        if (!function_exists('exec')) {
-            return ['valid' => true, 'warning' => 'JS validation skipped (exec unavailable).'];
-        }
-
-        $exitCode = 0;
-        @exec('which node 2>/dev/null', $whichOut, $exitCode);
-        if ($exitCode !== 0) {
-            return ['valid' => true, 'warning' => 'JS validation skipped (node not found).'];
-        }
-
-        $ext = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
-
-        if ($ext === 'js') {
-            $output = [];
-            @exec('node --check ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
-            if ($exitCode !== 0) {
-                return [
-                    'valid' => false,
-                    'error' => 'JavaScript syntax error: ' . $this->extractNodeError($output),
-                ];
-            }
-            return ['valid' => true];
-        }
-
-        if ($ext !== 'php') {
-            return ['valid' => true];
-        }
-
-        $content = file_get_contents($path);
-        if ($content === false || !str_contains($content, '<script')) {
-            return ['valid' => true];
-        }
-
-        if (!preg_match_all('/<script(\s[^>]*)?>(.+?)<\/script>/si', $content, $matches)) {
-            return ['valid' => true];
-        }
-
-        $errors = [];
-        foreach ($matches[2] as $i => $jsBlock) {
-            $attrs = $matches[1][$i] ?? '';
-            if ($attrs !== '' && preg_match('/type\s*=\s*["\'](.*?)["\']/i', $attrs, $typeMatch)) {
-                $type = strtolower(trim($typeMatch[1]));
-                if ($type !== '' && $type !== 'text/javascript' && $type !== 'module') {
-                    continue;
-                }
-            }
-
-            $js = trim($jsBlock);
-            if (strlen($js) < 20) {
-                continue;
-            }
-
-            $cleaned = preg_replace('/<\?(?:php|=)\s.*?\?>/s', '0', $js);
-            if (substr_count($cleaned, '0') - substr_count($js, '0') > 8) {
-                continue;
-            }
-
-            $tmpFile = tempnam(sys_get_temp_dir(), 'levi_js_');
-            if ($tmpFile === false) {
-                continue;
-            }
-            file_put_contents($tmpFile, $cleaned);
-            $output = [];
-            $exitCode = 0;
-            @exec('node --check ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
-            @unlink($tmpFile);
-
-            if ($exitCode !== 0) {
-                $errors[] = 'Script block #' . ($i + 1) . ': ' . $this->extractNodeError($output);
-            }
-        }
-
-        if (!empty($errors)) {
-            return [
-                'valid' => false,
-                'error' => 'JavaScript syntax error(s): ' . implode(' | ', $errors),
-            ];
-        }
-
-        return ['valid' => true];
-    }
-
-    private function extractNodeError(array $output): string {
-        foreach ($output as $line) {
-            if (str_contains($line, 'SyntaxError')) {
-                return trim($line);
-            }
-        }
-        $filtered = array_filter($output, fn($l) => trim($l) !== '' && !str_starts_with(trim($l), 'at ') && !str_starts_with(trim($l), 'Node.js'));
-        return implode(' — ', array_slice($filtered, 0, 3)) ?: 'Unknown JS error.';
-    }
-
-    private function validatePhpSyntax(string $path): array {
-        if (strtolower((string) pathinfo($path, PATHINFO_EXTENSION)) !== 'php') {
-            return ['valid' => true];
-        }
-
-        if (!function_exists('exec')) {
-            return [
-                'valid' => true,
-                'warning' => 'PHP lint skipped (exec unavailable).',
-            ];
-        }
-
-        $output = [];
-        $exitCode = 0;
-        @exec('php -l ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
-        if ($exitCode !== 0) {
-            return [
-                'valid' => false,
-                'error' => trim(implode("\n", $output)) ?: 'PHP lint failed.',
-            ];
-        }
-
-        return ['valid' => true];
-    }
-
 }

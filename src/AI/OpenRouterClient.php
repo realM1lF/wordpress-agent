@@ -9,6 +9,7 @@ use WP_Error;
 class OpenRouterClient implements AIClientInterface {
     use RetriableApiCall;
     private const API_BASE = 'https://openrouter.ai/api/v1';
+    private const PREFERRED_PROVIDER = 'Baseten';
     private ?string $apiKey;
     private string $model;
     private int $timeout;
@@ -44,6 +45,7 @@ class OpenRouterClient implements AIClientInterface {
             'messages' => $this->applyCacheControl($messages),
             'temperature' => $temperature,
             'max_tokens' => $this->maxTokens,
+            'provider' => $this->getProviderPreferences(),
         ];
 
         if (!empty($tools)) {
@@ -239,6 +241,7 @@ class OpenRouterClient implements AIClientInterface {
             'max_tokens' => $this->maxTokens,
             'stream' => true,
             'stream_options' => ['include_usage' => true],
+            'provider' => $this->getProviderPreferences(),
         ];
 
         if (!empty($tools)) {
@@ -247,6 +250,8 @@ class OpenRouterClient implements AIClientInterface {
         }
 
         $fullContent = '';
+        $fullReasoningContent = '';
+        $reasoningSignalled = false;
         $finishReason = null;
         $usage = [];
         $model = null;
@@ -309,7 +314,8 @@ class OpenRouterClient implements AIClientInterface {
                         $hasToolCalls = true;
                         foreach ($delta['tool_calls'] as $tc) {
                             $idx = $tc['index'] ?? 0;
-                            if (!isset($toolCallChunks[$idx])) {
+                            $isNew = !isset($toolCallChunks[$idx]);
+                            if ($isNew) {
                                 $toolCallChunks[$idx] = [
                                     'id' => $tc['id'] ?? '',
                                     'type' => 'function',
@@ -321,12 +327,23 @@ class OpenRouterClient implements AIClientInterface {
                             }
                             if (!empty($tc['function']['name'])) {
                                 $toolCallChunks[$idx]['function']['name'] .= $tc['function']['name'];
+                                if ($isNew) {
+                                    $onChunk(json_encode(['tool' => $tc['function']['name'], 'index' => $idx]), 'tool_call_start');
+                                }
                             }
                             if (isset($tc['function']['arguments'])) {
                                 $toolCallChunks[$idx]['function']['arguments'] .= $tc['function']['arguments'];
                             }
                         }
                         continue;
+                    }
+
+                    if (isset($delta['reasoning_content']) && $delta['reasoning_content'] !== '') {
+                        $fullReasoningContent .= $delta['reasoning_content'];
+                        if (!$reasoningSignalled) {
+                            $reasoningSignalled = true;
+                            $onChunk('', 'reasoning_start');
+                        }
                     }
 
                     if (isset($delta['content']) && $delta['content'] !== '') {
@@ -357,13 +374,26 @@ class OpenRouterClient implements AIClientInterface {
             return new WP_Error('api_error', "OpenRouter streaming returned HTTP $httpCode", ['status' => $httpCode]);
         }
 
-        return [
+        $result = [
             'content' => $fullContent,
             'finish_reason' => $finishReason ?? 'stop',
             'usage' => $usage,
             'model' => $model ?? $this->model,
             'has_tool_calls' => $hasToolCalls,
             'tool_calls' => $hasToolCalls ? array_values($toolCallChunks) : [],
+        ];
+
+        if ($fullReasoningContent !== '') {
+            $result['reasoning_content'] = $fullReasoningContent;
+        }
+
+        return $result;
+    }
+
+    private function getProviderPreferences(): array {
+        return [
+            'order' => [self::PREFERRED_PROVIDER],
+            'allow_fallbacks' => true,
         ];
     }
 
@@ -394,13 +424,13 @@ class OpenRouterClient implements AIClientInterface {
     }
 
     public function testConnection(): array|WP_Error {
-        // Simple test with a cheap model
         $testPayload = [
-            'model' => 'moonshotai/kimi-k2.5',
+            'model' => $this->model,
             'messages' => [
                 ['role' => 'user', 'content' => 'Say "OK" and nothing else.']
             ],
             'max_tokens' => 10,
+            'provider' => $this->getProviderPreferences(),
         ];
 
         $response = wp_remote_post(self::API_BASE . '/chat/completions', [

@@ -38,7 +38,7 @@ class VectorStore {
             $this->db = new \SQLite3($this->dbPath);
             $this->db->enableExceptions(true);
             $this->db->exec('PRAGMA journal_mode=WAL');
-            $this->db->exec('PRAGMA busy_timeout=5000');
+            $this->db->exec('PRAGMA busy_timeout=30000');
             $this->createTables();
         } catch (\Throwable $e) {
             error_log('Levi Agent: SQLite3 init failed: ' . $e->getMessage());
@@ -101,6 +101,9 @@ class VectorStore {
         
         // Migration: Calculate bucket_hash for existing vectors
         $this->migrateAddBucketHash();
+
+        // Migration: Add original_content column for contextual retrieval
+        $this->migrateAddOriginalContentColumn();
     }
     
     /**
@@ -162,7 +165,33 @@ class VectorStore {
             // Silent fail - will retry next time
         }
     }
-    
+
+    /**
+     * Migration: Add original_content column for Contextual Retrieval.
+     * Stores the raw chunk text so the system prompt receives the original
+     * (shorter) content while embeddings use the context-enriched version.
+     */
+    private function migrateAddOriginalContentColumn(): void
+    {
+        try {
+            $result = $this->db->query("PRAGMA table_info(memory_vectors)");
+            $hasOriginalContent = false;
+            while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+                if ($row['name'] === 'original_content') {
+                    $hasOriginalContent = true;
+                    break;
+                }
+            }
+
+            if (!$hasOriginalContent) {
+                $this->db->exec('ALTER TABLE memory_vectors ADD COLUMN original_content TEXT DEFAULT NULL');
+                error_log('Levi VectorStore: Added original_content column');
+            }
+        } catch (\Throwable $e) {
+            error_log('Levi VectorStore original_content migration error: ' . $e->getMessage());
+        }
+    }
+
     /**
      * Calculate bucket hash from first 32 dimensions of vector
      * This enables fast pre-filtering (HNSW-like behavior)
@@ -241,7 +270,8 @@ class VectorStore {
         array $embedding,
         string $memoryType,
         string $sourceFile = '',
-        int $chunkIndex = 0
+        int $chunkIndex = 0,
+        ?string $originalContent = null
     ): bool {
         if (!$this->db) {
             return false;
@@ -251,8 +281,8 @@ class VectorStore {
             $bucketHash = $this->calculateBucketHash($embedding);
             
             $stmt = $this->db->prepare('
-                INSERT INTO memory_vectors (source_file, content, embedding, memory_type, chunk_index, bucket_hash)
-                VALUES (:source_file, :content, :embedding, :memory_type, :chunk_index, :bucket_hash)
+                INSERT INTO memory_vectors (source_file, content, embedding, memory_type, chunk_index, bucket_hash, original_content)
+                VALUES (:source_file, :content, :embedding, :memory_type, :chunk_index, :bucket_hash, :original_content)
             ');
 
             $stmt->bindValue(':source_file', $sourceFile, SQLITE3_TEXT);
@@ -261,6 +291,7 @@ class VectorStore {
             $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
             $stmt->bindValue(':chunk_index', $chunkIndex, SQLITE3_INTEGER);
             $stmt->bindValue(':bucket_hash', $bucketHash, SQLITE3_TEXT);
+            $stmt->bindValue(':original_content', $originalContent, $originalContent !== null ? SQLITE3_TEXT : SQLITE3_NULL);
 
             $stmt->execute();
             return true;
@@ -273,7 +304,7 @@ class VectorStore {
     /**
      * Bulk insert multiple vectors in a single transaction (much faster)
      * 
-     * @param array $vectors Array of ['content', 'embedding', 'memory_type', 'source_file', 'chunk_index']
+     * @param array $vectors Array of ['content', 'embedding', 'memory_type', 'source_file', 'chunk_index', 'original_content'?]
      * @return int Number of inserted vectors
      */
     public function bulkInsertVectors(array $vectors): int {
@@ -285,8 +316,8 @@ class VectorStore {
             $this->db->exec('BEGIN TRANSACTION');
             
             $stmt = $this->db->prepare('
-                INSERT INTO memory_vectors (source_file, content, embedding, memory_type, chunk_index, bucket_hash)
-                VALUES (:source_file, :content, :embedding, :memory_type, :chunk_index, :bucket_hash)
+                INSERT INTO memory_vectors (source_file, content, embedding, memory_type, chunk_index, bucket_hash, original_content)
+                VALUES (:source_file, :content, :embedding, :memory_type, :chunk_index, :bucket_hash, :original_content)
             ');
 
             $inserted = 0;
@@ -299,6 +330,8 @@ class VectorStore {
                 $stmt->bindValue(':memory_type', $vector['memory_type'], SQLITE3_TEXT);
                 $stmt->bindValue(':chunk_index', $vector['chunk_index'], SQLITE3_INTEGER);
                 $stmt->bindValue(':bucket_hash', $bucketHash, SQLITE3_TEXT);
+                $origContent = $vector['original_content'] ?? null;
+                $stmt->bindValue(':original_content', $origContent, $origContent !== null ? SQLITE3_TEXT : SQLITE3_NULL);
                 
                 $stmt->execute();
                 $inserted++;
@@ -361,7 +394,7 @@ class VectorStore {
             $queryBucket = $this->calculateBucketHash($queryEmbedding);
             $similarBuckets = $this->getSimilarBucketPatterns($queryBucket);
 
-            $sql = 'SELECT id, content, embedding, memory_type, source_file FROM memory_vectors WHERE (';
+            $sql = 'SELECT id, content, original_content, embedding, memory_type, source_file FROM memory_vectors WHERE (';
             $bucketConditions = [];
             foreach ($similarBuckets as $i => $pattern) {
                 $bucketConditions[] = "bucket_hash LIKE :bucket{$i}";
@@ -381,7 +414,7 @@ class VectorStore {
                 $stmt->bindValue(':memory_type', $memoryType, SQLITE3_TEXT);
             }
         } else {
-            $sql = 'SELECT id, content, embedding, memory_type, source_file FROM memory_vectors';
+            $sql = 'SELECT id, content, original_content, embedding, memory_type, source_file FROM memory_vectors';
             if ($memoryType) {
                 $sql .= ' WHERE memory_type = :memory_type';
             }
@@ -402,9 +435,10 @@ class VectorStore {
             $similarity = $this->cosineSimilarity($queryEmbedding, $vector);
             
             if ($similarity >= $minSimilarity) {
+                $displayContent = $row['original_content'] ?? $row['content'];
                 $similarities[] = [
                     'id' => $row['id'],
-                    'content' => $row['content'],
+                    'content' => $displayContent,
                     'memory_type' => $row['memory_type'],
                     'source_file' => $row['source_file'],
                     'similarity' => $similarity,
@@ -794,6 +828,84 @@ class VectorStore {
         return $stats;
     }
 
+    /**
+     * Batch-generate embeddings for multiple texts in one API call.
+     * Far more efficient than calling generateEmbedding() in a loop.
+     *
+     * @param string[] $texts
+     * @return array[]|WP_Error Array of embedding vectors (same order as input)
+     */
+    public function generateEmbeddingBatch(array $texts): array|WP_Error {
+        if (empty($texts)) {
+            return [];
+        }
+
+        $cache = new EmbeddingCache();
+        $results = array_fill(0, count($texts), null);
+        $uncached = [];
+
+        foreach ($texts as $i => $text) {
+            $cached = $cache->get($text);
+            if ($cached !== null) {
+                $results[$i] = $cached;
+            } else {
+                $uncached[$i] = substr($text, 0, 8000);
+            }
+        }
+
+        if (empty($uncached)) {
+            return $results;
+        }
+
+        $config = $this->getEmbeddingRequestConfig();
+        if (is_wp_error($config)) {
+            return $config;
+        }
+
+        $batchTexts = array_values($uncached);
+        $batchIndices = array_keys($uncached);
+
+        $response = wp_remote_post($config['endpoint'], [
+            'headers' => $config['headers'],
+            'body' => json_encode([
+                'input' => $batchTexts,
+                'model' => $config['model'],
+            ]),
+            'timeout' => 60,
+        ]);
+
+        if (is_wp_error($response)) {
+            return $response;
+        }
+
+        $statusCode = wp_remote_retrieve_response_code($response);
+        if ($statusCode !== 200) {
+            $body = json_decode(wp_remote_retrieve_body($response), true);
+            $error = $body['error']['message'] ?? ('Batch embedding failed (' . $config['provider'] . ')');
+            return new WP_Error('embedding_batch_failed', $error);
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $data = $body['data'] ?? [];
+
+        foreach ($data as $item) {
+            $idx = $item['index'] ?? null;
+            $embedding = $item['embedding'] ?? [];
+            if ($idx !== null && isset($batchIndices[$idx]) && !empty($embedding)) {
+                $originalIdx = $batchIndices[$idx];
+                $results[$originalIdx] = $embedding;
+                $cache->set($texts[$originalIdx], $embedding);
+            }
+        }
+
+        $missing = array_filter($results, fn($r) => $r === null);
+        if (!empty($missing)) {
+            return new WP_Error('embedding_batch_incomplete', count($missing) . ' embeddings missing from batch response');
+        }
+
+        return $results;
+    }
+
     private function getEmbeddingRequestConfig(): array|WP_Error {
         $settings = new \Levi\Agent\Admin\SettingsPage();
         $provider = $settings->getProvider();
@@ -832,6 +944,14 @@ class VectorStore {
             'model' => $model,
             'headers' => $headers,
         ];
+    }
+
+    /**
+     * Expose the underlying SQLite3 handle for BM25Index (shares the same DB).
+     */
+    public function getDatabase(): ?\SQLite3
+    {
+        return $this->db;
     }
 
     public function __destruct() {

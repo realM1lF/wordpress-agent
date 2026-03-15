@@ -11,7 +11,7 @@ class GetPostsTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get WordPress BEITRÄGE (posts) and custom post types. Use THIS tool when the user says "Beitrag", "Beiträge", "Post", "Posts", "Blog", "Artikel". For SEITEN (pages) use get_pages instead! Use post_type parameter for custom types like WooCommerce products. CRITICAL: Returns ONLY actual posts from the database - never invent, assume, or hallucinate posts that are not in the result. The result key is "posts" and _data_type is "posts" — never present these as "Seiten".';
+        return 'Query WordPress posts (Beitraege) and custom post types with filters. For pages (Seiten) use get_pages instead. Use post_type for custom types like WooCommerce products.';
     }
 
     public function getParameters(): array {
@@ -204,5 +204,13 @@ class GetPostsTool implements ToolInterface {
         }
 
         return $result;
+    }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['status' => 'publish', 'per_page' => 10],
+            ['status' => 'draft', 'search' => 'Willkommen', 'per_page' => 5],
+        ];
     }
 }

@@ -6,12 +6,32 @@ class ElementorBuildTool implements ToolInterface {
 
     private const MAX_JSON_BYTES = 512000;
 
+    private const ACTION_REQUIRED_PARAMS = [
+        'create_page'       => ['title'],
+        'update_section'    => ['post_id'],
+        'add_widget'        => ['post_id', 'widget_type'],
+        'remove_element'    => ['post_id', 'element_id'],
+        'apply_template'    => ['post_id', 'template_id'],
+        'duplicate_section' => ['post_id', 'section_index'],
+    ];
+
     public function getName(): string {
         return 'elementor_build';
     }
 
     public function getDescription(): string {
-        return 'Edit and extend existing Elementor page layouts. Best for: modifying content on existing pages, adding/removing widgets, updating settings, applying saved templates, or duplicating sections. Always use get_elementor_data "get_page_layout" first to see the current structure. Use real Elementor widgets (heading, text-editor, button, image, icon-box, etc.) – NEVER put raw HTML into a text-editor widget as a substitute. For new pages, create_page builds a basic structure as draft – recommend the user starts with a template kit for professional designs.';
+        return 'Edit and extend Elementor page layouts: modify content, add/remove widgets, update settings, apply templates. '
+            . 'Always read the page layout with get_elementor_data first. '
+            . 'Use real Elementor widgets (heading, text-editor, button, image, icon-box, etc.). '
+            . 'Does not create new pages — use create_page first, then edit with this tool.';
+    }
+
+    public function getInputExamples(): array {
+        return [
+            ['action' => 'update_element', 'post_id' => 123, 'element_id' => 'abc123', 'settings' => ['title' => 'Neuer Titel']],
+            ['action' => 'add_element', 'post_id' => 123, 'parent_id' => 'container1', 'widget_type' => 'heading', 'settings' => ['title' => 'Willkommen', 'header_size' => 'h2']],
+            ['action' => 'remove_element', 'post_id' => 123, 'element_id' => 'abc123'],
+        ];
     }
 
     public function getParameters(): array {
@@ -77,6 +97,22 @@ class ElementorBuildTool implements ToolInterface {
     public function execute(array $params): array {
         if (!did_action('elementor/loaded')) {
             return ['success' => false, 'error' => 'Elementor is not active on this site.'];
+        }
+
+        $action = (string) ($params['action'] ?? '');
+        if (isset(self::ACTION_REQUIRED_PARAMS[$action])) {
+            $missing = [];
+            foreach (self::ACTION_REQUIRED_PARAMS[$action] as $param) {
+                if (!isset($params[$param]) || (is_string($params[$param]) && trim($params[$param]) === '')) {
+                    $missing[] = $param;
+                }
+            }
+            if (!empty($missing)) {
+                return [
+                    'success' => false,
+                    'error' => "Action '{$action}' requires: " . implode(', ', $missing) . '.',
+                ];
+            }
         }
 
         $action = (string) ($params['action'] ?? '');

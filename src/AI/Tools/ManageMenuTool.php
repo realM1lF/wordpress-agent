@@ -9,7 +9,10 @@ class ManageMenuTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Read and manage WordPress navigation menus and widget areas. List menus, get menu items, add/remove items, list sidebars and their widgets.';
+        return 'Read and manage WordPress navigation menus and widget areas. '
+            . 'Actions: list_menus, get_menu_items (items in a specific menu), add_menu_item (page/post/URL/category), remove_menu_item, list_sidebars, get_sidebar_widgets. '
+            . 'Always use get_menu_items to inspect the current menu structure before adding or removing items. '
+            . 'Menu item types: page, post, custom (URL), taxonomy term.';
     }
 
     public function getParameters(): array {
@@ -263,6 +266,15 @@ class ManageMenuTool implements ToolInterface {
             'success' => true,
             'sidebar_id' => $sidebarId,
             'widgets' => $widgets,
+        ];
+    }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['action' => 'list'],
+            ['action' => 'add_item', 'menu_id' => 1, 'title' => 'Shop', 'url' => '/shop/'],
+            ['action' => 'create', 'name' => 'Footer Navigation'],
         ];
     }
 }

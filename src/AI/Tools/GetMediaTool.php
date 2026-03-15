@@ -9,7 +9,10 @@ class GetMediaTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get a list of media files from the WordPress Media Library.';
+        return 'Search and list media files (images, PDFs, videos) from the WordPress Media Library. '
+            . 'Returns file URL, title, dimensions, MIME type, and attachment ID for each item. '
+            . 'Supports filtering by MIME type and search term. '
+            . 'Use the returned attachment IDs with upload_media or manage_post_meta to set featured images.';
     }
 
     public function getParameters(): array {
