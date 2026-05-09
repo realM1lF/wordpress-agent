@@ -427,6 +427,21 @@ class ChatController extends WP_REST_Controller
 
     private function emitSSE(string $type, array $data): void
     {
+        // Safety: only emit SSE when the response is actually in event-stream mode.
+        // handleToolCallsV2 (non-streaming) may call this, but we must not output
+        // raw SSE data into a regular JSON REST response.
+        $headers = headers_list();
+        $isSSE = false;
+        foreach ($headers as $header) {
+            if (stripos($header, "Content-Type: text/event-stream") !== false) {
+                $isSSE = true;
+                break;
+            }
+        }
+        if (!$isSSE) {
+            return;
+        }
+
         $data["type"] = $type;
         echo "data: " . wp_json_encode($data) . "\n\n";
         if (function_exists("ob_flush")) {

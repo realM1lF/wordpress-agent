@@ -264,36 +264,57 @@ trait ExecutesToolLoopV2
                 ];
             }
 
-            // Loop-level fallback: if too many consecutive failures, switch to V1
+            // Loop-level safety brake: too many consecutive failures
             if ($consecutiveFailureCount >= self::V2_FALLBACK_THRESHOLD) {
                 error_log(
-                    "Levi V2: {$consecutiveFailureCount} consecutive failures — falling back to V1 specialized tools",
+                    "Levi V2: {$consecutiveFailureCount} consecutive failures — stopping tool loop",
                 );
-                $this->emitSSE("fallback_v1", [
-                    "reason" =>
-                        "Zu viele aufeinanderfolgende Fehler mit generischen Tools",
-                    "failed_tools" => array_values(
-                        array_unique(
-                            array_map(
-                                fn($r) => $r["tool"] ?? "",
-                                array_slice(
-                                    $orchestrator->getExecutionLog(),
-                                    -$consecutiveFailureCount,
-                                ),
+                $orchestrator->transitionTo(AgentState::ERROR);
+                $this->emitSSE("state", [
+                    "state" => AgentState::ERROR->value,
+                    "label" => AgentState::ERROR->label(),
+                ]);
+
+                $failedTools = array_values(
+                    array_unique(
+                        array_map(
+                            fn($r) => $r["tool"] ?? "",
+                            array_slice(
+                                $orchestrator->getExecutionLog(),
+                                -$consecutiveFailureCount,
                             ),
                         ),
                     ),
-                ]);
-                $this->useGenericTools = false;
-                $this->handleToolCallsStreaming(
-                    $messageData,
-                    $messages,
+                );
+
+                $errorMessage =
+                    "Mehrere aufeinanderfolgende Fehler mit den generischen Tools (" .
+                    implode(", ", $failedTools) .
+                    "). " .
+                    "Du kannst in den Einstellungen die generischen Tools deaktivieren und die spezialisierten Tools verwenden.";
+
+                $this->conversationRepo->saveMessage(
                     $sessionId,
                     $userId,
-                    $latestUserMessage,
-                    $heartbeat,
-                    $webSearch,
+                    "assistant",
+                    $errorMessage,
                 );
+
+                $this->emitSSE("done", [
+                    "session_id" => $sessionId,
+                    "message" => $errorMessage,
+                    "tools_used" => array_values(
+                        array_unique(
+                            array_map(
+                                fn($r) => $r["tool"] ?? "",
+                                $orchestrator->getExecutionLog(),
+                            ),
+                        ),
+                    ),
+                    "state_history" => $orchestrator->getStateHistory(),
+                    "usage" => $this->usageAccumulator ?? [],
+                ]);
+                $this->flushUsage($sessionId, $userId);
                 return;
             }
 
@@ -553,20 +574,52 @@ trait ExecutesToolLoopV2
                 ];
             }
 
-            // Loop-level fallback: if too many consecutive failures, switch to V1
+            // Loop-level safety brake: too many consecutive failures
             if ($consecutiveFailureCount >= self::V2_FALLBACK_THRESHOLD) {
                 error_log(
-                    "Levi V2 (non-streaming): {$consecutiveFailureCount} consecutive failures — falling back to V1",
+                    "Levi V2 (non-streaming): {$consecutiveFailureCount} consecutive failures — stopping tool loop",
                 );
-                $this->useGenericTools = false;
-                return $this->handleToolCalls(
-                    $messageData,
-                    $messages,
+                $orchestrator->transitionTo(AgentState::ERROR);
+
+                $failedTools = array_values(
+                    array_unique(
+                        array_map(
+                            fn($r) => $r["tool"] ?? "",
+                            array_slice(
+                                $orchestrator->getExecutionLog(),
+                                -$consecutiveFailureCount,
+                            ),
+                        ),
+                    ),
+                );
+
+                $errorMessage =
+                    "Mehrere aufeinanderfolgende Fehler mit den generischen Tools (" .
+                    implode(", ", $failedTools) .
+                    "). " .
+                    "Du kannst in den Einstellungen die generischen Tools deaktivieren und die spezialisierten Tools verwenden.";
+
+                $this->conversationRepo->saveMessage(
                     $sessionId,
                     $userId,
-                    $latestUserMessage,
-                    $webSearch,
+                    "assistant",
+                    $errorMessage,
                 );
+
+                return new \WP_REST_Response([
+                    "session_id" => $sessionId,
+                    "message" => $errorMessage,
+                    "tools_used" => array_values(
+                        array_unique(
+                            array_map(
+                                fn($r) => $r["tool"] ?? "",
+                                $orchestrator->getExecutionLog(),
+                            ),
+                        ),
+                    ),
+                    "state_history" => $orchestrator->getStateHistory(),
+                    "usage" => $this->usageAccumulator ?? [],
+                ]);
             }
 
             $recentResults = array_slice($toolResults, -count($toolCalls));
