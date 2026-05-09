@@ -1482,6 +1482,17 @@
     height: 14px;
 }
 
+.levi-plan-note {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: hsla(263, 70%, 50%, 0.08);
+    border-radius: 8px;
+    font-size: 12px;
+    color: #a78bfa;
+    text-align: center;
+    font-style: italic;
+}
+
 /* Light mode overrides */
 .levi-chat-light .levi-plan-panel {
     background: hsla(0, 0%, 100%, 0.55);
@@ -1503,4 +1514,9 @@
 
 .levi-chat-light .levi-plan-tools .dashicons {
     color: #7c3aed;
+}
+
+.levi-chat-light .levi-plan-note {
+    background: hsla(263, 70%, 50%, 0.06);
+    color: #6d28d9;
 }

@@ -1413,21 +1413,7 @@
           '<ul class="levi-plan-tools">' +
           toolsHtml +
           "</ul>" +
-          '<button type="button" class="levi-plan-approve-btn">' +
-          '<span class="dashicons dashicons-yes"></span> Plan freigeben' +
-          "</button>";
-
-        var approveBtn = planEl.querySelector(".levi-plan-approve-btn");
-        if (approveBtn) {
-          approveBtn.addEventListener("click", function () {
-            approveBtn.disabled = true;
-            approveBtn.textContent = "Freigegeben";
-            approveBtn.classList.add("levi-plan-approved");
-            // Insert a user confirmation message into the chat
-            addMessage("Plan freigegeben. Führe die Aktionen aus.", "user");
-            messages.scrollTop = messages.scrollHeight;
-          });
-        }
+          '<div class="levi-plan-note">Levi führt diese Aktionen jetzt aus…</div>';
 
         contentEl.appendChild(planEl);
         messages.scrollTop = messages.scrollHeight;
