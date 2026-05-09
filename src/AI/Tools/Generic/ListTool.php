@@ -29,6 +29,7 @@ class ListTool extends AbstractTool {
                 'type' => 'string',
                 'enum' => ['file', 'post', 'page', 'plugin', 'theme', 'user', 'media'],
                 'description' => 'Was aufgelistet werden soll',
+                'required' => true,
             ],
             'directory' => [
                 'type' => 'string',

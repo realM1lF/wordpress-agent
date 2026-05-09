@@ -31,6 +31,7 @@ class InstallTool extends AbstractTool {
                 'type' => 'string',
                 'enum' => ['install', 'activate', 'deactivate', 'delete'],
                 'description' => 'Aktion',
+                'required' => true,
             ],
             'source' => [
                 'type' => 'string',
