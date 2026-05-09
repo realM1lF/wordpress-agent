@@ -36,38 +36,30 @@ Statt durch Menüs zu navigieren, beschreibst du Levi einfach, was du willst:
 
 > *"Ändere den Titel der Startseite auf 'Willkommen bei uns'"*
 
-### 2. 40+ Integrierte Tools
+### 2. Integrierte Tools
 
-Levi hat direkten Zugriff auf deine WordPress-Installation über spezialisierte Tools:
+Levi hat direkten Zugriff auf deine WordPress-Installation über zwei Tool-Architekturen:
 
-**Content Management**
-- Posts & Pages erstellen, bearbeiten, löschen
-- Custom Post Types verwalten
-- Media Library verwalten
-- Kategorien & Tags verwalten
+**Standard-Modus (44 spezialisierte Tools)**
+Für maximale Präzision bei komplexen WordPress-Aufgaben:
+- Content Management: Posts, Pages, Media, Taxonomien
+- Plugin & Theme Verwaltung: Installation, Datei-Edits, Scaffolds
+- WooCommerce Integration: Produkte, Gutscheine, Bestellungen
+- System-Administration: Benutzer, Menüs, Cron-Jobs, Error-Logs
+- Power-Tools: PHP-Sandbox, HTTP-Requests, REST-API-Discovery
 
-**Plugin & Theme Verwaltung**
-- Plugins aus dem Repository installieren
-- Themes wechseln
-- Plugin-/Theme-Dateien direkt bearbeiten
-- Plugin-Scaffolds erstellen
+**Beta: Generische Tools (12 universelle Tools) — 0.9.0**
+Inspiriert von Claude Code und Aider — höhere Zuverlässigkeit bei geringerem Token-Verbrauch:
+- `read`, `write`, `edit`, `list`, `grep` — Datei- und Content-Operationen
+- `execute` — PHP/WP-Code ausführen
+- `install` — Plugins/Themes verwalten
+- `manage` — WordPress CRUD (Posts, Users, Taxonomien, Menüs)
+- `manage_woo` — WooCommerce-Operationen
+- `manage_elementor` — Elementor-Verwaltung
+- `fetch` — HTTP-Requests
+- `health_check` — Systemdiagnose
 
-**WooCommerce Integration**
-- Produkte suchen und aktualisieren
-- Gutscheine erstellen und verwalten
-- Bestellungen und Versandzonen anzeigen
-
-**System-Administration**
-- Benutzer verwalten (Rollen zuweisen)
-- WordPress-Einstellungen ändern
-- Menüs bearbeiten
-- Cron-Jobs verwalten
-- Error-Logs lesen
-
-**Power-Tools (für Entwickler)**
-- PHP-Code direkt ausführen (Sandboxed)
-- HTTP-Requests auf eigene Site senden
-- REST-API-Endpunkte entdecken
+Aktiviere generische Tools in den Einstellungen unter „Erweitert → Generische Tools verwenden".
 
 ### 3. Multi-Layer Memory-System
 
