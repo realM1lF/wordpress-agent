@@ -227,10 +227,10 @@ PROMPT;
         }
 
         return match ($provider) {
-            'openrouter' => 'moonshotai/kimi-k2.5',
+            'openrouter' => 'moonshotai/kimi-k2.6',
             'openai' => 'gpt-5-mini',
             'anthropic' => 'claude-haiku-4-5',
-            default => 'moonshotai/kimi-k2.5',
+            default => 'moonshotai/kimi-k2.6',
         };
     }
 }

@@ -1490,7 +1490,7 @@ class SettingsPage
             ],
             default => [
                 [
-                    "name" => "Kimi K2.5",
+                    "name" => "Kimi K2.6",
                     "price" => '$0.60 / $3.00',
                     "context" => "262K",
                     "best_for" => $this->tr(
@@ -2799,7 +2799,7 @@ $profileKey
                 "o4-mini" => "o4-mini (Reasoning Budget)",
             ],
             default => [
-                "moonshotai/kimi-k2.5" => "Kimi K2.5",
+                "moonshotai/kimi-k2.6" => "Kimi K2.6",
                 "openai/gpt-5.3-codex" => "GPT 5.3 Codex",
                 "anthropic/claude-opus-4.6" => "Claude Opus 4.6",
                 "anthropic/claude-sonnet-4.6" => "Claude Sonnet 4.6",
@@ -2864,7 +2864,7 @@ $profileKey
                     "context_limit" => 128000,
                     "max_output_tokens" => 16400,
                 ],
-                "moonshotai/kimi-k2.5" => [
+                "moonshotai/kimi-k2.6" => [
                     "context_limit" => 256000,
                     "max_output_tokens" => 64000,
                 ],
@@ -2950,8 +2950,8 @@ $profileKey
             "openrouter_api_key" => "",
             "openai_api_key" => "",
             "anthropic_api_key" => "",
-            "openrouter_model" => "moonshotai/kimi-k2.5",
-            "openrouter_alt_model" => "moonshotai/kimi-k2.5",
+            "openrouter_model" => "moonshotai/kimi-k2.6",
+            "openrouter_alt_model" => "moonshotai/kimi-k2.6",
             "openai_model" => "gpt-5.4",
             "anthropic_model" => "claude-sonnet-4-6",
             "rate_limit" => 100,

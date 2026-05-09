@@ -190,8 +190,8 @@ class OpenRouterOAuth {
         }
 
         $settings['ai_provider'] = 'openrouter';
-        $settings['openrouter_model'] = $settings['openrouter_model'] ?? 'moonshotai/kimi-k2.5';
-        $settings['openrouter_alt_model'] = $settings['openrouter_alt_model'] ?? 'moonshotai/kimi-k2.5';
+        $settings['openrouter_model'] = $settings['openrouter_model'] ?? 'moonshotai/kimi-k2.6';
+        $settings['openrouter_alt_model'] = $settings['openrouter_alt_model'] ?? 'moonshotai/kimi-k2.6';
         $settings['tool_profile'] = $settings['tool_profile'] ?? 'standard';
         $settings['allow_destructive'] = $settings['allow_destructive'] ?? 0;
         $settings['max_tool_iterations'] = $settings['max_tool_iterations'] ?? 25;
