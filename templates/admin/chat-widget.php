@@ -1,4 +1,6 @@
-<?php if (!defined('ABSPATH')) exit; ?>
+<?php if (!defined("ABSPATH")) {
+    exit();
+} ?>
 <div id="levi-chat-widget" class="levi-chat-widget">
     <button class="levi-chat-toggle" id="levi-chat-toggle" title="KI-Assistent">
         <span class="dashicons dashicons-format-chat"></span>
@@ -7,11 +9,18 @@
         <div class="levi-chat-header">
             <span class="levi-chat-title">
                 <span class="levi-chat-title-avatar-frame" aria-hidden="true">
-                    <img src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>" alt="" class="levi-chat-title-avatar">
+                    <img src="<?php echo esc_url(
+                        LEVI_AGENT_PLUGIN_URL .
+                            "assets/images/levi-avatar-icon.webp",
+                    ); ?>" alt="" class="levi-chat-title-avatar">
                 </span>
                 Levi Assistant
                 <span class="levi-chat-alpha-badge">ALPHA</span>
             </span>
+            <div class="levi-chat-header-status">
+                <span class="levi-chat-header-spinner"></span>
+                <span class="levi-chat-header-status-text"></span>
+            </div>
             <div class="levi-chat-header-actions">
                 <button class="levi-chat-expand" id="levi-chat-expand" title="Full Width">
                     <span class="dashicons dashicons-editor-expand"></span>
@@ -25,12 +34,17 @@
         <div class="levi-chat-messages" id="levi-chat-messages">
             <div class="levi-message levi-message-assistant">
                 <div class="levi-message-avatar levi-message-avatar-assistant">
-                    <img src="<?php echo esc_url(LEVI_AGENT_PLUGIN_URL . 'assets/images/levi-avatar-icon.webp'); ?>" alt="Levi" class="levi-message-avatar-image" loading="lazy" decoding="async" onerror="this.style.display='none'; this.parentElement.classList.add('levi-avatar-fallback-visible');">
+                    <img src="<?php echo esc_url(
+                        LEVI_AGENT_PLUGIN_URL .
+                            "assets/images/levi-avatar-icon.webp",
+                    ); ?>" alt="Levi" class="levi-message-avatar-image" loading="lazy" decoding="async" onerror="this.style.display='none'; this.parentElement.classList.add('levi-avatar-fallback-visible');">
                     <span class="levi-message-avatar-fallback">L</span>
                 </div>
                 <div class="levi-message-main">
                     <div class="levi-message-content">
-                        Hallo <?php echo esc_html(wp_get_current_user()->display_name); ?>! 👋<br>
+                        Hallo <?php echo esc_html(
+                            wp_get_current_user()->display_name,
+                        ); ?>! 👋<br>
                         Ich bin dein WordPress KI-Assistent. Wie kann ich dir helfen?
                     </div>
                 </div>
@@ -46,14 +60,19 @@
                     <span class="dashicons dashicons-paperclip"></span>
                 </button>
                 <input id="levi-chat-file-input" type="file" accept=".txt,.md,.csv,.json,.xml,.log,.jpg,.jpeg,.png,.gif,.webp,text/plain,text/markdown,text/csv,application/json,image/*" multiple hidden>
-                <?php if ((new \Levi\Agent\Admin\SettingsPage())->isWebSearchEnabled()): ?>
-                <button id="levi-chat-web-search-btn" class="levi-chat-web-search-btn" type="button" title="<?php esc_attr_e('Web-Suche für diese Nachricht aktivieren', 'levi-agent'); ?>">
+                <?php if (
+                    (new \Levi\Agent\Admin\SettingsPage())->isWebSearchEnabled()
+                ): ?>
+                <button id="levi-chat-web-search-btn" class="levi-chat-web-search-btn" type="button" title="<?php esc_attr_e(
+                    "Web-Suche für diese Nachricht aktivieren",
+                    "levi-agent",
+                ); ?>">
                     <span class="dashicons dashicons-admin-site-alt3"></span>
                 </button>
                 <?php endif; ?>
-                <textarea 
-                    id="levi-chat-input" 
-                    class="levi-chat-input" 
+                <textarea
+                    id="levi-chat-input"
+                    class="levi-chat-input"
                     placeholder="Schreib eine Nachricht..."
                     rows="2"
                 ></textarea>

@@ -21,5 +21,16 @@ interface AIClientInterface {
      */
     public function streamChat(array $messages, callable $onChunk, array $tools = []): array|WP_Error;
 
+    /**
+     * Set tool_choice for the next API call. Resets after each call.
+     * @param string|null $toolChoice  'auto' (default), 'required', or 'none'.
+     */
+    public function setToolChoice(?string $toolChoice): void;
+
     public function testConnection(): array|WP_Error;
+
+    /**
+     * Override the API key at runtime (e.g. for pre-save test).
+     */
+    public function overrideApiKey(string $key): void;
 }

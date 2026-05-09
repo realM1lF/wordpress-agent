@@ -101,7 +101,11 @@ class WooCommerceManageTool implements ToolInterface {
             ],
             'category_ids' => [
                 'type' => 'string',
-                'description' => 'Comma-separated category term IDs (for create/update_product)',
+                'description' => 'Comma-separated category term IDs (for create/update_product). Prefer "categories" parameter with names instead.',
+            ],
+            'categories' => [
+                'type' => 'string',
+                'description' => 'Comma-separated category names (for create/update_product). Categories are matched by name or created automatically. Example: "Figuren,Anime"',
             ],
             'attributes' => [
                 'type' => 'string',
@@ -238,15 +242,18 @@ class WooCommerceManageTool implements ToolInterface {
         if (isset($params['stock_status'])) {
             $product->set_stock_status((string) $params['stock_status']);
         }
-        if (isset($params['category_ids'])) {
-            $ids = array_map('intval', array_filter(explode(',', (string) $params['category_ids'])));
-            if (!empty($ids)) {
-                $product->set_category_ids($ids);
-            }
+        $categoryIds = $this->resolveProductCategoryIds($params);
+        if (!empty($categoryIds)) {
+            $product->set_category_ids($categoryIds);
         }
 
         $product->save();
         $this->clearProductTransients($product->get_id());
+
+        $verify = [
+            ['type' => 'wc_product_field', 'product_id' => $product->get_id(), 'field' => 'name', 'expected' => $name],
+            ['type' => 'wc_product_field', 'product_id' => $product->get_id(), 'field' => 'status', 'expected' => $product->get_status()],
+        ];
 
         $result = [
             'success' => true,
@@ -256,6 +263,7 @@ class WooCommerceManageTool implements ToolInterface {
             'status' => $product->get_status(),
             'permalink' => $product->get_permalink(),
             'message' => "Product '{$name}' created (type: {$type}).",
+            '_verify' => $verify,
         ];
 
         if ($type === 'variable') {
@@ -320,10 +328,12 @@ class WooCommerceManageTool implements ToolInterface {
             $product->set_status((string) $params['product_status']);
             $changes[] = 'status=' . $params['product_status'];
         }
-        if (isset($params['category_ids'])) {
-            $ids = array_map('intval', array_filter(explode(',', (string) $params['category_ids'])));
-            $product->set_category_ids($ids);
-            $changes[] = 'categories=' . implode(',', $ids);
+        if (isset($params['category_ids']) || isset($params['categories'])) {
+            $catIds = $this->resolveProductCategoryIds($params);
+            if (!empty($catIds)) {
+                $product->set_category_ids($catIds);
+                $changes[] = 'categories=' . implode(',', $catIds);
+            }
         }
 
         if (empty($changes)) {
@@ -333,13 +343,29 @@ class WooCommerceManageTool implements ToolInterface {
         $product->save();
         $this->clearProductTransients($productId);
 
-        return [
+        $verify = [];
+        if (isset($params['name'])) {
+            $verify[] = ['type' => 'wc_product_field', 'product_id' => $productId, 'field' => 'name', 'expected' => sanitize_text_field((string) $params['name'])];
+        }
+        if (isset($params['product_status'])) {
+            $verify[] = ['type' => 'wc_product_field', 'product_id' => $productId, 'field' => 'status', 'expected' => (string) $params['product_status']];
+        }
+        if (isset($params['regular_price'])) {
+            $verify[] = ['type' => 'wc_product_field', 'product_id' => $productId, 'field' => 'regular_price', 'expected' => (string) $params['regular_price']];
+        }
+
+        $result = [
             'success' => true,
             'product_id' => $productId,
             'product_name' => $product->get_name(),
             'changes' => $changes,
             'message' => 'Product updated successfully.',
         ];
+        if (!empty($verify)) {
+            $result['_verify'] = $verify;
+        }
+
+        return $result;
     }
 
     private function deleteProduct(array $params): array {
@@ -362,6 +388,9 @@ class WooCommerceManageTool implements ToolInterface {
             'product_id' => $productId,
             'product_name' => $name,
             'message' => "Product '{$name}' deleted.",
+            '_verify' => [
+                ['type' => 'post_deleted', 'post_id' => $productId, 'force' => true],
+            ],
         ];
     }
 
@@ -669,6 +698,9 @@ class WooCommerceManageTool implements ToolInterface {
             'variation_id' => $variationId,
             'parent_id' => $parentId,
             'message' => 'Variation deleted.',
+            '_verify' => [
+                ['type' => 'post_deleted', 'post_id' => $variationId, 'force' => true],
+            ],
         ];
     }
 
@@ -722,10 +754,19 @@ class WooCommerceManageTool implements ToolInterface {
             return ['success' => false, 'error' => 'No tax settings specified. Provide tax_enabled and/or prices_include_tax.'];
         }
 
+        $verify = [];
+        if (isset($params['tax_enabled'])) {
+            $verify[] = ['type' => 'option_value', 'option' => 'woocommerce_calc_taxes', 'expected' => (bool) $params['tax_enabled'] ? 'yes' : 'no'];
+        }
+        if (isset($params['prices_include_tax'])) {
+            $verify[] = ['type' => 'option_value', 'option' => 'woocommerce_prices_include_tax', 'expected' => (bool) $params['prices_include_tax'] ? 'yes' : 'no'];
+        }
+
         return [
             'success' => true,
             'changes' => $changes,
             'message' => 'Tax settings updated.',
+            '_verify' => $verify,
         ];
     }
 
@@ -800,6 +841,9 @@ class WooCommerceManageTool implements ToolInterface {
             'coupon_id' => $couponId,
             'code' => $code,
             'message' => 'Coupon deleted.',
+            '_verify' => [
+                ['type' => 'post_deleted', 'post_id' => $couponId, 'force' => true],
+            ],
         ];
     }
 
@@ -846,6 +890,41 @@ class WooCommerceManageTool implements ToolInterface {
         if (isset($params['usage_limit'])) {
             $coupon->set_usage_limit((int) $params['usage_limit']);
         }
+    }
+
+    /**
+     * Resolve product category IDs from either numeric IDs or category names.
+     * Unknown names are created automatically as product_cat terms.
+     */
+    private function resolveProductCategoryIds(array $params): array {
+        $ids = [];
+
+        if (isset($params['category_ids'])) {
+            $ids = array_map('intval', array_filter(explode(',', (string) $params['category_ids'])));
+        }
+
+        if (isset($params['categories'])) {
+            $names = array_filter(array_map('trim', explode(',', (string) $params['categories'])));
+            foreach ($names as $name) {
+                if (is_numeric($name)) {
+                    $ids[] = (int) $name;
+                    continue;
+                }
+                $term = get_term_by('name', $name, 'product_cat');
+                if ($term) {
+                    $ids[] = (int) $term->term_id;
+                } else {
+                    $inserted = wp_insert_term($name, 'product_cat');
+                    if (!is_wp_error($inserted)) {
+                        $ids[] = (int) $inserted['term_id'];
+                    } elseif ($inserted->get_error_code() === 'term_exists') {
+                        $ids[] = (int) $inserted->get_error_data('term_exists');
+                    }
+                }
+            }
+        }
+
+        return array_unique(array_filter($ids));
     }
 
     private function clearProductTransients(int $productId): void {

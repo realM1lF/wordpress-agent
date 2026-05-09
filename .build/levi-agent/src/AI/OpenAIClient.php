@@ -13,6 +13,11 @@ class OpenAIClient implements AIClientInterface {
     private string $model;
     private int $timeout;
     private int $maxTokens;
+    private ?string $pendingToolChoice = null;
+
+    public function setToolChoice(?string $toolChoice): void {
+        $this->pendingToolChoice = $toolChoice;
+    }
 
     public function __construct(?string $modelOverride = null) {
         $settings = new SettingsPage();
@@ -20,11 +25,18 @@ class OpenAIClient implements AIClientInterface {
         $this->model = $modelOverride ?? $settings->getModelForProvider('openai');
         $allSettings = $settings->getSettings();
         $this->timeout = max(1, (int) ($allSettings['ai_timeout'] ?? 120));
-        $this->maxTokens = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
+        $userMax = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
+        $limits = $settings->getModelLimits('openai', $this->model);
+        $modelMaxOutput = $limits['max_output_tokens'] ?? 16384;
+        $this->maxTokens = min($userMax, $modelMaxOutput);
     }
 
     public function isConfigured(): bool {
         return $this->apiKey !== null;
+    }
+
+    public function overrideApiKey(string $key): void {
+        $this->apiKey = $key;
     }
 
     public function chat(array $messages, array $tools = []): array|WP_Error {
@@ -42,8 +54,9 @@ class OpenAIClient implements AIClientInterface {
 
         if (!empty($tools)) {
             $payload['tools'] = $tools;
-            $payload['tool_choice'] = 'auto';
+            $payload['tool_choice'] = $this->pendingToolChoice ?? 'auto';
         }
+        $this->pendingToolChoice = null;
 
         return $this->executeWithRetry(
             fn() => $this->executeApiCall($payload),
@@ -103,7 +116,7 @@ class OpenAIClient implements AIClientInterface {
         $payload = [
             'model' => $this->model,
             'messages' => $messages,
-            'temperature' => 0.7,
+            'temperature' => $this->resolveTemperature($messages),
             'max_tokens' => $this->maxTokens,
             'stream' => true,
             'stream_options' => ['include_usage' => true],
@@ -111,8 +124,9 @@ class OpenAIClient implements AIClientInterface {
 
         if (!empty($tools)) {
             $payload['tools'] = $tools;
-            $payload['tool_choice'] = 'auto';
+            $payload['tool_choice'] = $this->pendingToolChoice ?? 'auto';
         }
+        $this->pendingToolChoice = null;
 
         $fullContent = '';
         $finishReason = null;
@@ -120,6 +134,7 @@ class OpenAIClient implements AIClientInterface {
         $hasToolCalls = false;
         $toolCallChunks = [];
         $sseBuffer = '';
+        $rawResponseBody = '';
 
         $ch = curl_init(self::API_BASE . '/chat/completions');
         curl_setopt_array($ch, [
@@ -131,7 +146,8 @@ class OpenAIClient implements AIClientInterface {
                 'Accept: text/event-stream',
             ],
             CURLOPT_RETURNTRANSFER => false,
-            CURLOPT_WRITEFUNCTION => function ($ch, $data) use ($onChunk, &$fullContent, &$finishReason, &$usage, &$hasToolCalls, &$toolCallChunks, &$sseBuffer) {
+            CURLOPT_WRITEFUNCTION => function ($ch, $data) use ($onChunk, &$fullContent, &$finishReason, &$usage, &$hasToolCalls, &$toolCallChunks, &$sseBuffer, &$rawResponseBody) {
+                $rawResponseBody .= $data;
                 $sseBuffer .= $data;
                 while (($pos = strpos($sseBuffer, "\n")) !== false) {
                     $line = substr($sseBuffer, 0, $pos);
@@ -204,10 +220,23 @@ class OpenAIClient implements AIClientInterface {
         curl_exec($ch);
         if (curl_errno($ch)) {
             $error = curl_error($ch);
+            $errno = curl_errno($ch);
             curl_close($ch);
-            return new WP_Error('curl_error', $error);
+            $isTimeout = $errno === CURLE_OPERATION_TIMEDOUT || $errno === 28;
+            return new WP_Error($isTimeout ? 'timeout' : 'curl_error', $error);
         }
+
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+
+        if ($httpCode !== 200) {
+            $errorMessage = "OpenAI streaming returned HTTP $httpCode";
+            $parsed = json_decode($rawResponseBody, true);
+            if (is_array($parsed) && !empty($parsed['error']['message'])) {
+                $errorMessage = (string) $parsed['error']['message'];
+            }
+            return new WP_Error('api_error', $errorMessage, ['status' => $httpCode]);
+        }
 
         return [
             'content' => $fullContent,

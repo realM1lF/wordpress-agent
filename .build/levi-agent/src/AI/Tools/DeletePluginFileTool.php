@@ -84,6 +84,9 @@ class DeletePluginFileTool implements ToolInterface {
             'plugin_slug' => $slug,
             'relative_path' => $relativePath,
             'message' => 'Plugin file deleted.',
+            '_verify' => [
+                ['type' => 'file_exists', 'path' => $targetPathReal, 'expected' => false],
+            ],
         ];
     }
 

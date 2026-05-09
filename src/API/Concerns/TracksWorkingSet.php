@@ -9,7 +9,7 @@ trait TracksWorkingSet {
     private array $workingSet = [];
     private int $workingSetIteration = 0;
 
-    protected function recordFileAccess(string $toolName, string $slug, string $relativePath, string $action): void {
+    public function recordFileAccess(string $toolName, string $slug, string $relativePath, string $action): void {
         $key = $slug . '/' . $relativePath;
 
         $this->workingSet[$key] = [
@@ -25,7 +25,7 @@ trait TracksWorkingSet {
         }
     }
 
-    protected function trackFileAccessFromToolResult(string $toolName, array $args, array $result): void {
+    public function trackFileAccessFromToolResult(string $toolName, array $args, array $result): void {
         if (!($result['success'] ?? false)) {
             return;
         }
@@ -59,11 +59,11 @@ trait TracksWorkingSet {
         $this->recordFileAccess($toolName, $slug, $relPath, $action);
     }
 
-    protected function setWorkingSetIteration(int $iteration): void {
+    public function setWorkingSetIteration(int $iteration): void {
         $this->workingSetIteration = $iteration;
     }
 
-    protected function getWorkingSetSummary(): string {
+    public function getWorkingSetSummary(): string {
         if (empty($this->workingSet)) {
             return '';
         }

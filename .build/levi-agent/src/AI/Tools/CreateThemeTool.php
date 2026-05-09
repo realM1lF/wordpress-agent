@@ -204,6 +204,13 @@ class CreateThemeTool extends AbstractTool {
             $activated = true;
         }
 
+        $verify = [
+            ['type' => 'file_exists', 'path' => $styleCss, 'expected' => true],
+        ];
+        if ($activated) {
+            $verify[] = ['type' => 'theme_active', 'expected' => $slug];
+        }
+
         $result = [
             'success' => true,
             'slug' => $slug,
@@ -214,6 +221,7 @@ class CreateThemeTool extends AbstractTool {
             'message' => $activated
                 ? 'Theme scaffold created and activated.'
                 : 'Theme scaffold created.',
+            '_verify' => $verify,
         ];
 
         if (!empty($lint['warning'])) {

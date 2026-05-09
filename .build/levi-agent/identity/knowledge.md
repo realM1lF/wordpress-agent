@@ -31,13 +31,38 @@ Nicht alle Tools werden in jedem API-Call mitgesendet. **Core-Tools** (~18 Stüc
 
 | Parameter | Werte | Effekt |
 |-----------|-------|--------|
-| `plugin_type` | `plain` (Default), `woocommerce`, `elementor` | Typ-spezifisches Scaffold mit Dependency-Checks |
+| `plugin_type` | `plain` (Default), `woocommerce`, `elementor`, `block`, `custom-post-type`, `shortcode` | Typ-spezifisches Scaffold |
 | `features` | `admin-settings`, `frontend-css`, `frontend-js`, `rest-api` | Generiert entsprechende Dateien und Hooks automatisch |
 | `depends_on` | Array von Plugin-Slugs | Setzt `Requires Plugins` Header (ab WP 6.5) |
 
 - `plugin_type=woocommerce` → WC-Dependency-Check, HPOS-Kompatibilität, WC-Settings-Section
 - `plugin_type=elementor` → Elementor-Dependency-Check, Mindestversion-Prüfung
+- `plugin_type=block` → Gutenberg-Block mit `block.json`, Editor-Script, `render.php`, Styles. Wird automatisch aktiviert. Kein Build-Step noetig.
+- `plugin_type=custom-post-type` → CPT mit Labels, Rewrite-Rules, `flush_rewrite_rules()` in Activation/Deactivation-Hooks, `uninstall.php`. Parameter: `post_type_slug`, `post_type_label_singular/plural`, `post_type_supports`, `taxonomies`. Wird automatisch aktiviert.
+- `plugin_type=shortcode` → Shortcode mit Output-Buffering, `shortcode_atts()`, bedingtem CSS-Enqueue. Parameter: `shortcode_tag`.
 - `features` erzeugt fertige Dateien (`includes/settings.php`, `assets/frontend.css`, etc.) die in der Hauptdatei bereits eingebunden werden
+
+## Gutenberg Block — Erweiterungsreferenz
+
+Nach `create_plugin` mit `plugin_type=block` generierte Dateien:
+
+| Datei | Zweck |
+|-------|-------|
+| `src/block.json` | Block-Metadaten: Name, Kategorie, Attributes, Supports, Script/Style-Referenzen |
+| `src/index.js` | Editor-Script: registriert den Block, nutzt `ServerSideRender` |
+| `src/index.asset.php` | Script-Dependencies fuer WordPress Asset-Loader |
+| `src/render.php` | Server-seitiges Rendering: Zugriff auf `$attributes`, `$content`, `$block` |
+| `src/style.css` | Frontend + Editor Styles |
+| `src/editor.css` | Nur Editor-Styles |
+
+Block-Anpassungen nach dem Scaffold:
+
+- **`editorScript`** in `block.json` = PFLICHT, damit der Block im Editor-Inserter erscheint. Ist im Scaffold enthalten.
+- **`viewScript`** in `block.json` hinzufuegen fuer Frontend-JS (wird NUR im Frontend geladen, nicht im Editor).
+- **`attributes`** in `block.json` definieren, dann in `render.php` via `$attributes['key']` und im JS via `props.attributes.key` zugreifen.
+- **`supports`** in `block.json`: `align`, `color` (text, background, link), `typography` (fontSize, lineHeight), `spacing` (margin, padding).
+- In `render.php`: `get_block_wrapper_attributes()` liefert die CSS-Klassen inkl. Align/Color/Spacing automatisch.
+- **`src/index.asset.php`** — PFLICHT: Wenn du im `index.js` zusaetzliche WordPress-Pakete nutzt, MUESSEN diese auch in `index.asset.php` als Dependencies stehen. Das Scaffold liefert: `wp-blocks`, `wp-element`, `wp-server-side-render`, `wp-components`, `wp-block-editor`, `wp-data`. Fehlende Dependencies fuehren dazu, dass der Block im Editor nicht erscheint (JS-Fehler wegen undefinierter Globals).
 
 ## write_plugin_file — Header-Schutz
 

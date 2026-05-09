@@ -125,6 +125,20 @@ class UpdatePostTool implements ToolInterface {
             $result['note'] = sprintf('This is a %s, not a post.', $post->post_type);
         }
 
+        $verify = [];
+        if (isset($params['status'])) {
+            $verify[] = ['type' => 'post_field', 'post_id' => $postId, 'field' => 'post_status', 'expected' => sanitize_key($params['status'])];
+        }
+        if (isset($params['title'])) {
+            $verify[] = ['type' => 'post_field', 'post_id' => $postId, 'field' => 'post_title', 'expected' => sanitize_text_field($params['title'])];
+        }
+        if (isset($params['excerpt'])) {
+            $verify[] = ['type' => 'post_field', 'post_id' => $postId, 'field' => 'post_excerpt', 'expected' => sanitize_textarea_field($params['excerpt'])];
+        }
+        if (!empty($verify)) {
+            $result['_verify'] = $verify;
+        }
+
         return $result;
     }
 

@@ -335,18 +335,18 @@
         renderUploadedFiles();
       }
 
-      const typing = addTypingIndicator();
+      const activityStream = new ActivityStream(messages);
       const phaseTimers = scheduleTypingPhases();
       setSendingState(true);
 
       if (supportsReadableStream()) {
-        sendMessageSSE(text, typing, phaseTimers, isEdit);
+        sendMessageSSE(text, activityStream, phaseTimers, isEdit);
       } else {
-        sendMessageClassic(text, typing, phaseTimers, isEdit);
+        sendMessageClassic(text, activityStream, phaseTimers, isEdit);
       }
     }
 
-    async function sendMessageSSE(text, typing, phaseTimers, isEdit) {
+    async function sendMessageSSE(text, activityStream, phaseTimers, isEdit) {
       var useWebSearch = webSearchActive;
       webSearchActive = false;
       if (webSearchBtn) webSearchBtn.classList.remove("levi-web-search-active");
@@ -394,7 +394,8 @@
               try {
                 const data = JSON.parse(line.substring(6));
                 finalHandled =
-                  handleSSEEvent(data, typing, phaseTimers) || finalHandled;
+                  handleSSEEvent(data, activityStream, phaseTimers) ||
+                  finalHandled;
               } catch (e) {
                 console.warn("SSE parse error:", e, line);
               }
@@ -404,7 +405,7 @@
 
         if (!finalHandled) {
           clearPhaseTimers(phaseTimers);
-          typing.complete();
+          activityStream.complete();
           setSendingState(false);
           addMessage(
             'Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.',
@@ -414,7 +415,7 @@
         }
       } catch (error) {
         clearPhaseTimers(phaseTimers);
-        typing.remove();
+        activityStream.remove();
         setSendingState(false);
         currentAbortController = null;
         if (error.name === "AbortError") {
@@ -429,55 +430,86 @@
       }
     }
 
-    function handleSSEEvent(data, typing, phaseTimers) {
+    function handleSSEEvent(data, activityStream, phaseTimers) {
       if (!data || !data.type) return false;
 
       switch (data.type) {
+        case "activity_start":
+          if (data.text) {
+            activityStream.startActivity(data.text);
+          }
+          return false;
+
+        case "activity_update":
+          if (data.text) {
+            activityStream.updateStatus(data.text);
+          }
+          return false;
+
+        case "activity_tool":
+          if (data.tool) {
+            activityStream.addToolCard(data);
+          }
+          return false;
+
+        case "activity_complete":
+          activityStream.completeActivity();
+          return false;
+
         case "status":
+          // Backward compatibility: old status events
           if (data.message) {
-            typing.setLabel(data.message);
-            typing.setPulse(true);
+            activityStream.setLabel(data.message);
+            activityStream.setPulse(true);
           }
           return false;
 
         case "progress":
-          if (data.phase && typing.addToolCard) {
-            typing.addToolCard(data);
+          // Backward compatibility: old progress events
+          if (data.phase && activityStream.addToolCard) {
+            activityStream.addToolCard(data);
           } else if (data.message) {
-            typing.setLabel(data.message);
+            activityStream.setLabel(data.message);
+          }
+          return false;
+
+        case "state":
+          // V2 state events: map to activity update
+          if (data.label) {
+            activityStream.updateStatus(data.label);
           }
           return false;
 
         case "delta":
           if (data.content) {
-            typing.appendDelta(data.content);
+            activityStream.appendDelta(data.content);
           }
           return false;
 
         case "stream_start":
-          typing.setLabel("Levi antwortet...");
-          typing.setPulse(false);
+          activityStream.setHeaderStatus("Levi antwortet...", true);
+          activityStream.setPulse(false);
           return false;
 
         case "stream_end":
-          typing.clearStream(data.preserve === true);
+          activityStream.clearStream(data.preserve === true);
           return false;
 
         case "heartbeat":
           return false;
 
         case "plan":
-          if (data.tools && typing.showPlan) {
-            typing.showPlan(data);
+          if (data.tools && activityStream.showPlan) {
+            activityStream.showPlan(data);
           }
           return false;
 
         case "done":
           clearPhaseTimers(phaseTimers);
-          var persisted = typing.getPersistedContent
-            ? typing.getPersistedContent()
+          var persisted = activityStream.getPersistedContent
+            ? activityStream.getPersistedContent()
             : "";
-          typing.complete();
+          activityStream.complete();
           setSendingState(false);
           notifyIfHidden("✅ Levi ist fertig!");
 
@@ -493,8 +525,8 @@
           var finalMsg = isFallback && persisted ? persisted : serverMsg;
 
           var isDuplicate =
-            typing.isPersistedDuplicate &&
-            typing.isPersistedDuplicate(finalMsg);
+            activityStream.isPersistedDuplicate &&
+            activityStream.isPersistedDuplicate(finalMsg);
           if (!isDuplicate) {
             var cleanedMessage = sanitizeAssistantMessage(
               finalMsg || "Keine Antwort erhalten",
@@ -522,7 +554,7 @@
 
         case "error":
           clearPhaseTimers(phaseTimers);
-          typing.complete();
+          activityStream.complete();
           setSendingState(false);
           notifyIfHidden("⚠ Levi braucht Hilfe");
 
@@ -542,7 +574,7 @@
       }
     }
 
-    function sendMessageClassic(text, typing, phaseTimers, isEdit) {
+    function sendMessageClassic(text, activityStream, phaseTimers, isEdit) {
       var useWebSearch = webSearchActive;
       webSearchActive = false;
       if (webSearchBtn) webSearchBtn.classList.remove("levi-web-search-active");
@@ -575,7 +607,7 @@
         })
         .then((data) => {
           clearPhaseTimers(phaseTimers);
-          typing.complete();
+          activityStream.complete();
           setSendingState(false);
           notifyIfHidden(
             data.error ? "⚠ Levi braucht Hilfe" : "✅ Levi ist fertig!",
@@ -608,7 +640,7 @@
         })
         .catch((error) => {
           clearPhaseTimers(phaseTimers);
-          typing.remove();
+          activityStream.remove();
           setSendingState(false);
           currentAbortController = null;
           if (error.name === "AbortError") {
@@ -1159,56 +1191,272 @@
         });
     }
 
-    function addTypingIndicator() {
-      const typingDiv = document.createElement("div");
-      typingDiv.className = "levi-message levi-message-assistant";
-      typingDiv.innerHTML =
-        buildAvatarHtml("assistant") +
-        '<div class="levi-message-main"><div class="levi-message-content levi-typing">' +
-        '<div class="levi-typing-dots"><span></span><span></span><span></span></div>' +
-        '<small class="levi-typing-label">Levi verarbeitet die Anfrage...</small>' +
-        '<div class="levi-tool-timeline"></div>' +
-        '<div class="levi-chat-progress-track levi-chat-progress-indeterminate"><div class="levi-chat-progress-shimmer"></div></div>' +
-        "</div></div>";
-      messages.appendChild(typingDiv);
-      messages.scrollTop = messages.scrollHeight;
+    class ActivityStream {
+      constructor(messagesContainer) {
+        this.messages = messagesContainer;
+        this.activities = [];
+        this.currentActivity = null;
+        this.streamBubble = null;
+        this.streamBuffer = "";
+        this.isStreaming = false;
+        this.persistedTexts = [];
+        this.toolCount = 0;
+        this.completedToolCount = 0;
+        this.startTime = 0;
+        this.updateTimer = null;
+        this._ensureHeaderStatus();
+      }
 
-      const labelEl = typingDiv.querySelector(".levi-typing-label");
-      const contentEl = typingDiv.querySelector(".levi-message-content");
-      const dotsEl = typingDiv.querySelector(".levi-typing-dots");
-      const progressTrack = typingDiv.querySelector(
-        ".levi-chat-progress-track",
-      );
-      const timelineEl = typingDiv.querySelector(".levi-tool-timeline");
-      let streamEl = null;
-      let isStreaming = false;
-      let streamBuffer = "";
-      let activeCardEl = null;
-      let dotsVisible = true;
-
-      const hideDots = () => {
-        if (dotsVisible && dotsEl) {
-          dotsEl.style.display = "none";
-          dotsVisible = false;
+      _ensureHeaderStatus() {
+        const header = document.querySelector(".levi-chat-header");
+        if (!header) return;
+        let statusWrap = header.querySelector(".levi-chat-header-status");
+        if (!statusWrap) {
+          statusWrap = document.createElement("div");
+          statusWrap.className = "levi-chat-header-status";
+          statusWrap.innerHTML =
+            '<span class="levi-chat-header-spinner"></span>' +
+            '<span class="levi-chat-header-status-text"></span>';
+          header.appendChild(statusWrap);
         }
-      };
+        this.headerStatusEl = statusWrap.querySelector(
+          ".levi-chat-header-status-text",
+        );
+        this.headerSpinnerEl = statusWrap.querySelector(
+          ".levi-chat-header-spinner",
+        );
+      }
 
-      const showDots = () => {
-        if (!dotsVisible && dotsEl) {
-          dotsEl.style.display = "";
-          dotsVisible = true;
+      setHeaderStatus(text, isWorking) {
+        if (this.headerSpinnerEl) {
+          this.headerSpinnerEl.classList.toggle("active", !!isWorking);
         }
-      };
-
-      const setLabel = (label) => {
-        if (labelEl) {
-          labelEl.textContent = label;
-          messages.scrollTop = messages.scrollHeight;
+        if (this.headerStatusEl) {
+          this.headerStatusEl.textContent = text || "";
+          this.headerStatusEl.style.display = text ? "" : "none";
         }
-      };
+      }
 
-      const addToolCard = (data) => {
-        if (!timelineEl) return;
+      startActivity(text) {
+        if (this.currentActivity) {
+          this.completeActivity();
+        }
+        const bubble = new ActivityBubble(this.messages, text);
+        this.currentActivity = bubble;
+        this.activities.push(bubble);
+        this.startTime = Date.now();
+        this.toolCount = 0;
+        this.completedToolCount = 0;
+        this._scheduleIntermediateUpdates();
+        this.setHeaderStatus(text, true);
+      }
+
+      updateStatus(text) {
+        if (!this.currentActivity) {
+          this.startActivity(text);
+          return;
+        }
+        this.currentActivity.setText(text);
+        this.setHeaderStatus(text, true);
+      }
+
+      completeActivity() {
+        this._clearIntermediateUpdates();
+        if (this.currentActivity) {
+          this.currentActivity.complete();
+          this.currentActivity = null;
+        }
+        this.setHeaderStatus("", false);
+      }
+
+      nextActivity(text) {
+        this.completeActivity();
+        this.startActivity(text);
+      }
+
+      addToolCard(data) {
+        if (!this.currentActivity) {
+          this.startActivity("Arbeitet...");
+        }
+        this.currentActivity.addToolCard(data);
+        const phase = data.phase || "";
+        if (phase === "start" || phase === "preview") {
+          this.toolCount++;
+        } else if (phase === "done" || phase === "failed") {
+          this.completedToolCount++;
+        }
+      }
+
+      showPlan(data) {
+        if (!this.currentActivity) {
+          this.startActivity("Plant...");
+        }
+        this.currentActivity.showPlan(data);
+      }
+
+      startStream() {
+        if (this.isStreaming) {
+          this.clearStream(false);
+        }
+        this.isStreaming = true;
+        this.streamBuffer = "";
+        this.streamBubble = new StreamBubble(this.messages);
+        this.setHeaderStatus("Levi antwortet...", true);
+      }
+
+      appendDelta(text) {
+        if (!this.isStreaming) {
+          this.startStream();
+        }
+        this.streamBuffer += text;
+        if (this.streamBubble) {
+          this.streamBubble.setContent(this.streamBuffer);
+        }
+      }
+
+      clearStream(preserve) {
+        if (!this.isStreaming) return;
+        if (preserve && this.streamBuffer && this.streamBuffer.trim()) {
+          const trimmed = this.streamBuffer.trim();
+          this.persistedTexts.push(trimmed);
+          if (this.streamBubble) {
+            this.streamBubble.convertToMessage(trimmed);
+          }
+        } else if (this.streamBubble) {
+          this.streamBubble.remove();
+        }
+        this.isStreaming = false;
+        this.streamBuffer = "";
+        this.streamBubble = null;
+        if (!this.currentActivity) {
+          this.setHeaderStatus("", false);
+        }
+      }
+
+      getPersistedContent() {
+        return this.persistedTexts.length > 0
+          ? this.persistedTexts[this.persistedTexts.length - 1]
+          : "";
+      }
+
+      isPersistedDuplicate(text) {
+        if (!text || this.persistedTexts.length === 0) return false;
+        const trimmed = text.trim();
+        for (let i = 0; i < this.persistedTexts.length; i++) {
+          if (this.persistedTexts[i] === trimmed) return true;
+          if (
+            trimmed.length > 50 &&
+            this.persistedTexts[i].length > 50 &&
+            trimmed.substring(0, 80) === this.persistedTexts[i].substring(0, 80)
+          )
+            return true;
+        }
+        return false;
+      }
+
+      complete() {
+        this.completeActivity();
+        this.clearStream(false);
+      }
+
+      remove() {
+        this._clearIntermediateUpdates();
+        this.activities.forEach(function (a) {
+          a.remove();
+        });
+        this.activities = [];
+        this.currentActivity = null;
+        if (this.streamBubble) {
+          this.streamBubble.remove();
+          this.streamBubble = null;
+        }
+        this.isStreaming = false;
+        this.setHeaderStatus("", false);
+      }
+
+      // Backward-compatible wrappers (old TypingIndicator API)
+      setLabel(text) {
+        this.updateStatus(text);
+      }
+      setPulse(on) {
+        /* pulse is implicit in activity bubbles */
+      }
+
+      _scheduleIntermediateUpdates() {
+        this._clearIntermediateUpdates();
+        var self = this;
+        this.updateTimer = setTimeout(function () {
+          self._showIntermediateUpdate();
+          self.updateTimer = setInterval(function () {
+            self._showIntermediateUpdate();
+          }, 5000);
+        }, 10000);
+      }
+
+      _showIntermediateUpdate() {
+        if (!this.currentActivity) return;
+        var text =
+          "Noch am Arbeiten… " +
+          this.completedToolCount +
+          "/" +
+          this.toolCount +
+          " erledigt";
+        this.currentActivity.setSubStatus(text);
+      }
+
+      _clearIntermediateUpdates() {
+        if (this.updateTimer) {
+          clearTimeout(this.updateTimer);
+          clearInterval(this.updateTimer);
+          this.updateTimer = null;
+        }
+        if (this.currentActivity) {
+          this.currentActivity.setSubStatus("");
+        }
+      }
+    }
+
+    class ActivityBubble {
+      constructor(messagesContainer, text) {
+        this.messages = messagesContainer;
+        this.div = document.createElement("div");
+        this.div.className =
+          "levi-message levi-message-assistant levi-activity-bubble";
+        this.div.innerHTML =
+          buildAvatarHtml("assistant") +
+          '<div class="levi-message-main">' +
+          '<div class="levi-message-content levi-activity-content">' +
+          '<div class="levi-activity-text">' +
+          escapeHtml(text) +
+          "</div>" +
+          '<div class="levi-activity-substatus"></div>' +
+          '<div class="levi-activity-tools"></div>' +
+          '<div class="levi-activity-plan"></div>' +
+          "</div></div>";
+        this.textEl = this.div.querySelector(".levi-activity-text");
+        this.substatusEl = this.div.querySelector(".levi-activity-substatus");
+        this.toolsEl = this.div.querySelector(".levi-activity-tools");
+        this.planEl = this.div.querySelector(".levi-activity-plan");
+        this.activeCardEl = null;
+        this.messages.appendChild(this.div);
+        this.messages.scrollTop = this.messages.scrollHeight;
+      }
+
+      setText(text) {
+        if (this.textEl) {
+          this.textEl.textContent = text;
+          this.messages.scrollTop = this.messages.scrollHeight;
+        }
+      }
+
+      setSubStatus(text) {
+        if (!this.substatusEl) return;
+        this.substatusEl.textContent = text;
+        this.substatusEl.style.display = text ? "block" : "none";
+      }
+
+      addToolCard(data) {
+        if (!this.toolsEl) return;
         const phase = data.phase || "";
         const tool = data.tool || "";
         const ctx = data.context || "";
@@ -1220,17 +1468,15 @@
             : null;
         const success = data.success !== false;
 
-        hideDots();
-
         if (phase === "start" || phase === "preview") {
           var existingCard =
             phase === "start" && tool
-              ? timelineEl.querySelector(
+              ? this.toolsEl.querySelector(
                   '.levi-tool-card-running[data-tool="' + tool + '"]',
                 )
               : null;
           if (existingCard) {
-            activeCardEl = existingCard;
+            this.activeCardEl = existingCard;
             if (ctx) {
               var lbl = existingCard.querySelector(".levi-tool-label");
               if (lbl) lbl.textContent = ctx || label;
@@ -1246,22 +1492,16 @@
               "</span>" +
               '<span class="levi-tool-result"></span>' +
               '<span class="levi-tool-duration"></span>';
-            timelineEl.appendChild(card);
-            activeCardEl = card;
+            this.toolsEl.appendChild(card);
+            this.activeCardEl = card;
           }
-          setLabel(label);
-          setPulse(false);
-          messages.scrollTop = messages.scrollHeight;
-        } else if (phase === "thinking") {
-          showDots();
-          setLabel(label);
-          setPulse(true);
-          messages.scrollTop = messages.scrollHeight;
-          return;
+          this.messages.scrollTop = this.messages.scrollHeight;
         } else if (phase === "done" || phase === "failed") {
-          var targetCard = activeCardEl;
+          var targetCard = this.activeCardEl;
           if (!targetCard) {
-            var cards = timelineEl.querySelectorAll(".levi-tool-card-running");
+            var cards = this.toolsEl.querySelectorAll(
+              ".levi-tool-card-running",
+            );
             targetCard = cards.length > 0 ? cards[cards.length - 1] : null;
           }
           if (targetCard) {
@@ -1287,7 +1527,7 @@
                     ? durationMs + "ms"
                     : (durationMs / 1000).toFixed(1) + "s";
             }
-            activeCardEl = null;
+            this.activeCardEl = null;
           } else {
             var card = document.createElement("div");
             card.className =
@@ -1318,88 +1558,15 @@
               '<span class="levi-tool-duration">' +
               durText +
               "</span>";
-            timelineEl.appendChild(card);
+            this.toolsEl.appendChild(card);
           }
-          hideDots();
-          setPulse(false);
-          setLabel(label);
-          messages.scrollTop = messages.scrollHeight;
+          this.messages.scrollTop = this.messages.scrollHeight;
         }
-      };
+      }
 
-      const appendDelta = (text) => {
-        if (!isStreaming) {
-          isStreaming = true;
-          hideDots();
-          if (labelEl) labelEl.style.display = "none";
-          if (progressTrack) progressTrack.style.display = "none";
-          if (timelineEl) timelineEl.style.display = "none";
-          streamEl = document.createElement("div");
-          streamEl.className = "levi-stream-content";
-          contentEl.appendChild(streamEl);
-          contentEl.classList.remove("levi-typing");
-        }
-        streamBuffer += text;
-        if (streamEl) {
-          streamEl.innerHTML = renderMessageContent(streamBuffer, "assistant");
-          messages.scrollTop = messages.scrollHeight;
-        }
-      };
-
-      let persistedTexts = [];
-
-      const clearStream = (preserve) => {
-        if (isStreaming) {
-          if (preserve && streamBuffer && streamBuffer.trim()) {
-            persistedTexts.push(streamBuffer.trim());
-            var msgDiv = document.createElement("div");
-            msgDiv.className = "levi-message levi-message-assistant";
-            msgDiv.innerHTML =
-              buildAvatarHtml("assistant") +
-              '<div class="levi-message-main"><div class="levi-message-content">' +
-              renderMessageContent(streamBuffer, "assistant") +
-              "</div></div>";
-            messages.insertBefore(msgDiv, typingDiv);
-          }
-
-          isStreaming = false;
-          streamBuffer = "";
-          if (streamEl) {
-            streamEl.remove();
-            streamEl = null;
-          }
-          contentEl.classList.add("levi-typing");
-          if (labelEl) labelEl.style.display = "";
-          setPulse(true);
-          if (progressTrack) progressTrack.style.display = "";
-          if (timelineEl) timelineEl.style.display = "";
-          showDots();
-          setLabel("Levi prueft das Ergebnis...");
-          messages.scrollTop = messages.scrollHeight;
-        }
-      };
-
-      const setPulse = (on) => {
-        if (labelEl) {
-          if (on) {
-            labelEl.classList.add("levi-label-pulse");
-          } else {
-            labelEl.classList.remove("levi-label-pulse");
-          }
-        }
-      };
-
-      const showPlan = (data) => {
-        if (!contentEl) return;
-        hideDots();
-        setPulse(false);
-        setLabel(data.message || "Levi plant...");
-
-        var planEl = contentEl.querySelector(".levi-plan-panel");
-        if (planEl) return; // already showing
-
-        planEl = document.createElement("div");
-        planEl.className = "levi-plan-panel";
+      showPlan(data) {
+        if (!this.planEl) return;
+        if (this.planEl.children.length > 0) return;
         var toolsHtml = "";
         var toolList = data.tools || [];
         toolList.forEach(function (t) {
@@ -1408,53 +1575,64 @@
             escapeHtml(t) +
             "</li>";
         });
-        planEl.innerHTML =
+        this.planEl.innerHTML =
           '<div class="levi-plan-header"><span class="dashicons dashicons-editor-ul"></span> Geplante Aktionen</div>' +
           '<ul class="levi-plan-tools">' +
           toolsHtml +
           "</ul>" +
           '<div class="levi-plan-note">Levi führt diese Aktionen jetzt aus…</div>';
+        this.messages.scrollTop = this.messages.scrollHeight;
+      }
 
-        contentEl.appendChild(planEl);
-        messages.scrollTop = messages.scrollHeight;
-      };
+      complete() {
+        this.div.classList.add("levi-activity-bubble-complete");
+        this.setSubStatus("");
+      }
 
-      setLabel("Levi verarbeitet die Anfrage...");
-      setPulse(true);
+      remove() {
+        this.div.remove();
+      }
+    }
 
-      return {
-        setLabel,
-        setPulse,
-        addToolCard,
-        showPlan,
-        appendDelta,
-        clearStream,
-        getPersistedContent: () =>
-          persistedTexts.length > 0
-            ? persistedTexts[persistedTexts.length - 1]
-            : "",
-        isPersistedDuplicate: (text) => {
-          if (!text || persistedTexts.length === 0) return false;
-          var trimmed = text.trim();
-          for (var i = 0; i < persistedTexts.length; i++) {
-            if (persistedTexts[i] === trimmed) return true;
-            if (
-              trimmed.length > 50 &&
-              persistedTexts[i].length > 50 &&
-              trimmed.substring(0, 80) === persistedTexts[i].substring(0, 80)
-            )
-              return true;
-          }
-          return false;
-        },
-        complete: () => {
-          typingDiv.classList.add("levi-typing-complete");
-          setTimeout(() => typingDiv.remove(), 200);
-        },
-        remove: () => {
-          typingDiv.remove();
-        },
-      };
+    class StreamBubble {
+      constructor(messagesContainer) {
+        this.messages = messagesContainer;
+        this.div = document.createElement("div");
+        this.div.className = "levi-message levi-message-assistant";
+        this.div.innerHTML =
+          buildAvatarHtml("assistant") +
+          '<div class="levi-message-main"><div class="levi-message-content">' +
+          '<div class="levi-stream-content"></div>' +
+          "</div></div>";
+        this.contentEl = this.div.querySelector(".levi-stream-content");
+        this.messages.appendChild(this.div);
+        this.messages.scrollTop = this.messages.scrollHeight;
+      }
+
+      setContent(text) {
+        if (this.contentEl) {
+          this.contentEl.innerHTML = renderMessageContent(text, "assistant");
+          this.messages.scrollTop = this.messages.scrollHeight;
+        }
+      }
+
+      convertToMessage(text) {
+        if (this.contentEl) {
+          this.contentEl.classList.remove("levi-stream-content");
+          this.contentEl.innerHTML = renderMessageContent(text, "assistant");
+        }
+        var main = this.div.querySelector(".levi-message-main");
+        if (main && !main.querySelector(".levi-message-time")) {
+          var time = document.createElement("span");
+          time.className = "levi-message-time";
+          time.textContent = formatTimestamp();
+          main.appendChild(time);
+        }
+      }
+
+      remove() {
+        this.div.remove();
+      }
     }
 
     function scheduleTypingPhases() {

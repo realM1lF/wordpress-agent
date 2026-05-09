@@ -138,6 +138,9 @@ trait ExecutesToolLoopV2
                         ),
                     ),
                 );
+                $this->emitSSE("activity_update", [
+                    "text" => AgentState::PLANNING->label(),
+                ]);
                 $this->emitSSE("state", [
                     "state" => AgentState::PLANNING->value,
                     "label" => AgentState::PLANNING->label(),
@@ -153,6 +156,9 @@ trait ExecutesToolLoopV2
 
             // Transition to EXECUTING
             $orchestrator->transitionTo(AgentState::EXECUTING);
+            $this->emitSSE("activity_update", [
+                "text" => AgentState::EXECUTING->label(),
+            ]);
             $this->emitSSE("state", [
                 "state" => AgentState::EXECUTING->value,
                 "label" => AgentState::EXECUTING->label(),
@@ -208,7 +214,7 @@ trait ExecutesToolLoopV2
                 };
 
                 // Emit progress
-                $this->emitSSE("progress", [
+                $this->emitSSE("activity_tool", [
                     "message" => $this->getToolProgressLabelV2($functionName),
                     "tool" => $functionName,
                     "iteration" => $iteration,
@@ -243,7 +249,7 @@ trait ExecutesToolLoopV2
                 }
 
                 // Emit completion
-                $this->emitSSE("progress", [
+                $this->emitSSE("activity_tool", [
                     "message" => $this->getToolProgressLabelV2(
                         $functionName,
                         $execResult["success"],
@@ -312,7 +318,7 @@ trait ExecutesToolLoopV2
                         ),
                     ),
                     "state_history" => $orchestrator->getStateHistory(),
-                    "usage" => $this->usageAccumulator ?? [],
+                    "usage" => $this->getUsageAccumulator(),
                 ]);
                 $this->flushUsage($sessionId, $userId);
                 return;
@@ -337,6 +343,9 @@ trait ExecutesToolLoopV2
 
             // Transition to REASONING before next AI call
             $orchestrator->transitionTo(AgentState::REASONING);
+            $this->emitSSE("activity_update", [
+                "text" => AgentState::REASONING->label(),
+            ]);
             $this->emitSSE("state", [
                 "state" => AgentState::REASONING->value,
                 "label" => AgentState::REASONING->label(),
@@ -375,6 +384,9 @@ trait ExecutesToolLoopV2
             if (empty($messageData["tool_calls"])) {
                 // Transition to VERIFYING briefly
                 $orchestrator->transitionTo(AgentState::VERIFYING);
+                $this->emitSSE("activity_update", [
+                    "text" => AgentState::VERIFYING->label(),
+                ]);
                 $this->emitSSE("state", [
                     "state" => AgentState::VERIFYING->value,
                     "label" => AgentState::VERIFYING->label(),
@@ -402,6 +414,7 @@ trait ExecutesToolLoopV2
                 );
 
                 $orchestrator->transitionTo(AgentState::DONE);
+                $this->emitSSE("activity_complete", []);
                 $this->emitSSE("state", [
                     "state" => AgentState::DONE->value,
                     "label" => AgentState::DONE->label(),
@@ -422,7 +435,8 @@ trait ExecutesToolLoopV2
                     "truncated" => $this->wasResponseTruncated($nextResponse),
                     "state_history" => $orchestrator->getStateHistory(),
                 ];
-                $donePayload["usage"] = $this->usageAccumulator ?? [];
+                $this->emitSSE("activity_complete", []);
+                $donePayload["usage"] = $this->getUsageAccumulator();
                 $this->emitSSE("done", $donePayload);
                 $this->flushUsage($sessionId, $userId);
                 return;
@@ -446,6 +460,7 @@ trait ExecutesToolLoopV2
             $finalMessage,
         );
 
+        $this->emitSSE("activity_complete", []);
         $this->emitSSE("done", [
             "session_id" => $sessionId,
             "message" => $finalMessage,
@@ -458,7 +473,7 @@ trait ExecutesToolLoopV2
                 ),
             ),
             "state_history" => $orchestrator->getStateHistory(),
-            "usage" => $this->usageAccumulator ?? [],
+            "usage" => $this->getUsageAccumulator(),
         ]);
         $this->flushUsage($sessionId, $userId);
     }
@@ -618,7 +633,7 @@ trait ExecutesToolLoopV2
                         ),
                     ),
                     "state_history" => $orchestrator->getStateHistory(),
-                    "usage" => $this->usageAccumulator ?? [],
+                    "usage" => $this->getUsageAccumulator(),
                 ]);
             }
 
@@ -699,7 +714,7 @@ trait ExecutesToolLoopV2
                             $nextResponse,
                         ),
                         "state_history" => $orchestrator->getStateHistory(),
-                        "usage" => $this->usageAccumulator ?? [],
+                        "usage" => $this->getUsageAccumulator(),
                     ],
                     200,
                 );
@@ -729,7 +744,7 @@ trait ExecutesToolLoopV2
                     ),
                 ),
                 "state_history" => $orchestrator->getStateHistory(),
-                "usage" => $this->usageAccumulator ?? [],
+                "usage" => $this->getUsageAccumulator(),
             ],
             200,
         );

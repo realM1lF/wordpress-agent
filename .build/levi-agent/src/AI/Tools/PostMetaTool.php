@@ -206,11 +206,19 @@ class PostMetaTool implements ToolInterface {
         $result = delete_post_meta($postId, $metaKey);
         clean_post_cache($postId);
 
-        return [
+        $response = [
             'success' => $result || !$existed,
             'post_id' => $postId,
             'meta_key' => $metaKey,
             'message' => $existed ? 'Meta deleted.' : 'Meta key did not exist.',
         ];
+
+        if ($existed) {
+            $response['_verify'] = [
+                ['type' => 'post_meta', 'post_id' => $postId, 'meta_key' => $metaKey, 'expected' => ''],
+            ];
+        }
+
+        return $response;
     }
 }

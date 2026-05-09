@@ -1,3 +1,123 @@
+/* ═══════════════════════════════════════════════
+   Activity Stream (0.9.0-hotfix)
+   ═══════════════════════════════════════════════ */
+
+.levi-chat-header-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #94a3b8;
+    min-height: 18px;
+}
+
+.levi-chat-header-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(167, 139, 250, 0.25);
+    border-top-color: #a78bfa;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    flex-shrink: 0;
+}
+
+.levi-chat-header-spinner.active {
+    opacity: 1;
+    animation: levi-spin 0.7s linear infinite;
+}
+
+.levi-chat-header-status-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Activity Bubble */
+.levi-activity-bubble {
+    animation: levi-fade-in 0.25s ease;
+}
+
+.levi-activity-content {
+    position: relative;
+}
+
+.levi-activity-text {
+    font-size: 15px;
+    line-height: 1.55;
+    color: #e5e7eb;
+    word-break: break-word;
+}
+
+.levi-activity-substatus {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-top: 6px;
+    display: none;
+    font-style: italic;
+}
+
+.levi-activity-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: hsla(240, 6%, 10%, 0.5);
+    border: 1px solid hsla(0, 0%, 100%, 0.06);
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.levi-activity-tools:empty {
+    display: none;
+}
+
+.levi-activity-plan {
+    margin-top: 10px;
+}
+
+.levi-activity-plan:empty {
+    display: none;
+}
+
+.levi-activity-bubble-complete .levi-activity-text {
+    color: #94a3b8;
+}
+
+.levi-activity-bubble-complete .levi-activity-tools {
+    opacity: 0.8;
+}
+
+/* Light mode overrides for Activity Stream */
+.levi-chat-light .levi-chat-header-status {
+    color: hsl(240, 5%, 45%);
+}
+
+.levi-chat-light .levi-chat-header-spinner {
+    border-color: hsla(263, 70%, 50%, 0.2);
+    border-top-color: hsl(263, 70%, 50%);
+}
+
+.levi-chat-light .levi-activity-text {
+    color: hsl(240, 10%, 15%);
+}
+
+.levi-chat-light .levi-activity-substatus {
+    color: hsl(240, 5%, 45%);
+}
+
+.levi-chat-light .levi-activity-tools {
+    background: hsla(0, 0%, 100%, 0.45);
+    border-color: hsla(240, 6%, 70%, 0.25);
+}
+
+.levi-chat-light .levi-activity-bubble-complete .levi-activity-text {
+    color: hsl(240, 5%, 45%);
+}
 /* Levi Chat Widget Styles (modern dark – purple accent) */
 .levi-chat-widget {
     position: fixed;

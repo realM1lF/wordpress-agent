@@ -4,18 +4,24 @@ namespace Levi\Agent\API\Concerns;
 
 use Levi\Agent\AI\PIIRedactor;
 
-trait ManagesContext {
-
-    private function estimateTokenCount($content): int {
+trait ManagesContext
+{
+    private function estimateTokenCount($content): int
+    {
         if (is_string($content)) {
             return (int) ceil(mb_strlen($content) / 3.5);
         }
         if (is_array($content)) {
             $tokens = 0;
             foreach ($content as $part) {
-                if (is_array($part) && ($part['type'] ?? '') === 'text') {
-                    $tokens += (int) ceil(mb_strlen((string) ($part['text'] ?? '')) / 3.5);
-                } elseif (is_array($part) && ($part['type'] ?? '') === 'image_url') {
+                if (is_array($part) && ($part["type"] ?? "") === "text") {
+                    $tokens += (int) ceil(
+                        mb_strlen((string) ($part["text"] ?? "")) / 3.5,
+                    );
+                } elseif (
+                    is_array($part) &&
+                    ($part["type"] ?? "") === "image_url"
+                ) {
                     $tokens += 1000;
                 }
             }
@@ -24,21 +30,25 @@ trait ManagesContext {
         return 0;
     }
 
-    private function getMaxContextTokensForModel(): int {
+    private function getMaxContextTokensForModel(): int
+    {
         $provider = $this->settings->getProvider();
         $model = $this->settings->getModelForProvider($provider);
         $limits = $this->settings->getModelLimits($provider, $model);
-        $contextLimit = $limits['context_limit'] ?? 128000;
-        $maxOutput = $limits['max_output_tokens'] ?? 16384;
+        $contextLimit = $limits["context_limit"] ?? 128000;
+        $maxOutput = $limits["max_output_tokens"] ?? 16384;
         return max(1000, $contextLimit - $maxOutput);
     }
 
-    private function trimMessagesToBudget(array $messages, ?string $sessionId = null): array {
+    private function trimMessagesToBudget(
+        array $messages,
+        ?string $sessionId = null,
+    ): array {
         $maxContextTokens = $this->getMaxContextTokensForModel();
 
         $totalTokens = 0;
         foreach ($messages as $msg) {
-            $totalTokens += $this->estimateTokenCount($msg['content'] ?? '');
+            $totalTokens += $this->estimateTokenCount($msg["content"] ?? "");
         }
 
         if ($totalTokens <= $maxContextTokens) {
@@ -52,16 +62,16 @@ trait ManagesContext {
         $userMsg = array_pop($messages);
 
         foreach ($messages as $msg) {
-            if (($msg['role'] ?? '') === 'system') {
+            if (($msg["role"] ?? "") === "system") {
                 $systemMessages[] = $msg;
             } else {
                 $historyMessages[] = $msg;
             }
         }
 
-        $reservedTokens = $this->estimateTokenCount($userMsg['content'] ?? '');
+        $reservedTokens = $this->estimateTokenCount($userMsg["content"] ?? "");
         foreach ($systemMessages as $sm) {
-            $reservedTokens += $this->estimateTokenCount($sm['content'] ?? '');
+            $reservedTokens += $this->estimateTokenCount($sm["content"] ?? "");
         }
 
         $availableBudget = $maxContextTokens - $reservedTokens;
@@ -74,7 +84,9 @@ trait ManagesContext {
         $droppedHistory = [];
         $usedTokens = 0;
         for ($i = count($historyMessages) - 1; $i >= 0; $i--) {
-            $msgTokens = $this->estimateTokenCount($historyMessages[$i]['content'] ?? '');
+            $msgTokens = $this->estimateTokenCount(
+                $historyMessages[$i]["content"] ?? "",
+            );
             if ($usedTokens + $msgTokens > $availableBudget) {
                 $droppedHistory = array_slice($historyMessages, 0, $i + 1);
                 break;
@@ -90,13 +102,15 @@ trait ManagesContext {
 
         $trimmedCount = count($droppedHistory);
         if ($trimmedCount > 0) {
-            error_log(sprintf(
-                'Levi Token Budget: trimmed %d older messages, %d kept (estimated %d -> %d tokens)',
-                $trimmedCount,
-                count($keptHistory),
-                $totalTokens,
-                $reservedTokens + $usedTokens
-            ));
+            error_log(
+                sprintf(
+                    "Levi Token Budget: trimmed %d older messages, %d kept (estimated %d -> %d tokens)",
+                    $trimmedCount,
+                    count($keptHistory),
+                    $totalTokens,
+                    $reservedTokens + $usedTokens,
+                ),
+            );
         }
 
         $result = $systemMessages;
@@ -113,21 +127,30 @@ trait ManagesContext {
      * Runs inline (lazy) — only when trimming actually happens.
      * Uses a cheap/fast model to minimize latency.
      */
-    private function triggerSummarization(string $sessionId, array $droppedMessages): void {
+    private function triggerSummarization(
+        string $sessionId,
+        array $droppedMessages,
+    ): void {
         try {
-            $existingSummary = $this->conversationRepo->getLatestSummary($sessionId);
-            $existingSummaryText = $existingSummary !== null ? (string) $existingSummary['content'] : null;
+            $existingSummary = $this->conversationRepo->getLatestSummary(
+                $sessionId,
+            );
+            $existingSummaryText =
+                $existingSummary !== null
+                    ? (string) $existingSummary["content"]
+                    : null;
 
             $totalCount = $this->conversationRepo->getMessageCount($sessionId);
 
             $lastDroppedMsg = end($droppedMessages);
-            $coveredUpToId = (int) ($lastDroppedMsg['id'] ?? 0);
+            $coveredUpToId = (int) ($lastDroppedMsg["id"] ?? 0);
             if ($coveredUpToId === 0) {
                 $coveredUpToId = count($droppedMessages);
             }
 
             if ($existingSummary !== null) {
-                $previousCoveredId = (int) ($existingSummary['context_hash'] ?? 0);
+                $previousCoveredId =
+                    (int) ($existingSummary["context_hash"] ?? 0);
                 if ($previousCoveredId >= $coveredUpToId) {
                     return;
                 }
@@ -138,24 +161,32 @@ trait ManagesContext {
                 $droppedMessages,
                 $existingSummaryText,
                 $totalCount,
-                count($droppedMessages)
+                count($droppedMessages),
             );
 
             if ($summary !== null) {
                 $userId = get_current_user_id();
-                $this->conversationRepo->saveSummary($sessionId, $userId, $summary, $coveredUpToId);
-                error_log(sprintf(
-                    'Levi SessionSummary: created for session %s, covering %d messages',
+                $this->conversationRepo->saveSummary(
                     $sessionId,
-                    count($droppedMessages)
-                ));
+                    $userId,
+                    $summary,
+                    $coveredUpToId,
+                );
+                error_log(
+                    sprintf(
+                        "Levi SessionSummary: created for session %s, covering %d messages",
+                        $sessionId,
+                        count($droppedMessages),
+                    ),
+                );
             }
         } catch (\Throwable $e) {
-            error_log('Levi SessionSummary error: ' . $e->getMessage());
+            error_log("Levi SessionSummary error: " . $e->getMessage());
         }
     }
 
-    private function halveHistory(array $messages): array {
+    private function halveHistory(array $messages): array
+    {
         if (count($messages) <= 3) {
             return $messages;
         }
@@ -164,14 +195,17 @@ trait ManagesContext {
         $systemMessages = [];
         $historyMessages = [];
         foreach ($messages as $msg) {
-            if (($msg['role'] ?? '') === 'system') {
+            if (($msg["role"] ?? "") === "system") {
                 $systemMessages[] = $msg;
             } else {
                 $historyMessages[] = $msg;
             }
         }
 
-        $kept = array_slice($historyMessages, (int) ceil(count($historyMessages) / 2));
+        $kept = array_slice(
+            $historyMessages,
+            (int) ceil(count($historyMessages) / 2),
+        );
         return array_merge($systemMessages, $kept, [$userMsg]);
     }
 
@@ -186,7 +220,10 @@ trait ManagesContext {
      * tool results are structurally preserved (IDs intact) — only content
      * is shortened to prevent API validation errors.
      */
-    private function compactMessagesForToolLoop(array $messages, int $iteration): array {
+    public function compactMessagesForToolLoop(
+        array $messages,
+        int $iteration,
+    ): array {
         if ($iteration < 2) {
             return $messages;
         }
@@ -194,8 +231,11 @@ trait ManagesContext {
         // Drop oldest pure-chat pairs to stay within conversational window
         $pureChatIndices = [];
         foreach ($messages as $i => $msg) {
-            $role = $msg['role'] ?? '';
-            if (($role === 'user' || $role === 'assistant') && empty($msg['tool_calls'])) {
+            $role = $msg["role"] ?? "";
+            if (
+                ($role === "user" || $role === "assistant") &&
+                empty($msg["tool_calls"])
+            ) {
                 $pureChatIndices[] = $i;
             }
         }
@@ -218,27 +258,34 @@ trait ManagesContext {
 
         $totalTokens = 0;
         foreach ($compacted as $msg) {
-            $content = $msg['content'] ?? '';
+            $content = $msg["content"] ?? "";
             if (is_array($content)) {
                 $content = json_encode($content);
             }
             $totalTokens += $this->estimateTokenCount((string) $content);
-            if (!empty($msg['tool_calls'])) {
-                $totalTokens += $this->estimateTokenCount(json_encode($msg['tool_calls']));
+            if (!empty($msg["tool_calls"])) {
+                $totalTokens += $this->estimateTokenCount(
+                    json_encode($msg["tool_calls"]),
+                );
             }
         }
         $fillRatio = $totalTokens / $maxContextTokens;
 
         // Always run dedup (Stage 1); soft-trim at 40%; hard-clear at 55%
         if ($fillRatio > 0.35 || $iteration >= 3) {
-            $effectiveRatio = max($fillRatio, $iteration >= 5 ? 0.60 : 0.0);
+            $effectiveRatio = max($fillRatio, $iteration >= 5 ? 0.6 : 0.0);
             $protectCount = $iteration >= 8 ? 2 : 3;
-            $compacted = $this->trimOlderToolResults($compacted, $protectCount, $effectiveRatio, $iteration);
+            $compacted = $this->trimOlderToolResults(
+                $compacted,
+                $protectCount,
+                $effectiveRatio,
+                $iteration,
+            );
         }
 
         // Strip internal metadata before sending to the API
         foreach ($compacted as &$msg) {
-            unset($msg['_levi_iteration'], $msg['_levi_tool']);
+            unset($msg["_levi_iteration"], $msg["_levi_tool"]);
         }
         unset($msg);
 
@@ -257,10 +304,15 @@ trait ManagesContext {
      *
      * @param float $fillRatio Current context fill ratio (0.0–1.0)
      */
-    private function trimOlderToolResults(array $messages, int $protectLast = 4, float $fillRatio = 0.0, int $currentIteration = 0): array {
+    private function trimOlderToolResults(
+        array $messages,
+        int $protectLast = 4,
+        float $fillRatio = 0.0,
+        int $currentIteration = 0,
+    ): array {
         $toolIndices = [];
         foreach ($messages as $i => $msg) {
-            if (($msg['role'] ?? '') === 'tool') {
+            if (($msg["role"] ?? "") === "tool") {
                 $toolIndices[] = $i;
             }
         }
@@ -274,7 +326,7 @@ trait ManagesContext {
         // Also protect tool results that appear after the last user message
         $lastUserIdx = -1;
         foreach ($messages as $i => $msg) {
-            if (($msg['role'] ?? '') === 'user') {
+            if (($msg["role"] ?? "") === "user") {
                 $lastUserIdx = $i;
             }
         }
@@ -287,33 +339,50 @@ trait ManagesContext {
         }
 
         // --- Stage 1: Dedup identical tool calls ---
-        $messages = $this->deduplicateToolResults($messages, $toolIndices, $protectedSet);
+        $messages = $this->deduplicateToolResults(
+            $messages,
+            $toolIndices,
+            $protectedSet,
+        );
 
         // --- Stage 2: Soft-Trim (fill > 0.40) ---
-        if ($fillRatio > 0.40) {
+        if ($fillRatio > 0.4) {
             foreach ($messages as $i => &$msg) {
-                if (($msg['role'] ?? '') !== 'tool' || isset($protectedSet[$i])) {
+                if (
+                    ($msg["role"] ?? "") !== "tool" ||
+                    isset($protectedSet[$i])
+                ) {
                     continue;
                 }
-                $content = (string) ($msg['content'] ?? '');
+                $content = (string) ($msg["content"] ?? "");
                 $len = mb_strlen($content);
                 if ($len <= 500) {
                     continue;
                 }
 
-                $msgIteration = ($msg['_levi_iteration'] ?? null);
+                $msgIteration = $msg["_levi_iteration"] ?? null;
                 if ($msgIteration === null) {
                     $msgIteration = $currentIteration;
                 }
                 $resultAge = $currentIteration - (int) $msgIteration;
-                $toolName = (string) ($msg['_levi_tool'] ?? $this->extractToolNameFromContext($messages, $i));
+                $toolName =
+                    (string) ($msg["_levi_tool"] ??
+                        $this->extractToolNameFromContext($messages, $i));
 
-                if ($resultAge >= 3 && $toolName !== '') {
-                    $msg['content'] = $this->summarizeOldToolResult($content, $toolName);
+                if ($resultAge >= 3 && $toolName !== "") {
+                    $msg["content"] = $this->summarizeOldToolResult(
+                        $content,
+                        $toolName,
+                    );
                 } else {
                     $head = mb_substr($content, 0, 800);
                     $tail = mb_substr($content, -300);
-                    $msg['content'] = $head . "\n...[soft-trimmed, original " . $len . " chars]...\n" . $tail;
+                    $msg["content"] =
+                        $head .
+                        "\n...[soft-trimmed, original " .
+                        $len .
+                        " chars]...\n" .
+                        $tail;
                 }
             }
             unset($msg);
@@ -330,14 +399,21 @@ trait ManagesContext {
                 }
             }
             $hardClearCount = (int) ceil(count($unprotected) / 2);
-            $hardClearSet = array_flip(array_slice($unprotected, 0, $hardClearCount));
+            $hardClearSet = array_flip(
+                array_slice($unprotected, 0, $hardClearCount),
+            );
 
             foreach ($messages as $i => &$msg) {
                 if (!isset($hardClearSet[$i])) {
                     continue;
                 }
-                $toolName = (string) ($msg['_levi_tool'] ?? $this->extractToolNameFromContext($messages, $i));
-                $msg['content'] = $this->summarizeOldToolResult((string) ($msg['content'] ?? ''), $toolName ?: 'unknown');
+                $toolName =
+                    (string) ($msg["_levi_tool"] ??
+                        $this->extractToolNameFromContext($messages, $i));
+                $msg["content"] = $this->summarizeOldToolResult(
+                    (string) ($msg["content"] ?? ""),
+                    $toolName ?: "unknown",
+                );
             }
             unset($msg);
         }
@@ -349,15 +425,20 @@ trait ManagesContext {
      * Replace duplicate tool results (same tool + same key-args) with a placeholder,
      * keeping only the newest occurrence.
      */
-    private function deduplicateToolResults(array $messages, array $toolIndices, array $protectedSet): array {
+    private function deduplicateToolResults(
+        array $messages,
+        array $toolIndices,
+        array $protectedSet,
+    ): array {
         $seen = [];
         foreach ($toolIndices as $ti) {
-            $content = (string) ($messages[$ti]['content'] ?? '');
+            $content = (string) ($messages[$ti]["content"] ?? "");
             $toolName = $this->extractToolNameFromContext($messages, $ti);
-            if ($toolName === '') {
+            if ($toolName === "") {
                 continue;
             }
-            $key = $toolName . '|' . $this->hashToolResultKey($content, $toolName);
+            $key =
+                $toolName . "|" . $this->hashToolResultKey($content, $toolName);
             $seen[$key][] = $ti;
         }
 
@@ -371,7 +452,8 @@ trait ManagesContext {
                 if (isset($protectedSet[$oldIdx])) {
                     continue;
                 }
-                $messages[$oldIdx]['content'] = '[Duplikat-Ergebnis entfernt — neueres Ergebnis desselben Tools weiter unten]';
+                $messages[$oldIdx]["content"] =
+                    "[Duplikat-Ergebnis entfernt — neueres Ergebnis desselben Tools weiter unten]";
             }
         }
 
@@ -381,22 +463,28 @@ trait ManagesContext {
     /**
      * Find the tool name from the preceding assistant message's tool_calls.
      */
-    private function extractToolNameFromContext(array $messages, int $toolResultIndex): string {
-        $toolCallId = $messages[$toolResultIndex]['tool_call_id'] ?? '';
-        if ($toolCallId === '') {
-            return '';
+    private function extractToolNameFromContext(
+        array $messages,
+        int $toolResultIndex,
+    ): string {
+        $toolCallId = $messages[$toolResultIndex]["tool_call_id"] ?? "";
+        if ($toolCallId === "") {
+            return "";
         }
         for ($i = $toolResultIndex - 1; $i >= 0; $i--) {
             $msg = $messages[$i];
-            if (($msg['role'] ?? '') === 'assistant' && !empty($msg['tool_calls'])) {
-                foreach ($msg['tool_calls'] as $tc) {
-                    if (($tc['id'] ?? '') === $toolCallId) {
-                        return trim($tc['function']['name'] ?? '');
+            if (
+                ($msg["role"] ?? "") === "assistant" &&
+                !empty($msg["tool_calls"])
+            ) {
+                foreach ($msg["tool_calls"] as $tc) {
+                    if (($tc["id"] ?? "") === $toolCallId) {
+                        return trim($tc["function"]["name"] ?? "");
                     }
                 }
             }
         }
-        return '';
+        return "";
     }
 
     /**
@@ -404,15 +492,35 @@ trait ManagesContext {
      * For read tools, extracts identifying args (slug, file path, etc.).
      * For other tools, uses a content hash prefix.
      */
-    private function hashToolResultKey(string $content, string $toolName): string {
-        $readTools = ['read_plugin_file', 'read_theme_file', 'get_pages', 'get_posts',
-            'get_post', 'get_plugins', 'list_plugin_files', 'list_theme_files',
-            'get_option', 'get_media', 'get_users', 'read_error_log'];
+    private function hashToolResultKey(
+        string $content,
+        string $toolName,
+    ): string {
+        $readTools = [
+            "read_plugin_file",
+            "read_theme_file",
+            "get_pages",
+            "get_posts",
+            "get_post",
+            "get_plugins",
+            "list_plugin_files",
+            "list_theme_files",
+            "get_option",
+            "get_media",
+            "get_users",
+            "read_error_log",
+        ];
 
         if (in_array($toolName, $readTools, true)) {
             // For read tools: extract slug/path from the JSON result for identity
-            if (preg_match('/"(?:plugin_slug|slug|file_path|path)"\s*:\s*"([^"]{1,120})"/', $content, $m)) {
-                return $toolName . ':' . $m[1];
+            if (
+                preg_match(
+                    '/"(?:plugin_slug|slug|file_path|path)"\s*:\s*"([^"]{1,120})"/',
+                    $content,
+                    $m,
+                )
+            ) {
+                return $toolName . ":" . $m[1];
             }
         }
         // Fallback: first 200 chars as identity (catches truly identical results)
@@ -424,66 +532,102 @@ trait ManagesContext {
      * Works for ANY tool — extracts identifiers, status, lists and counts
      * automatically from the JSON structure. No per-tool case needed.
      */
-    private function summarizeOldToolResult(string $content, string $toolName): string {
+    private function summarizeOldToolResult(
+        string $content,
+        string $toolName,
+    ): string {
         $data = @json_decode($content, true);
         if (!is_array($data)) {
-            return "[{$toolName}: " . mb_substr($content, 0, 300) . ']';
+            return "[{$toolName}: " . mb_substr($content, 0, 300) . "]";
         }
 
         $parts = [];
 
-        $parts[] = ($data['success'] ?? false) ? 'OK' : 'FEHLER';
+        $parts[] = $data["success"] ?? false ? "OK" : "FEHLER";
 
-        if (!empty($data['error']) && is_string($data['error'])) {
-            $parts[] = mb_substr($data['error'], 0, 120);
+        if (!empty($data["error"]) && is_string($data["error"])) {
+            $parts[] = mb_substr($data["error"], 0, 120);
         }
-        if (!empty($data['message']) && is_string($data['message'])) {
-            $parts[] = mb_substr($data['message'], 0, 120);
+        if (!empty($data["message"]) && is_string($data["message"])) {
+            $parts[] = mb_substr($data["message"], 0, 120);
         }
 
         $ids = $this->extractScalarIdentifiers($data);
         if (!empty($ids)) {
-            $parts[] = implode(', ', $ids);
+            $parts[] = implode(", ", $ids);
         }
 
         $listSummaries = $this->summarizeListFields($data);
         if (!empty($listSummaries)) {
-            $parts[] = implode('; ', $listSummaries);
+            $parts[] = implode("; ", $listSummaries);
         }
 
         $numeric = $this->extractNumericMeta($data);
         if (!empty($numeric)) {
-            $parts[] = implode(', ', $numeric);
+            $parts[] = implode(", ", $numeric);
         }
 
-        $summary = "[{$toolName}: " . implode(' | ', $parts) . ']';
+        $summary = "[{$toolName}: " . implode(" | ", $parts) . "]";
 
         if (mb_strlen($summary) > 800) {
-            $summary = mb_substr($summary, 0, 797) . '...]';
+            $summary = mb_substr($summary, 0, 797) . "...]";
         }
 
         return $summary;
     }
 
     private const IDENTIFIER_KEYS = [
-        'id', 'post_id', 'page_id', 'attachment_id', 'product_id', 'user_id',
-        'order_id', 'coupon_id', 'variation_id', 'menu_id', 'term_id',
-        'title', 'name', 'post_title', 'slug', 'plugin_slug', 'theme_slug',
-        'relative_path', 'file_path', 'path', 'url', 'edit_url',
-        'status', 'post_type', 'role', 'action',
-        'permanently_deleted', 'activated', 'healthy',
+        "id",
+        "post_id",
+        "page_id",
+        "attachment_id",
+        "product_id",
+        "user_id",
+        "order_id",
+        "coupon_id",
+        "variation_id",
+        "menu_id",
+        "term_id",
+        "title",
+        "name",
+        "post_title",
+        "slug",
+        "plugin_slug",
+        "theme_slug",
+        "relative_path",
+        "file_path",
+        "path",
+        "url",
+        "edit_url",
+        "status",
+        "post_type",
+        "role",
+        "action",
+        "permanently_deleted",
+        "activated",
+        "healthy",
     ];
 
     private const SKIP_LARGE_KEYS = [
-        'content', 'raw_html', 'html', 'body', 'code', 'source',
-        'rendered', 'description', 'excerpt', 'raw',
-        '_verify', 'suggestion',
+        "content",
+        "raw_html",
+        "html",
+        "body",
+        "code",
+        "source",
+        "rendered",
+        "description",
+        "excerpt",
+        "raw",
+        "_verify",
+        "suggestion",
     ];
 
     /**
      * Extract scalar identifier fields (id, title, slug, status, path, etc.)
      */
-    private function extractScalarIdentifiers(array $data): array {
+    private function extractScalarIdentifiers(array $data): array
+    {
         $found = [];
         foreach (self::IDENTIFIER_KEYS as $key) {
             if (!isset($data[$key])) {
@@ -491,11 +635,11 @@ trait ManagesContext {
             }
             $val = $data[$key];
             if (is_bool($val)) {
-                $found[] = $key . '=' . ($val ? 'true' : 'false');
+                $found[] = $key . "=" . ($val ? "true" : "false");
             } elseif (is_scalar($val)) {
                 $strVal = (string) $val;
-                if ($strVal !== '' && mb_strlen($strVal) <= 120) {
-                    $found[] = $key . '=' . $strVal;
+                if ($strVal !== "" && mb_strlen($strVal) <= 120) {
+                    $found[] = $key . "=" . $strVal;
                 }
             }
         }
@@ -505,14 +649,23 @@ trait ManagesContext {
     /**
      * Summarize array-of-objects fields: extract count + per-item identifiers.
      */
-    private function summarizeListFields(array $data): array {
+    private function summarizeListFields(array $data): array
+    {
         $summaries = [];
 
         foreach ($data as $key => $value) {
-            if (!is_array($value) || empty($value) || !isset($value[0]) || !is_array($value[0])) {
+            if (
+                !is_array($value) ||
+                empty($value) ||
+                !isset($value[0]) ||
+                !is_array($value[0])
+            ) {
                 continue;
             }
-            if (in_array($key, self::SKIP_LARGE_KEYS, true) || str_starts_with($key, '_')) {
+            if (
+                in_array($key, self::SKIP_LARGE_KEYS, true) ||
+                str_starts_with($key, "_")
+            ) {
                 continue;
             }
 
@@ -529,9 +682,10 @@ trait ManagesContext {
             }
 
             if (!empty($itemLabels)) {
-                $summaries[] = $count . 'x ' . $key . ': ' . implode(', ', $itemLabels);
+                $summaries[] =
+                    $count . "x " . $key . ": " . implode(", ", $itemLabels);
             } else {
-                $summaries[] = $count . 'x ' . $key;
+                $summaries[] = $count . "x " . $key;
             }
         }
 
@@ -541,84 +695,130 @@ trait ManagesContext {
     /**
      * Build a compact label for a single list item (e.g. #42 "My Page" (draft)).
      */
-    private function labelForItem(array $item): ?string {
-        $id = $item['id'] ?? $item['post_id'] ?? $item['term_id'] ?? $item['user_id']
-            ?? $item['product_id'] ?? $item['attachment_id'] ?? null;
-        $title = $item['title'] ?? $item['name'] ?? $item['post_title']
-            ?? $item['label'] ?? $item['display_name'] ?? $item['slug'] ?? null;
-        $status = $item['status'] ?? $item['post_status'] ?? null;
+    private function labelForItem(array $item): ?string
+    {
+        $id =
+            $item["id"] ??
+            ($item["post_id"] ??
+                ($item["term_id"] ??
+                    ($item["user_id"] ??
+                        ($item["product_id"] ??
+                            ($item["attachment_id"] ?? null)))));
+        $title =
+            $item["title"] ??
+            ($item["name"] ??
+                ($item["post_title"] ??
+                    ($item["label"] ??
+                        ($item["display_name"] ?? ($item["slug"] ?? null)))));
+        $status = $item["status"] ?? ($item["post_status"] ?? null);
 
         if ($id === null && $title === null) {
             return null;
         }
 
-        $label = '';
+        $label = "";
         if ($id !== null) {
-            $label .= '#' . $id;
+            $label .= "#" . $id;
         }
-        if ($title !== null && is_string($title) && $title !== '') {
-            $shortTitle = mb_strlen($title) > 40 ? mb_substr($title, 0, 37) . '...' : $title;
-            $label .= ($label !== '' ? ' ' : '') . '"' . $shortTitle . '"';
+        if ($title !== null && is_string($title) && $title !== "") {
+            $shortTitle =
+                mb_strlen($title) > 40
+                    ? mb_substr($title, 0, 37) . "..."
+                    : $title;
+            $label .= ($label !== "" ? " " : "") . '"' . $shortTitle . '"';
         }
-        if ($status !== null && is_string($status) && $status !== '' && $status !== 'publish') {
+        if (
+            $status !== null &&
+            is_string($status) &&
+            $status !== "" &&
+            $status !== "publish"
+        ) {
             $label .= " ({$status})";
         }
-        return $label !== '' ? $label : null;
+        return $label !== "" ? $label : null;
     }
 
     /**
      * Extract notable numeric metadata (counts, totals, bytes, lines, etc.)
      */
-    private function extractNumericMeta(array $data): array {
+    private function extractNumericMeta(array $data): array
+    {
         $found = [];
         $numericKeys = [
-            'count', 'total', 'total_lines', 'total_matches', 'files_matched',
-            'bytes_written', 'patches_applied', 'files_checked', 'files_changed',
-            'line_count',
+            "count",
+            "total",
+            "total_lines",
+            "total_matches",
+            "files_matched",
+            "bytes_written",
+            "patches_applied",
+            "files_checked",
+            "files_changed",
+            "line_count",
         ];
 
         foreach ($numericKeys as $key) {
-            $val = $data[$key] ?? ($data['meta'][$key] ?? null);
+            $val = $data[$key] ?? ($data["meta"][$key] ?? null);
             if ($val !== null && is_numeric($val) && (int) $val !== 0) {
-                $found[] = $key . '=' . $val;
+                $found[] = $key . "=" . $val;
             }
         }
         return $found;
     }
 
-    private function compactToolResultForModel(array $result): string {
+    public function compactToolResultForModel(array $result): string
+    {
         $compact = $result;
-        foreach (['posts', 'pages', 'media', 'users', 'plugins'] as $listKey) {
+        foreach (["posts", "pages", "media", "users", "plugins"] as $listKey) {
             if (!isset($compact[$listKey]) || !is_array($compact[$listKey])) {
                 continue;
             }
             $originalCount = count($compact[$listKey]);
             if ($originalCount > 20) {
                 $compact[$listKey] = array_slice($compact[$listKey], 0, 20);
-                $compact[$listKey . '_truncated_count'] = $originalCount - 20;
+                $compact[$listKey . "_truncated_count"] = $originalCount - 20;
             }
         }
 
-        if (isset($compact['results']) && is_array($compact['results'])) {
-            $fileCount = count($compact['results']);
+        if (isset($compact["results"]) && is_array($compact["results"])) {
+            $fileCount = count($compact["results"]);
             if ($fileCount > 0) {
                 $perFileBudget = (int) (8000 / $fileCount);
-                foreach ($compact['results'] as &$entry) {
-                    if (isset($entry['content']) && is_string($entry['content']) && mb_strlen($entry['content']) > $perFileBudget) {
-                        $head = mb_substr($entry['content'], 0, (int) ($perFileBudget * 0.65));
-                        $tail = mb_substr($entry['content'], (int) -($perFileBudget * 0.30));
-                        $entry['content'] = $head . "\n\n...[truncated middle section]...\n\n" . $tail;
-                        $entry['truncated_by_context_budget'] = true;
+                foreach ($compact["results"] as &$entry) {
+                    if (
+                        isset($entry["content"]) &&
+                        is_string($entry["content"]) &&
+                        mb_strlen($entry["content"]) > $perFileBudget
+                    ) {
+                        $head = mb_substr(
+                            $entry["content"],
+                            0,
+                            (int) ($perFileBudget * 0.65),
+                        );
+                        $tail = mb_substr(
+                            $entry["content"],
+                            (int) -($perFileBudget * 0.3),
+                        );
+                        $entry["content"] =
+                            $head .
+                            "\n\n...[truncated middle section]...\n\n" .
+                            $tail;
+                        $entry["truncated_by_context_budget"] = true;
                     }
                 }
                 unset($entry);
             }
         }
 
-        if (isset($compact['content']) && is_string($compact['content']) && mb_strlen($compact['content']) > 4000) {
-            $head = mb_substr($compact['content'], 0, 2500);
-            $tail = mb_substr($compact['content'], -1200);
-            $compact['content'] = $head . "\n\n...[truncated middle section]...\n\n" . $tail;
+        if (
+            isset($compact["content"]) &&
+            is_string($compact["content"]) &&
+            mb_strlen($compact["content"]) > 4000
+        ) {
+            $head = mb_substr($compact["content"], 0, 2500);
+            $tail = mb_substr($compact["content"], -1200);
+            $compact["content"] =
+                $head . "\n\n...[truncated middle section]...\n\n" . $tail;
         }
 
         $json = wp_json_encode($compact);

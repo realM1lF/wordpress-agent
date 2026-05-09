@@ -24,8 +24,6 @@ class ChatController extends WP_REST_Controller
 {
     use Concerns\BuildsContext;
     use Concerns\ManagesContext;
-    use Concerns\ExecutesToolLoop;
-    use Concerns\ExecutesToolLoopV2;
     use Concerns\PostProcessesToolResults;
     use Concerns\ManagesUploads;
     use Concerns\TracksWorkingSet;
@@ -34,8 +32,8 @@ class ChatController extends WP_REST_Controller
 
     protected $namespace = "levi-agent/v1";
     protected $rest_base = "chat";
-    private const OWNED_PLUGIN_OPTION = "levi_owned_plugin_slugs";
-    private const OWNED_PLUGIN_BOOTSTRAP_OPTION = "levi_owned_plugin_slugs_bootstrapped";
+    protected const OWNED_PLUGIN_OPTION = "levi_owned_plugin_slugs";
+    protected const OWNED_PLUGIN_BOOTSTRAP_OPTION = "levi_owned_plugin_slugs_bootstrapped";
     private AIClientInterface $aiClient;
     private ConversationRepository $conversationRepo;
     private SettingsPage $settings;
@@ -45,6 +43,28 @@ class ChatController extends WP_REST_Controller
     private bool $useGenericTools = false;
     private static bool $initialized = false;
     private static ?self $instance = null;
+    private RequestHandler $requestHandler;
+    private ChatSessionManager $sessionManager;
+    private MessagePipeline $messagePipeline;
+    private ToolLoopEngine $toolLoopEngine;
+
+    // Thin delegations for methods extracted into ToolLoopEngine
+    public function getToolProgressLabel(
+        string $toolName,
+        string $phase,
+    ): string {
+        return $this->toolLoopEngine->getToolProgressLabel($toolName, $phase);
+    }
+
+    public function summarizeToolResult(array $result): string
+    {
+        return $this->toolLoopEngine->summarizeToolResult($result);
+    }
+
+    public function isWriteTool(string $toolName): bool
+    {
+        return $this->toolLoopEngine->isWriteTool($toolName);
+    }
 
     /** @var array{prompt_tokens: int, completion_tokens: int, cached_tokens: int, api_calls: int, model: ?string} */
     private array $usageAccumulator = [
@@ -95,6 +115,45 @@ class ChatController extends WP_REST_Controller
 
         PIIRedactor::init($this->settings->getSettings());
 
+        $this->requestHandler = new RequestHandler(
+            $this->settings,
+            $this->conversationRepo,
+            $this->aiClient,
+        );
+        $this->sessionManager = new ChatSessionManager(
+            $this->conversationRepo,
+            $this->settings,
+        );
+        $getSystemPromptParts = function (
+            string $query = "",
+            ?string $sessionId = null,
+            bool $includeUploadedContext = true,
+            ?array $preClassification = null,
+        ): array {
+            return $this->getSystemPromptParts(
+                $query,
+                $sessionId,
+                $includeUploadedContext,
+                $preClassification,
+            );
+        };
+        $this->messagePipeline = new MessagePipeline(
+            $this->aiClient,
+            $this->settings,
+            $this->conversationRepo,
+            $getSystemPromptParts,
+        );
+        $this->toolLoopEngine = new ToolLoopEngine(
+            $this,
+            $this->messagePipeline,
+            $this->settings,
+            $this->toolRegistry,
+            $this->genericRegistry,
+            $this->toolGuard,
+            $this->conversationRepo,
+            $this->aiClient,
+        );
+
         add_action("rest_api_init", [$this, "register_routes"]);
         self::$instance = $this;
     }
@@ -117,7 +176,7 @@ class ChatController extends WP_REST_Controller
      * 0.9.0: When use_generic_tools is enabled, returns the 12 generic tools
      * from GenericRegistry instead of the 44 specialized ones.
      */
-    private function getToolDefs(): array
+    public function getToolDefs(): array
     {
         if ($this->useGenericTools && $this->genericRegistry !== null) {
             return $this->genericRegistry->getDefinitions();
@@ -181,7 +240,10 @@ class ChatController extends WP_REST_Controller
             [
                 "methods" => WP_REST_Server::CREATABLE,
                 "callback" => [$this, "sendMessage"],
-                "permission_callback" => [$this, "checkPermission"],
+                "permission_callback" => [
+                    $this->requestHandler,
+                    "checkPermission",
+                ],
                 "args" => $sharedArgs,
             ],
         ]);
@@ -193,7 +255,10 @@ class ChatController extends WP_REST_Controller
                 [
                     "methods" => WP_REST_Server::CREATABLE,
                     "callback" => [$this, "sendMessageStream"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                     "args" => $sharedArgs,
                 ],
             ],
@@ -206,7 +271,10 @@ class ChatController extends WP_REST_Controller
                 [
                     "methods" => WP_REST_Server::CREATABLE,
                     "callback" => [$this, "uploadFiles"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                 ],
             ],
         );
@@ -218,12 +286,18 @@ class ChatController extends WP_REST_Controller
                 [
                     "methods" => WP_REST_Server::READABLE,
                     "callback" => [$this, "getSessionUploadsMeta"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                 ],
                 [
                     "methods" => WP_REST_Server::DELETABLE,
                     "callback" => [$this, "clearSessionUploadsEndpoint"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                 ],
             ],
         );
@@ -237,7 +311,10 @@ class ChatController extends WP_REST_Controller
                 [
                     "methods" => WP_REST_Server::DELETABLE,
                     "callback" => [$this, "deleteSessionUploadById"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                 ],
             ],
         );
@@ -248,8 +325,11 @@ class ChatController extends WP_REST_Controller
             [
                 [
                     "methods" => WP_REST_Server::READABLE,
-                    "callback" => [$this, "getHistory"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "callback" => [$this->requestHandler, "getHistory"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                 ],
             ],
         );
@@ -261,7 +341,10 @@ class ChatController extends WP_REST_Controller
                 [
                     "methods" => WP_REST_Server::DELETABLE,
                     "callback" => [$this, "deleteSession"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                 ],
             ],
         );
@@ -272,8 +355,11 @@ class ChatController extends WP_REST_Controller
             [
                 [
                     "methods" => WP_REST_Server::READABLE,
-                    "callback" => [$this, "testConnection"],
-                    "permission_callback" => [$this, "checkAdminPermission"],
+                    "callback" => [$this->requestHandler, "testConnection"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkAdminPermission",
+                    ],
                 ],
             ],
         );
@@ -284,8 +370,11 @@ class ChatController extends WP_REST_Controller
             [
                 [
                     "methods" => WP_REST_Server::READABLE,
-                    "callback" => [$this, "getUserSessions"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "callback" => [$this->requestHandler, "getUserSessions"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                 ],
             ],
         );
@@ -296,62 +385,14 @@ class ChatController extends WP_REST_Controller
             [
                 [
                     "methods" => WP_REST_Server::READABLE,
-                    "callback" => [$this, "getStatus"],
-                    "permission_callback" => [$this, "checkPermission"],
+                    "callback" => [$this->requestHandler, "getStatus"],
+                    "permission_callback" => [
+                        $this->requestHandler,
+                        "checkPermission",
+                    ],
                 ],
             ],
         );
-    }
-
-    public function getStatus(WP_REST_Request $request): WP_REST_Response
-    {
-        global $wpdb;
-        $table = $wpdb->prefix . "levi_conversations";
-        $tableExists =
-            $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) ===
-            $table;
-        return new WP_REST_Response(
-            [
-                "tables_ok" => $tableExists,
-                "ai_configured" => $this->aiClient->isConfigured(),
-                "user_id" => get_current_user_id(),
-            ],
-            200,
-        );
-    }
-
-    public function checkPermission(): bool
-    {
-        return current_user_can("edit_posts");
-    }
-
-    public function checkAdminPermission(): bool
-    {
-        return current_user_can("manage_options");
-    }
-
-    public function checkRateLimit(int $userId): bool
-    {
-        $settings = $this->settings->getSettings();
-        $maxRequests = $settings["rate_limit"] ?? 50;
-        if ((int) $maxRequests <= 0) {
-            return true;
-        }
-
-        $transientKey = "levi_rate_" . $userId;
-        $requests = get_transient($transientKey);
-
-        if ($requests === false) {
-            set_transient($transientKey, 1, HOUR_IN_SECONDS);
-            return true;
-        }
-
-        if ($requests >= $maxRequests) {
-            return false;
-        }
-
-        set_transient($transientKey, $requests + 1, HOUR_IN_SECONDS);
-        return true;
     }
 
     public function sendMessage(WP_REST_Request $request): WP_REST_Response
@@ -376,7 +417,7 @@ class ChatController extends WP_REST_Controller
                     "error" => "Internal error: " . $e->getMessage(),
                     "session_id" =>
                         $request->get_param("session_id") ??
-                        $this->generateSessionId(),
+                        $this->requestHandler->generateSessionId(),
                 ],
                 500,
             );
@@ -392,20 +433,7 @@ class ChatController extends WP_REST_Controller
     {
         $phpTimeLimit =
             (int) ($this->settings->getSettings()["php_time_limit"] ?? 300);
-        if ($phpTimeLimit > 0 && function_exists("set_time_limit")) {
-            @set_time_limit($phpTimeLimit);
-        }
-        ignore_user_abort(false);
-
-        // Disable ALL output buffering layers
-        while (ob_get_level() > 0) {
-            ob_end_clean();
-        }
-
-        header("Content-Type: text/event-stream");
-        header("Cache-Control: no-cache");
-        header("Connection: keep-alive");
-        header("X-Accel-Buffering: no");
+        $this->requestHandler->prepareStreamResponse($phpTimeLimit);
 
         try {
             $this->processMessageStreaming($request);
@@ -425,7 +453,7 @@ class ChatController extends WP_REST_Controller
         die();
     }
 
-    private function emitSSE(string $type, array $data): void
+    public function emitSSE(string $type, array $data): void
     {
         // Safety: only emit SSE when the response is actually in event-stream mode.
         // handleToolCallsV2 (non-streaming) may call this, but we must not output
@@ -452,33 +480,13 @@ class ChatController extends WP_REST_Controller
 
     private function processMessageStreaming(WP_REST_Request $request): void
     {
-        $this->lastStreamedContent = null;
+        $this->messagePipeline->setLastStreamedContent(null);
 
-        $message = $request->get_param("message");
-        $sessionId =
-            $request->get_param("session_id") ?? $this->generateSessionId();
-        $userId = get_current_user_id();
-
-        // Session ownership check
-        if ($sessionId !== null) {
-            $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
-            if (
-                $ownerId !== null &&
-                $ownerId !== $userId &&
-                !current_user_can("manage_options")
-            ) {
-                $this->emitSSE("error", [
-                    "message" => "Session not found or access denied.",
-                    "session_id" => $sessionId,
-                ]);
-                return;
-            }
-        }
-
-        if (!$this->checkRateLimit($userId)) {
+        $ctx = $this->sessionManager->prepareSessionContext($request);
+        if (!$ctx["success"]) {
             $this->emitSSE("error", [
-                "message" => "Rate limit exceeded. Please try again later.",
-                "session_id" => $sessionId,
+                "message" => $ctx["error"],
+                "session_id" => $ctx["session_id"],
             ]);
             return;
         }
@@ -487,48 +495,27 @@ class ChatController extends WP_REST_Controller
             $this->emitSSE("error", [
                 "message" =>
                     "AI not configured. Please set up provider credentials in Settings.",
-                "session_id" => $sessionId,
+                "session_id" => $ctx["session_id"],
             ]);
             return;
         }
 
-        $this->emitSSE("status", [
-            "message" => "Nachricht empfangen...",
-            "session_id" => $sessionId,
+        $this->emitSSE("activity_start", [
+            "text" => "Nachricht empfangen...",
+            "session_id" => $ctx["session_id"],
         ]);
 
-        $webSearch =
-            (bool) $request->get_param("web_search") &&
-            $this->settings->isWebSearchEnabled();
-
-        $replaceLast = (bool) $request->get_param("replace_last");
-        if ($replaceLast) {
-            try {
-                $this->conversationRepo->deleteLastUserAssistantPair(
-                    $sessionId,
-                );
-            } catch (\Exception $e) {
-                error_log("Levi DB Error (replace_last): " . $e->getMessage());
-            }
-        }
-
-        try {
-            $this->conversationRepo->saveMessage(
-                $sessionId,
-                $userId,
-                "user",
-                $message,
-            );
-        } catch (\Exception $e) {
-            error_log("Levi DB Error: " . $e->getMessage());
-        }
+        $sessionId = $ctx["session_id"];
+        $userId = $ctx["user_id"];
+        $message = $ctx["message"];
+        $webSearch = $ctx["web_search"];
 
         $hasUploadedContext = !empty(
             $this->getSessionUploads($sessionId, $userId)
         );
 
         // ── Upfront classification ──────────────────────────────────────
-        $this->emitSSE("status", ["message" => "Kontext laden..."]);
+        $this->emitSSE("activity_update", ["text" => "Kontext laden..."]);
         $classification = $this->classifyQuery((string) $message, $sessionId);
         $queryCategory = $classification["category"] ?? "COMPLEX";
 
@@ -538,12 +525,22 @@ class ChatController extends WP_REST_Controller
                 "Levi: SIMPLE fast-path for: " .
                     mb_substr((string) $message, 0, 80),
             );
-            $this->emitSSE("status", ["message" => "Levi denkt nach..."]);
-            $lightMessages = $this->buildMessagesLight(
+            $this->emitSSE("activity_update", ["text" => "Levi denkt nach..."]);
+            $lightMessages = $this->messagePipeline->buildMessagesLight(
                 $sessionId,
                 (string) $message,
             );
-            $streamResult = $this->streamChatWithTracking($lightMessages, []);
+            $streamResult = $this->messagePipeline->streamChatWithTracking(
+                $lightMessages,
+                [],
+                function (string $type, array $data) {
+                    $this->emitSSE($type, $data);
+                },
+                function (string $toolName, string $phase) {
+                    return $this->getToolProgressLabel($toolName, $phase);
+                },
+                $this->usageAccumulator,
+            );
 
             if (!is_wp_error($streamResult)) {
                 $assistantMessage = $this->sanitizeAssistantMessageContent(
@@ -556,20 +553,16 @@ class ChatController extends WP_REST_Controller
                 $assistantMessage = $this->getEmptyResponseFallback();
             }
 
-            try {
-                $this->conversationRepo->saveMessage(
-                    $sessionId,
-                    $userId,
-                    "assistant",
-                    $assistantMessage,
-                );
-            } catch (\Exception $e) {
-                error_log("Levi DB Error: " . $e->getMessage());
-            }
+            $this->sessionManager->saveAssistantMessage(
+                $sessionId,
+                $userId,
+                $assistantMessage,
+            );
             $this->emitSSE(
                 "stream_end",
                 trim($assistantMessage) !== "" ? ["preserve" => true] : [],
             );
+            $this->emitSSE("activity_complete", []);
             $this->emitSSE("done", [
                 "session_id" => $sessionId,
                 "message" => $assistantMessage,
@@ -579,7 +572,7 @@ class ChatController extends WP_REST_Controller
 
         // ── Normal path: CRUD / COMPLEX ─────────────────────────────────
         $this->discoveredToolNames = [];
-        $messages = $this->buildMessages(
+        $messages = $this->messagePipeline->buildMessages(
             $sessionId,
             $message,
             true,
@@ -595,8 +588,18 @@ class ChatController extends WP_REST_Controller
             $this->emitSSE("heartbeat", []);
         };
 
-        $this->emitSSE("status", ["message" => "Levi denkt nach..."]);
-        $streamResult = $this->streamChatWithTracking($messages, $tools);
+        $this->emitSSE("activity_update", ["text" => "Levi denkt nach..."]);
+        $streamResult = $this->messagePipeline->streamChatWithTracking(
+            $messages,
+            $tools,
+            function (string $type, array $data) {
+                $this->emitSSE($type, $data);
+            },
+            function (string $toolName, string $phase) {
+                return $this->getToolProgressLabel($toolName, $phase);
+            },
+            $this->usageAccumulator,
+        );
 
         if (!is_wp_error($streamResult)) {
             if (
@@ -619,7 +622,7 @@ class ChatController extends WP_REST_Controller
                         $streamResult["reasoning_content"];
                 }
                 if ($this->useGenericTools) {
-                    $this->handleToolCallsStreamingV2(
+                    $this->toolLoopEngine->handleToolCallsStreamingV2(
                         $toolCallData,
                         $messages,
                         $sessionId,
@@ -629,7 +632,7 @@ class ChatController extends WP_REST_Controller
                         $webSearch,
                     );
                 } else {
-                    $this->handleToolCallsStreaming(
+                    $this->toolLoopEngine->handleToolCallsStreaming(
                         $toolCallData,
                         $messages,
                         $sessionId,
@@ -666,21 +669,17 @@ class ChatController extends WP_REST_Controller
                 );
             }
 
-            try {
-                $this->conversationRepo->saveMessage(
-                    $sessionId,
-                    $userId,
-                    "assistant",
-                    $assistantMessage,
-                );
-            } catch (\Exception $e) {
-                error_log("Levi DB Error: " . $e->getMessage());
-            }
+            $this->sessionManager->saveAssistantMessage(
+                $sessionId,
+                $userId,
+                $assistantMessage,
+            );
 
             if ($hasUploadedContext) {
                 $this->clearSessionUploads($sessionId, $userId);
             }
 
+            $this->emitSSE("activity_complete", []);
             $this->emitSSE("done", [
                 "session_id" => $sessionId,
                 "message" => $assistantMessage,
@@ -688,7 +687,7 @@ class ChatController extends WP_REST_Controller
                 "truncated" => $truncated,
                 "usage" => $this->usageAccumulator,
             ]);
-            $this->flushUsage($sessionId, $userId);
+            $this->messagePipeline->flushUsage($sessionId, $userId);
             return;
         }
 
@@ -702,7 +701,7 @@ class ChatController extends WP_REST_Controller
                 "), falling back to non-streaming",
         );
 
-        $response = $this->chatWithTracking(
+        $response = $this->messagePipeline->chatWithTracking(
             $messages,
             $tools,
             $heartbeat,
@@ -723,28 +722,32 @@ class ChatController extends WP_REST_Controller
                 ($isNoEndpointFailure ||
                     ($isProviderFailure && !$this->isActionIntent($message)))
             ) {
-                $this->emitSSE("status", [
-                    "message" => "Neuer Versuch ohne Tools...",
+                $this->emitSSE("activity_update", [
+                    "text" => "Neuer Versuch ohne Tools...",
                 ]);
-                $response = $this->chatWithTracking(
+                $response = $this->messagePipeline->chatWithTracking(
                     $messages,
                     [],
                     $heartbeat,
                     $webSearch,
                 );
             } elseif ($isTimeoutFailure && $hasUploadedContext) {
-                $this->emitSSE("status", [
-                    "message" => "Timeout, versuche mit weniger Kontext...",
+                $this->emitSSE("activity_update", [
+                    "text" => "Timeout, versuche mit weniger Kontext...",
                 ]);
-                $messages = $this->buildMessages($sessionId, $message, false);
-                $response = $this->chatWithTracking(
+                $messages = $this->messagePipeline->buildMessages(
+                    $sessionId,
+                    $message,
+                    false,
+                );
+                $response = $this->messagePipeline->chatWithTracking(
                     $messages,
                     $tools,
                     $heartbeat,
                     $webSearch,
                 );
                 if (is_wp_error($response) && !empty($tools)) {
-                    $response = $this->chatWithTracking(
+                    $response = $this->messagePipeline->chatWithTracking(
                         $messages,
                         [],
                         $heartbeat,
@@ -752,10 +755,10 @@ class ChatController extends WP_REST_Controller
                     );
                 }
             } elseif ($isTimeoutFailure && !empty($tools)) {
-                $this->emitSSE("status", [
-                    "message" => "Timeout, neuer Versuch...",
+                $this->emitSSE("activity_update", [
+                    "text" => "Timeout, neuer Versuch...",
                 ]);
-                $response = $this->chatWithTracking(
+                $response = $this->messagePipeline->chatWithTracking(
                     $messages,
                     [],
                     $heartbeat,
@@ -771,18 +774,18 @@ class ChatController extends WP_REST_Controller
                 str_contains($overflowMsg, "too many tokens") ||
                 str_contains($overflowMsg, "maximum context")
             ) {
-                $this->emitSSE("status", [
-                    "message" => "Kontext wird gekuerzt...",
+                $this->emitSSE("activity_update", [
+                    "text" => "Kontext wird gekuerzt...",
                 ]);
                 $halvedMessages = $this->halveHistory($messages);
-                $response = $this->chatWithTracking(
+                $response = $this->messagePipeline->chatWithTracking(
                     $halvedMessages,
                     $tools,
                     $heartbeat,
                     $webSearch,
                 );
                 if (is_wp_error($response) && !empty($tools)) {
-                    $response = $this->chatWithTracking(
+                    $response = $this->messagePipeline->chatWithTracking(
                         $halvedMessages,
                         [],
                         $heartbeat,
@@ -811,13 +814,13 @@ class ChatController extends WP_REST_Controller
                     mb_substr($originalContent, 0, 500),
             );
             for ($retryAttempt = 1; $retryAttempt <= 2; $retryAttempt++) {
-                $this->emitSSE("status", [
-                    "message" =>
+                $this->emitSSE("activity_update", [
+                    "text" =>
                         "Levi versucht es erneut... (Versuch " .
                         ($retryAttempt + 1) .
                         ")",
                 ]);
-                $response = $this->chatWithTracking(
+                $response = $this->messagePipeline->chatWithTracking(
                     $messages,
                     $tools,
                     $heartbeat,
@@ -844,8 +847,11 @@ class ChatController extends WP_REST_Controller
         $messageData = $response["choices"][0]["message"] ?? [];
 
         if (!empty($messageData["tool_calls"])) {
+            $this->emitSSE("activity_start", [
+                "text" => "Aufgabe wird ausgeführt...",
+            ]);
             if ($this->useGenericTools) {
-                $this->handleToolCallsStreamingV2(
+                $this->toolLoopEngine->handleToolCallsStreamingV2(
                     $messageData,
                     $messages,
                     $sessionId,
@@ -855,7 +861,7 @@ class ChatController extends WP_REST_Controller
                     $webSearch,
                 );
             } else {
-                $this->handleToolCallsStreaming(
+                $this->toolLoopEngine->handleToolCallsStreaming(
                     $messageData,
                     $messages,
                     $sessionId,
@@ -881,21 +887,17 @@ class ChatController extends WP_REST_Controller
             $assistantMessage = $this->appendTruncationHint($assistantMessage);
         }
 
-        try {
-            $this->conversationRepo->saveMessage(
-                $sessionId,
-                $userId,
-                "assistant",
-                $assistantMessage,
-            );
-        } catch (\Exception $e) {
-            error_log("Levi DB Error: " . $e->getMessage());
-        }
+        $this->sessionManager->saveAssistantMessage(
+            $sessionId,
+            $userId,
+            $assistantMessage,
+        );
 
         if ($hasUploadedContext) {
             $this->clearSessionUploads($sessionId, $userId);
         }
 
+        $this->emitSSE("activity_complete", []);
         $this->emitSSE("done", [
             "session_id" => $sessionId,
             "message" => $assistantMessage,
@@ -903,82 +905,37 @@ class ChatController extends WP_REST_Controller
             "truncated" => $this->wasResponseTruncated($response),
             "usage" => $this->usageAccumulator,
         ]);
-        $this->flushUsage($sessionId, $userId);
+        $this->messagePipeline->flushUsage($sessionId, $userId);
     }
 
     private function processMessage(WP_REST_Request $request): WP_REST_Response
     {
-        $message = $request->get_param("message");
-        $sessionId =
-            $request->get_param("session_id") ?? $this->generateSessionId();
-        $userId = get_current_user_id();
-
-        // Session ownership: if reusing existing session, verify it belongs to current user
-        if ($sessionId !== null) {
-            $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
-            if (
-                $ownerId !== null &&
-                $ownerId !== $userId &&
-                !current_user_can("manage_options")
-            ) {
-                return new WP_REST_Response(
-                    [
-                        "error" => "Session not found or access denied.",
-                        "session_id" => $sessionId,
-                    ],
-                    403,
-                );
-            }
-        }
-
-        // Check rate limit
-        if (!$this->checkRateLimit($userId)) {
+        $ctx = $this->sessionManager->prepareSessionContext($request);
+        if (!$ctx["success"]) {
             return new WP_REST_Response(
                 [
-                    "error" => "Rate limit exceeded. Please try again later.",
-                    "session_id" => $sessionId,
+                    "error" => $ctx["error"],
+                    "session_id" => $ctx["session_id"],
                 ],
-                429,
+                $ctx["status"] ?? 500,
             );
         }
 
-        // Check if AI is configured
         if (!$this->aiClient->isConfigured()) {
             return new WP_REST_Response(
                 [
                     "error" =>
                         "AI not configured. Please set up provider credentials in Settings.",
-                    "session_id" => $sessionId,
+                    "session_id" => $ctx["session_id"],
                 ],
                 503,
             );
         }
 
-        $webSearch =
-            (bool) $request->get_param("web_search") &&
-            $this->settings->isWebSearchEnabled();
-
-        $replaceLast = (bool) $request->get_param("replace_last");
-        if ($replaceLast) {
-            try {
-                $this->conversationRepo->deleteLastUserAssistantPair(
-                    $sessionId,
-                );
-            } catch (\Exception $e) {
-                error_log("Levi DB Error (replace_last): " . $e->getMessage());
-            }
-        }
-
-        try {
-            $this->conversationRepo->saveMessage(
-                $sessionId,
-                $userId,
-                "user",
-                $message,
-            );
-        } catch (\Exception $e) {
-            error_log("Levi DB Error: " . $e->getMessage());
-        }
+        $sessionId = $ctx["session_id"];
+        $userId = $ctx["user_id"];
+        $message = $ctx["message"];
+        $webSearch = $ctx["web_search"];
 
         $hasUploadedContext = !empty(
             $this->getSessionUploads($sessionId, $userId)
@@ -994,11 +951,14 @@ class ChatController extends WP_REST_Controller
                 "Levi: SIMPLE fast-path (non-streaming) for: " .
                     mb_substr((string) $message, 0, 80),
             );
-            $lightMessages = $this->buildMessagesLight(
+            $lightMessages = $this->messagePipeline->buildMessagesLight(
                 $sessionId,
                 (string) $message,
             );
-            $response = $this->chatWithTracking($lightMessages, []);
+            $response = $this->messagePipeline->chatWithTracking(
+                $lightMessages,
+                [],
+            );
 
             $assistantMessage = "";
             if (!is_wp_error($response)) {
@@ -1011,16 +971,11 @@ class ChatController extends WP_REST_Controller
                 $assistantMessage = $this->getEmptyResponseFallback();
             }
 
-            try {
-                $this->conversationRepo->saveMessage(
-                    $sessionId,
-                    $userId,
-                    "assistant",
-                    $assistantMessage,
-                );
-            } catch (\Exception $e) {
-                error_log("Levi DB Error: " . $e->getMessage());
-            }
+            $this->sessionManager->saveAssistantMessage(
+                $sessionId,
+                $userId,
+                $assistantMessage,
+            );
 
             return new WP_REST_Response([
                 "message" => $assistantMessage,
@@ -1030,7 +985,7 @@ class ChatController extends WP_REST_Controller
 
         // ── Normal path: CRUD / COMPLEX ─────────────────────────────────
         $this->discoveredToolNames = [];
-        $messages = $this->buildMessages(
+        $messages = $this->messagePipeline->buildMessages(
             $sessionId,
             $message,
             true,
@@ -1039,7 +994,7 @@ class ChatController extends WP_REST_Controller
         $tools = $this->getToolDefs();
 
         // Call AI – try with tools first, fallback to no tools on provider error
-        $response = $this->chatWithTracking(
+        $response = $this->messagePipeline->chatWithTracking(
             $messages,
             $tools,
             null,
@@ -1062,7 +1017,7 @@ class ChatController extends WP_REST_Controller
                 ($isNoEndpointFailure ||
                     ($isProviderFailure && !$this->isActionIntent($message)))
             ) {
-                $response = $this->chatWithTracking(
+                $response = $this->messagePipeline->chatWithTracking(
                     $messages,
                     [],
                     null,
@@ -1070,8 +1025,12 @@ class ChatController extends WP_REST_Controller
                 );
             } elseif ($isTimeoutFailure && $hasUploadedContext) {
                 // Retry once with same history but without uploaded file context.
-                $messages = $this->buildMessages($sessionId, $message, false);
-                $response = $this->chatWithTracking(
+                $messages = $this->messagePipeline->buildMessages(
+                    $sessionId,
+                    $message,
+                    false,
+                );
+                $response = $this->messagePipeline->chatWithTracking(
                     $messages,
                     $tools,
                     null,
@@ -1079,7 +1038,7 @@ class ChatController extends WP_REST_Controller
                 );
                 if (is_wp_error($response) && !empty($tools)) {
                     // Last retry for timeout path: disable tools to reduce payload/latency.
-                    $response = $this->chatWithTracking(
+                    $response = $this->messagePipeline->chatWithTracking(
                         $messages,
                         [],
                         null,
@@ -1088,7 +1047,7 @@ class ChatController extends WP_REST_Controller
                 }
             } elseif ($isTimeoutFailure && !empty($tools)) {
                 // Retry once without tools for slow/loaded endpoints.
-                $response = $this->chatWithTracking(
+                $response = $this->messagePipeline->chatWithTracking(
                     $messages,
                     [],
                     null,
@@ -1109,14 +1068,14 @@ class ChatController extends WP_REST_Controller
                     "Levi: context overflow detected, retrying with halved history",
                 );
                 $halvedMessages = $this->halveHistory($messages);
-                $response = $this->chatWithTracking(
+                $response = $this->messagePipeline->chatWithTracking(
                     $halvedMessages,
                     $tools,
                     null,
                     $webSearch,
                 );
                 if (is_wp_error($response) && !empty($tools)) {
-                    $response = $this->chatWithTracking(
+                    $response = $this->messagePipeline->chatWithTracking(
                         $halvedMessages,
                         [],
                         null,
@@ -1184,7 +1143,7 @@ class ChatController extends WP_REST_Controller
             );
 
             for ($retryAttempt = 1; $retryAttempt <= 2; $retryAttempt++) {
-                $response = $this->chatWithTracking(
+                $response = $this->messagePipeline->chatWithTracking(
                     $messages,
                     $tools,
                     null,
@@ -1222,7 +1181,7 @@ class ChatController extends WP_REST_Controller
             !empty($messageData["tool_calls"])
         ) {
             if ($this->useGenericTools) {
-                $toolResponse = $this->handleToolCallsV2(
+                $toolResponse = $this->toolLoopEngine->handleToolCallsV2(
                     $messageData,
                     $messages,
                     $sessionId,
@@ -1231,7 +1190,7 @@ class ChatController extends WP_REST_Controller
                     $webSearch,
                 );
             } else {
-                $toolResponse = $this->handleToolCalls(
+                $toolResponse = $this->toolLoopEngine->handleToolCalls(
                     $messageData,
                     $messages,
                     $sessionId,
@@ -1259,23 +1218,18 @@ class ChatController extends WP_REST_Controller
             $assistantMessage = $this->appendTruncationHint($assistantMessage);
         }
 
-        try {
-            $this->conversationRepo->saveMessage(
-                $sessionId,
-                $userId,
-                "assistant",
-                $assistantMessage,
-            );
-        } catch (\Exception $e) {
-            error_log("Levi DB Error: " . $e->getMessage());
-        }
+        $this->sessionManager->saveAssistantMessage(
+            $sessionId,
+            $userId,
+            $assistantMessage,
+        );
 
         if ($hasUploadedContext) {
             $this->clearSessionUploads($sessionId, $userId);
         }
 
         $usage = $this->usageAccumulator;
-        $this->flushUsage($sessionId, $userId);
+        $this->messagePipeline->flushUsage($sessionId, $userId);
         return new WP_REST_Response(
             [
                 "session_id" => $sessionId,
@@ -1289,340 +1243,57 @@ class ChatController extends WP_REST_Controller
         );
     }
 
-    private function chatWithTracking(
+    public function chatWithTracking(
         array $messages,
         array $tools = [],
         ?callable $heartbeat = null,
         bool $webSearch = false,
         ?string $toolChoice = null,
     ): array|WP_Error {
-        if ($toolChoice !== null) {
-            $this->aiClient->setToolChoice($toolChoice);
-        }
-        if ($this->aiClient instanceof \Levi\Agent\AI\OpenRouterClient) {
-            $response = $this->aiClient->chat(
-                $messages,
-                $tools,
-                $heartbeat,
-                $webSearch,
-            );
-        } else {
-            $response = $this->aiClient->chat($messages, $tools);
-        }
-        if (!is_wp_error($response)) {
-            $this->accumulateUsage($response);
-        }
-        return $response;
+        return $this->messagePipeline->chatWithTracking(
+            $messages,
+            $tools,
+            $heartbeat,
+            $webSearch,
+            $toolChoice,
+            $this->usageAccumulator,
+        );
     }
 
-    /**
-     * Stream a continuation response after tool execution, with graduated fallback.
-     *
-     * Strategy on transient failure (timeout / cURL / 5xx):
-     *  1. If partial content was already streamed → treat as success (no duplicate text).
-     *  2. Retry streaming WITHOUT tools (smaller payload → faster) but WITH an
-     *     honesty-guard system message that prevents hallucinated tool results.
-     *  3. Last resort: blocking chat() WITHOUT tools + same honesty guard.
-     *
-     * stream_end is emitted exactly once, right before every return path.
-     */
-    private function streamContinuation(
+    public function streamContinuation(
         array $messages,
         array $tools = [],
         bool $webSearch = false,
     ): array|WP_Error {
-        if (empty($tools)) {
-            $this->emitSSE("stream_start", []);
-        }
-
-        $streamedContent = "";
-        $onChunk = function (string $chunk, string $type = "content") use (
-            &$streamedContent,
-        ) {
-            if ($type === "reasoning_start") {
-                $this->emitSSE("status", ["message" => "Levi denkt nach..."]);
-                return;
-            }
-            if ($type === "tool_call_start") {
-                $info = json_decode($chunk, true);
-                if (is_array($info) && !empty($info["tool"])) {
-                    $toolName = $info["tool"];
-                    $this->emitSSE("progress", [
-                        "message" => $this->getToolProgressLabel(
-                            $toolName,
-                            "start",
-                        ),
-                        "tool" => $toolName,
-                        "phase" => "preview",
-                    ]);
-                }
-                return;
-            }
-            $streamedContent .= $chunk;
-            $this->emitSSE("delta", ["content" => $chunk]);
+        $emitSse = function (string $type, array $data) {
+            $this->emitSSE($type, $data);
         };
-
-        $result = $this->aiClient->streamChat($messages, $onChunk, $tools);
-
-        // Track substantial streamed content for fallback recovery
-        if (mb_strlen($streamedContent) > 50) {
-            $this->lastStreamedContent = $streamedContent;
-        }
-
-        if (!is_wp_error($result)) {
-            $hasToolCalls = !empty($result["tool_calls"]);
-            $this->emitSSE(
-                "stream_end",
-                $hasToolCalls && trim($streamedContent) !== ""
-                    ? ["preserve" => true]
-                    : [],
-            );
-            $this->accumulateStreamUsage($result);
-            return $this->streamResultToResponse($result);
-        }
-
-        // --- Streaming failed ---
-
-        if ($streamedContent !== "") {
-            $this->emitSSE("stream_end", []);
-            error_log(
-                "Levi: stream partially completed (" .
-                    strlen($streamedContent) .
-                    " chars shown before error)",
-            );
-            $this->usageAccumulator["api_calls"]++;
-            return $this->streamResultToResponse([
-                "content" => $streamedContent,
-                "finish_reason" => "stop",
-                "tool_calls" => [],
-            ]);
-        }
-
-        $errMsg = mb_strtolower($result->get_error_message());
-        $isTransient =
-            str_contains($errMsg, "timeout") ||
-            str_contains($errMsg, "curl") ||
-            str_contains($errMsg, "502") ||
-            str_contains($errMsg, "503");
-
-        if (!$isTransient) {
-            $this->emitSSE("stream_end", []);
-            return $result;
-        }
-
-        // --- Graduated retry: strip tools for speed, but guard against hallucination ---
-
-        error_log(
-            "Levi: stream continuation failed (" .
-                $result->get_error_message() .
-                "), retrying without tools + honesty guard",
-        );
-        $this->emitSSE("status", ["message" => "Levi versucht es erneut..."]);
-
-        $guardedMessages = $messages;
-        $guardedMessages[] = [
-            "role" => "system",
-            "content" =>
-                "[SYSTEM] Tools sind voruebergehend nicht verfuegbar. " .
-                "Fasse NUR zusammen, was tatsaechlich erledigt wurde – also nur Aktionen, " .
-                "fuer die ein erfolgreiches Tool-Ergebnis in dieser Konversation vorliegt. " .
-                "Falls noch Schritte offen sind, sage dem Nutzer ehrlich, welche Aktionen " .
-                "du nicht ausfuehren konntest, und bitte ihn, es erneut zu versuchen. " .
-                "Erfinde KEINE Ergebnisse, IDs oder Links.",
-        ];
-
-        $retryResult = $this->aiClient->streamChat(
-            $guardedMessages,
-            $onChunk,
-            [],
-        );
-
-        if (!is_wp_error($retryResult)) {
-            $this->emitSSE(
-                "stream_end",
-                trim($streamedContent) !== "" ? ["preserve" => true] : [],
-            );
-            $this->accumulateStreamUsage($retryResult);
-            return $this->streamResultToResponse($retryResult);
-        }
-
-        if ($streamedContent !== "") {
-            $this->emitSSE(
-                "stream_end",
-                trim($streamedContent) !== "" ? ["preserve" => true] : [],
-            );
-            error_log(
-                "Levi: stream retry partially completed (" .
-                    strlen($streamedContent) .
-                    " chars shown)",
-            );
-            $this->usageAccumulator["api_calls"]++;
-            return $this->streamResultToResponse([
-                "content" => $streamedContent,
-                "finish_reason" => "stop",
-                "tool_calls" => [],
-            ]);
-        }
-
-        // --- Last resort: blocking call without tools + same honesty guard ---
-
-        error_log(
-            "Levi: stream retry also failed, blocking fallback without tools",
-        );
-        $heartbeat = fn() => $this->emitSSE("heartbeat", []);
-        $fallback = $this->chatWithTracking(
-            $guardedMessages,
-            [],
-            $heartbeat,
-            $webSearch,
-        );
-        $this->emitSSE("stream_end", []);
-
-        return $fallback;
-    }
-
-    private function accumulateStreamUsage(array $streamResult): void
-    {
-        if (!empty($streamResult["usage"])) {
-            $usage = $streamResult["usage"];
-            $this->usageAccumulator["prompt_tokens"] +=
-                (int) ($usage["prompt_tokens"] ?? 0);
-            $this->usageAccumulator["completion_tokens"] +=
-                (int) ($usage["completion_tokens"] ?? 0);
-            $this->usageAccumulator["cached_tokens"] +=
-                (int) ($usage["prompt_tokens_details"]["cached_tokens"] ??
-                    ($usage["cache_read_input_tokens"] ?? 0));
-            if ($this->usageAccumulator["model"] === null) {
-                $this->usageAccumulator["model"] =
-                    $streamResult["model"] ?? null;
-            }
-        }
-        $this->usageAccumulator["api_calls"]++;
-    }
-
-    private function streamResultToResponse(array $streamResult): array
-    {
-        $message = [
-            "role" => "assistant",
-            "content" => $streamResult["content"] ?? "",
-            "tool_calls" => $streamResult["tool_calls"] ?? [],
-        ];
-
-        if (!empty($streamResult["reasoning_content"])) {
-            $message["reasoning_content"] = $streamResult["reasoning_content"];
-        }
-
-        return [
-            "choices" => [
-                [
-                    "message" => $message,
-                    "finish_reason" => $streamResult["finish_reason"] ?? "stop",
-                ],
-            ],
-            "model" => $streamResult["model"] ?? null,
-            "usage" => $streamResult["usage"] ?? [],
-        ];
-    }
-
-    /**
-     * Stream a chat response, emitting SSE delta events for each text chunk.
-     * Returns the full stream result for post-processing (tool_calls detection, usage).
-     */
-    private function streamChatWithTracking(
-        array $messages,
-        array $tools = [],
-    ): array|WP_Error {
-        $result = $this->aiClient->streamChat(
+        $getToolProgressLabel = function (string $toolName, string $phase) {
+            return $this->getToolProgressLabel($toolName, $phase);
+        };
+        return $this->messagePipeline->streamContinuation(
             $messages,
-            function (string $chunk, string $type = "content") {
-                if ($type === "reasoning_start") {
-                    $this->emitSSE("status", [
-                        "message" => "Levi denkt nach...",
-                    ]);
-                    return;
-                }
-                if ($type === "tool_call_start") {
-                    $info = json_decode($chunk, true);
-                    if (is_array($info) && !empty($info["tool"])) {
-                        $toolName = $info["tool"];
-                        $this->emitSSE("progress", [
-                            "message" => $this->getToolProgressLabel(
-                                $toolName,
-                                "start",
-                            ),
-                            "tool" => $toolName,
-                            "phase" => "preview",
-                        ]);
-                    }
-                    return;
-                }
-                $this->emitSSE("delta", ["content" => $chunk]);
-            },
             $tools,
+            $webSearch,
+            $emitSse,
+            $getToolProgressLabel,
+            $this->usageAccumulator,
+            $this->lastStreamedContent,
         );
-
-        if (is_wp_error($result)) {
-            return $result;
-        }
-
-        if (!empty($result["usage"])) {
-            $usage = $result["usage"];
-            $this->usageAccumulator["prompt_tokens"] +=
-                (int) ($usage["prompt_tokens"] ?? 0);
-            $this->usageAccumulator["completion_tokens"] +=
-                (int) ($usage["completion_tokens"] ?? 0);
-            $this->usageAccumulator["cached_tokens"] +=
-                (int) ($usage["prompt_tokens_details"]["cached_tokens"] ??
-                    ($usage["cache_read_input_tokens"] ?? 0));
-            $this->usageAccumulator["api_calls"]++;
-            if ($this->usageAccumulator["model"] === null) {
-                $this->usageAccumulator["model"] = $result["model"] ?? null;
-            }
-        } else {
-            $this->usageAccumulator["api_calls"]++;
-        }
-
-        return $result;
     }
 
-    private function accumulateUsage(array $response): void
+    public function flushUsage(string $sessionId, int $userId): void
     {
-        $usage = $response["usage"] ?? [];
-        $this->usageAccumulator["prompt_tokens"] +=
-            (int) ($usage["prompt_tokens"] ?? 0);
-        $this->usageAccumulator["completion_tokens"] +=
-            (int) ($usage["completion_tokens"] ?? 0);
-        $this->usageAccumulator["cached_tokens"] +=
-            (int) ($usage["prompt_tokens_details"]["cached_tokens"] ??
-                ($usage["cache_read_input_tokens"] ?? 0));
-        $this->usageAccumulator["api_calls"]++;
-        if ($this->usageAccumulator["model"] === null) {
-            $this->usageAccumulator["model"] = $response["model"] ?? null;
-        }
+        $this->messagePipeline->flushUsage(
+            $sessionId,
+            $userId,
+            $this->usageAccumulator,
+        );
     }
 
-    private function flushUsage(string $sessionId, int $userId): void
+    public function getUsageAccumulator(): array
     {
-        if ($this->usageAccumulator["api_calls"] === 0) {
-            return;
-        }
-        global $wpdb;
-        $wpdb->insert($wpdb->prefix . "levi_usage_log", [
-            "session_id" => $sessionId,
-            "user_id" => $userId > 0 ? $userId : null,
-            "prompt_tokens" => $this->usageAccumulator["prompt_tokens"],
-            "completion_tokens" => $this->usageAccumulator["completion_tokens"],
-            "cached_tokens" => $this->usageAccumulator["cached_tokens"],
-            "api_calls" => $this->usageAccumulator["api_calls"],
-            "model" => $this->usageAccumulator["model"],
-        ]);
-        $this->usageAccumulator = [
-            "prompt_tokens" => 0,
-            "completion_tokens" => 0,
-            "cached_tokens" => 0,
-            "api_calls" => 0,
-            "model" => null,
-        ];
+        return $this->usageAccumulator;
     }
 
     private function isActionIntent(string $text): bool
@@ -1641,13 +1312,13 @@ class ChatController extends WP_REST_Controller
         return $score >= 1;
     }
 
-    private function isNoEndpointsError(string $errMsgLower): bool
+    public function isNoEndpointsError(string $errMsgLower): bool
     {
         return str_contains($errMsgLower, "no endpoints found") ||
             str_contains($errMsgLower, "no endpoint found");
     }
 
-    private function isTimeoutError(string $errMsgLower): bool
+    public function isTimeoutError(string $errMsgLower): bool
     {
         return str_contains($errMsgLower, "curl error 28") ||
             str_contains($errMsgLower, "operation timed out") ||
@@ -1663,7 +1334,7 @@ class ChatController extends WP_REST_Controller
         ) === 1;
     }
 
-    private function sanitizeAssistantMessageContent(string $text): string
+    public function sanitizeAssistantMessageContent(string $text): string
     {
         $clean = $text;
         // Strip leaked tool protocol tokens from some provider responses.
@@ -1695,31 +1366,26 @@ class ChatController extends WP_REST_Controller
         return $sanitized === "" && !$hasToolCalls;
     }
 
-    private function getEmptyResponseFallback(): string
+    public function getEmptyResponseFallback(): string
     {
         return 'Ich bin leider nicht ganz fertig geworden. Schreib einfach „mach weiter" und ich mach mich wieder an die Aufgabe.';
     }
 
-    private function recoverStreamedContentOrFallback(
-        array $toolResults,
-    ): string {
-        if (
-            $this->lastStreamedContent !== null &&
-            $this->lastStreamedContent !== ""
-        ) {
+    public function recoverStreamedContentOrFallback(array $toolResults): string
+    {
+        $lastStreamed = $this->messagePipeline->getLastStreamedContent();
+        if ($lastStreamed !== null && $lastStreamed !== "") {
             error_log(
                 "Levi: recovering previously streamed content (" .
-                    strlen($this->lastStreamedContent) .
+                    strlen($lastStreamed) .
                     " chars) instead of fallback",
             );
-            return $this->sanitizeAssistantMessageContent(
-                $this->lastStreamedContent,
-            );
+            return $this->sanitizeAssistantMessageContent($lastStreamed);
         }
         return $this->buildToolLoopFallbackMessage($toolResults);
     }
 
-    private function buildToolLoopFallbackMessage(array $toolResults): string
+    public function buildToolLoopFallbackMessage(array $toolResults): string
     {
         $successful = array_values(
             array_filter(
@@ -1743,75 +1409,6 @@ class ChatController extends WP_REST_Controller
         return "Erledigt! ✅\n\nIch habe die Schritte ausgefuehrt, aber konnte keinen sauberen KI-Abschlusstext erzeugen. " .
             "Hier ist der technische Stand:\n" .
             implode("\n", $lines);
-    }
-
-    private function inferTaskIntent(
-        string $latestUserMessage,
-        array $messages,
-    ): array {
-        $text = mb_strtolower($latestUserMessage);
-        $explicitCreate =
-            preg_match(
-                "/\b(neu|neues|neuen|von vorn|from scratch|erstelle|anlegen|erzeuge|schreibe( mir)? ein|baue ein)\b/u",
-                $text,
-            ) === 1;
-        $explicitModify =
-            preg_match(
-                "/\b(änder|anpass|optimier|fix|korrigier|überarbeit|update|verbesser|bestehend|nochmal|weiter)\b/u",
-                $text,
-            ) === 1;
-        $referencesExisting =
-            preg_match(
-                "/\b(bestehend|vorhanden|das bestehende|dieses bestehende|gleiches plugin|selbes plugin|weiter daran|nochmal daran)\b/u",
-                $text,
-            ) === 1;
-
-        // Only infer "modify existing" from PRIOR context, not from the current request text.
-        $priorMessages = $messages;
-        if (!empty($priorMessages)) {
-            $last = end($priorMessages);
-            if (
-                is_array($last) &&
-                ($last["role"] ?? "") === "user" &&
-                ((string) ($last["content"] ?? "")) === $latestUserMessage
-            ) {
-                array_pop($priorMessages);
-            }
-        }
-
-        $recentContext = "";
-        foreach (array_slice($priorMessages, -10) as $msg) {
-            if (
-                !is_array($msg) ||
-                !in_array($msg["role"] ?? "", ["user", "assistant"], true)
-            ) {
-                continue;
-            }
-            $recentContext .=
-                " " . mb_strtolower((string) ($msg["content"] ?? ""));
-        }
-        $hasRecentArtifacts =
-            preg_match(
-                "/\b(post[_ -]?id|page[_ -]?id|plugin[_ -]?file|relative[_ -]?path|slug|bytes_written|erstellt|aktiviert|angelegt)\b/u",
-                $recentContext,
-            ) === 1;
-
-        $mode = "unknown";
-        if ($explicitModify && !$explicitCreate) {
-            $mode = "modify_existing";
-        } elseif ($explicitCreate && !$explicitModify) {
-            $mode = "create_new";
-        } elseif ($explicitCreate && $explicitModify) {
-            $mode = "ambiguous";
-        } elseif ($referencesExisting && $hasRecentArtifacts) {
-            $mode = "probable_modify";
-        }
-
-        return [
-            "mode" => $mode,
-            "explicit_create" => $explicitCreate,
-            "explicit_modify" => $explicitModify,
-        ];
     }
 
     private function isCreationTool(string $toolName, array $args): bool
@@ -1838,425 +1435,6 @@ class ChatController extends WP_REST_Controller
         return false;
     }
 
-    private function isMutatingToolName(string $toolName): bool
-    {
-        return in_array(
-            $toolName,
-            [
-                "create_post",
-                "update_post",
-                "create_page",
-                "delete_post",
-                "install_plugin",
-                "switch_theme",
-                "manage_user",
-                "create_plugin",
-                "write_plugin_file",
-                "patch_plugin_file",
-                "delete_plugin_file",
-                "write_theme_file",
-                "create_theme",
-                "delete_theme_file",
-                "manage_post_meta",
-                "manage_taxonomy",
-                "manage_woocommerce",
-                "manage_menu",
-                "manage_cron",
-                "upload_media",
-                "store_session_image",
-                "update_option",
-                "update_any_option",
-                "execute_wp_code",
-            ],
-            true,
-        );
-    }
-
-    private function hasSuccessfulMutation(array $toolResults): bool
-    {
-        foreach ($toolResults as $row) {
-            $tool = (string) ($row["tool"] ?? "");
-            $success = (bool) ($row["result"]["success"] ?? false);
-            if ($success && $this->isMutatingToolName($tool)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private function hasFailedMutation(array $toolResults): bool
-    {
-        foreach ($toolResults as $row) {
-            $tool = (string) ($row["tool"] ?? "");
-            $success = (bool) ($row["result"]["success"] ?? false);
-            if (!$success && $this->isMutatingToolName($tool)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * LLM-based classification: does the user expect a mutation (write/create/update/delete)?
-     * Uses the last few messages as context so implicit replies like "Ja" or "ok mach das"
-     * are correctly classified as mutation intent.
-     */
-    private function classifyMutationIntent(
-        string $userMessage,
-        array $messages,
-    ): bool {
-        $contextSnippets = [];
-        $recentMessages = array_slice($messages, -6);
-        foreach ($recentMessages as $msg) {
-            $role = $msg["role"] ?? "";
-            $content = $msg["content"] ?? "";
-            if (
-                !in_array($role, ["user", "assistant"], true) ||
-                !is_string($content) ||
-                $content === ""
-            ) {
-                continue;
-            }
-            $truncated = mb_substr($content, 0, 300);
-            $contextSnippets[] =
-                ($role === "user" ? "Nutzer" : "Assistent") . ": " . $truncated;
-        }
-
-        $contextBlock = !empty($contextSnippets)
-            ? "Konversationskontext:\n" .
-                implode("\n", $contextSnippets) .
-                "\n\n"
-            : "";
-
-        $classifyMessages = [
-            [
-                "role" => "system",
-                "content" =>
-                    "Du bist ein Klassifikator. Deine einzige Aufgabe: Bestimme, ob der Nutzer erwartet, " .
-                    "dass an seiner WordPress-Website etwas geaendert, erstellt, geloescht, aktualisiert, " .
-                    "veroeffentlicht, installiert oder konfiguriert wird. " .
-                    "Antworte NUR mit einem einzigen Wort: ja oder nein",
-            ],
-            [
-                "role" => "user",
-                "content" =>
-                    $contextBlock .
-                    "Aktuelle Nutzer-Nachricht: " .
-                    mb_substr($userMessage, 0, 500) .
-                    "\n\nErwartet der Nutzer eine Aenderung an der Website? (ja/nein)",
-            ],
-        ];
-
-        try {
-            $response = $this->aiClient->chat($classifyMessages, []);
-            if (is_wp_error($response)) {
-                error_log(
-                    "Levi: classifyMutationIntent failed: " .
-                        $response->get_error_message(),
-                );
-                return true;
-            }
-            $answer = mb_strtolower(
-                trim(
-                    (string) ($response["choices"][0]["message"]["content"] ??
-                        ""),
-                ),
-            );
-            $this->usageAccumulator["api_calls"]++;
-            $promptTokens = (int) ($response["usage"]["prompt_tokens"] ?? 0);
-            $completionTokens =
-                (int) ($response["usage"]["completion_tokens"] ?? 0);
-            $this->usageAccumulator["prompt_tokens"] += $promptTokens;
-            $this->usageAccumulator["completion_tokens"] += $completionTokens;
-
-            return str_starts_with($answer, "ja");
-        } catch (\Throwable $e) {
-            error_log(
-                "Levi: classifyMutationIntent exception: " . $e->getMessage(),
-            );
-            return true;
-        }
-    }
-
-    /**
-     * LLM-based classification: were ALL requested actions completed?
-     * Called when mutations DID run but the model wants to stop — checks if the task is fully done.
-     */
-    private function classifyTaskCompleteness(
-        string $userMessage,
-        array $toolResults,
-        array $messages,
-    ): bool {
-        $toolSummaries = [];
-        foreach ($toolResults as $r) {
-            $tool = (string) ($r["tool"] ?? "");
-            $success = $r["result"]["success"] ?? false ? "OK" : "FEHLER";
-            $summary = $this->summarizeToolResult(
-                is_array($r["result"] ?? null) ? $r["result"] : [],
-            );
-            $toolSummaries[] =
-                "- {$tool}: {$success}" .
-                ($summary !== "" ? " ({$summary})" : "");
-        }
-
-        $contextSnippets = [];
-        $recentMessages = array_slice($messages, -4);
-        foreach ($recentMessages as $msg) {
-            $role = $msg["role"] ?? "";
-            $content = $msg["content"] ?? "";
-            if (
-                !in_array($role, ["user", "assistant"], true) ||
-                !is_string($content) ||
-                $content === ""
-            ) {
-                continue;
-            }
-            $truncated = mb_substr($content, 0, 200);
-            $contextSnippets[] =
-                ($role === "user" ? "Nutzer" : "Assistent") . ": " . $truncated;
-        }
-
-        $contextBlock = !empty($contextSnippets)
-            ? "Konversationskontext:\n" .
-                implode("\n", $contextSnippets) .
-                "\n\n"
-            : "";
-
-        $classifyMessages = [
-            [
-                "role" => "system",
-                "content" =>
-                    "Du bist ein Klassifikator. Deine einzige Aufgabe: Bestimme, ob ALLE vom Nutzer " .
-                    "angeforderten Aenderungen durch die ausgefuehrten Tools erledigt wurden. " .
-                    'Wenn der Nutzer z.B. "erstelle 3 Seiten und veroeffentliche sie" sagt, ' .
-                    "muessen sowohl Erstellungs- als auch Veroeffentlichungs-Calls vorhanden sein. " .
-                    "Antworte NUR mit einem einzigen Wort: ja oder nein",
-            ],
-            [
-                "role" => "user",
-                "content" =>
-                    $contextBlock .
-                    "Nutzer-Anfrage: " .
-                    mb_substr($userMessage, 0, 500) .
-                    "\n\nAusgefuehrte Tools:\n" .
-                    implode("\n", $toolSummaries) .
-                    "\n\nWurde alles erledigt was der Nutzer wollte? (ja/nein)",
-            ],
-        ];
-
-        try {
-            $response = $this->aiClient->chat($classifyMessages, []);
-            if (is_wp_error($response)) {
-                error_log(
-                    "Levi: classifyTaskCompleteness failed: " .
-                        $response->get_error_message(),
-                );
-                return true;
-            }
-            $answer = mb_strtolower(
-                trim(
-                    (string) ($response["choices"][0]["message"]["content"] ??
-                        ""),
-                ),
-            );
-            $this->usageAccumulator["api_calls"]++;
-            $promptTokens = (int) ($response["usage"]["prompt_tokens"] ?? 0);
-            $completionTokens =
-                (int) ($response["usage"]["completion_tokens"] ?? 0);
-            $this->usageAccumulator["prompt_tokens"] += $promptTokens;
-            $this->usageAccumulator["completion_tokens"] += $completionTokens;
-
-            return str_starts_with($answer, "ja");
-        } catch (\Throwable $e) {
-            error_log(
-                "Levi: classifyTaskCompleteness exception: " . $e->getMessage(),
-            );
-            return true;
-        }
-    }
-
-    /**
-     * Mutation Enforcement Gate — prevents the model from claiming actions it didn't perform.
-     *
-     * Two paths:
-     *  A) No mutations ran → classify if user expects one → force tool_choice:'required'
-     *  B) Mutations ran → classify if task is fully complete → nudge for remaining steps
-     *
-     * @return array|null  Non-null = new messageData with tool_calls to feed back into the loop.
-     *                     Null = gate passed, response may be sent to user.
-     */
-    private function enforceMutationGate(
-        array &$messages,
-        array $messageData,
-        array $toolResults,
-        string $userMessage,
-        bool $webSearch,
-        ?callable $heartbeat = null,
-    ): ?array {
-        $hasMutation = $this->hasSuccessfulMutation($toolResults);
-
-        if (!$hasMutation) {
-            // Path A: No mutations ran — does the user even expect one?
-            if (!$this->classifyMutationIntent($userMessage, $messages)) {
-                return null;
-            }
-
-            error_log(
-                "Levi: enforceMutationGate Path A — user expects mutation but none ran, enforcing tool_choice:required",
-            );
-
-            for ($attempt = 0; $attempt < 2; $attempt++) {
-                $assistantEntry = [
-                    "role" => "assistant",
-                    "content" => $messageData["content"] ?? "",
-                ];
-                if (!empty($messageData["reasoning_content"])) {
-                    $assistantEntry["reasoning_content"] =
-                        $messageData["reasoning_content"];
-                }
-                $messages[] = $assistantEntry;
-                $messages[] = [
-                    "role" => "system",
-                    "content" =>
-                        "[SYSTEM – MUTATION ENFORCEMENT] Du hast nur Text generiert, aber der Nutzer erwartet " .
-                        "eine konkrete Aenderung an der Website. Fuehre JETZT die passenden Tools aus. " .
-                        "Falls du die Aenderung nicht durchfuehren kannst, erklaere ehrlich warum — " .
-                        "aber behaupte NICHT, dass du etwas erledigt hast.",
-                ];
-
-                $enforced = $this->chatWithTracking(
-                    $messages,
-                    $this->getToolDefs(),
-                    $heartbeat,
-                    $webSearch,
-                    "required",
-                );
-                if (is_wp_error($enforced)) {
-                    error_log(
-                        "Levi: enforceMutationGate retry failed: " .
-                            $enforced->get_error_message(),
-                    );
-                    continue;
-                }
-
-                $enforcedData = $enforced["choices"][0]["message"] ?? [];
-                if (!empty($enforcedData["tool_calls"])) {
-                    return $enforcedData;
-                }
-
-                $messageData = $enforcedData;
-            }
-
-            error_log(
-                "Levi: enforceMutationGate Path A exhausted — sending honest failure",
-            );
-            return null;
-        }
-
-        // Path B: Mutations ran — is the task fully complete?
-        // Fast path: all mutations succeeded with no failures → trust the model's decision to stop.
-        // Only invoke the expensive LLM check when there are partial failures.
-        if (!$this->hasFailedMutation($toolResults)) {
-            error_log(
-                "Levi: enforceMutationGate Path B — all mutations succeeded, skipping completeness check",
-            );
-            return null;
-        }
-
-        if (
-            $this->classifyTaskCompleteness(
-                $userMessage,
-                $toolResults,
-                $messages,
-            )
-        ) {
-            return null;
-        }
-
-        error_log(
-            "Levi: enforceMutationGate Path B — task incomplete, nudging for remaining steps",
-        );
-
-        for ($attempt = 0; $attempt < 2; $attempt++) {
-            $assistantEntry = [
-                "role" => "assistant",
-                "content" => $messageData["content"] ?? "",
-            ];
-            if (!empty($messageData["reasoning_content"])) {
-                $assistantEntry["reasoning_content"] =
-                    $messageData["reasoning_content"];
-            }
-            $messages[] = $assistantEntry;
-            $messages[] = [
-                "role" => "system",
-                "content" =>
-                    "[SYSTEM – COMPLETENESS ENFORCEMENT] Du hast die Aufgabe nur teilweise erledigt. " .
-                    "Pruefe, welche Schritte aus der Nutzer-Anfrage noch fehlen und fuehre sie JETZT aus. " .
-                    'Melde dem Nutzer erst "fertig", wenn ALLE angeforderten Aenderungen durchgefuehrt sind.',
-            ];
-
-            $enforced = $this->chatWithTracking(
-                $messages,
-                $this->getToolDefs(),
-                $heartbeat,
-                $webSearch,
-                "required",
-            );
-            if (is_wp_error($enforced)) {
-                error_log(
-                    "Levi: enforceMutationGate completeness retry failed: " .
-                        $enforced->get_error_message(),
-                );
-                continue;
-            }
-
-            $enforcedData = $enforced["choices"][0]["message"] ?? [];
-            if (!empty($enforcedData["tool_calls"])) {
-                return $enforcedData;
-            }
-
-            $messageData = $enforcedData;
-        }
-
-        error_log(
-            "Levi: enforceMutationGate Path B exhausted — letting partial response through",
-        );
-        return null;
-    }
-
-    /**
-     * Validates whether a tool call is allowed.
-     * Currently only enforces third-party plugin protection.
-     */
-    private function validateToolCall(string $toolName, array $args): array
-    {
-        if ($toolName === "") {
-            return [
-                "allow" => false,
-                "reason" => "Leerer Tool-Name ist nicht gueltig.",
-            ];
-        }
-
-        if ($this->isPluginMutationTool($toolName)) {
-            $pluginSlug = $this->extractPluginSlug($args);
-            if ($pluginSlug === "") {
-                return [
-                    "allow" => false,
-                    "reason" =>
-                        "Plugin-Bearbeitung blockiert: plugin_slug fehlt oder ist ungueltig.",
-                ];
-            }
-            if (!$this->isPluginSlugOwnedOrAllowed($pluginSlug)) {
-                return [
-                    "allow" => false,
-                    "reason" => "Plugin-Bearbeitung blockiert: '$pluginSlug' ist kein freigegebenes eigenes Plugin (Drittanbieter-Schutz aktiv).",
-                ];
-            }
-        }
-
-        return ["allow" => true];
-    }
-
     private static array $readOnlyTools = [
         "get_pages",
         "get_posts",
@@ -2277,176 +1455,7 @@ class ChatController extends WP_REST_Controller
         "http_fetch",
     ];
 
-    private function isPluginMutationTool(string $toolName): bool
-    {
-        return in_array(
-            $toolName,
-            ["write_plugin_file", "patch_plugin_file", "delete_plugin_file"],
-            true,
-        );
-    }
-
-    private function extractPluginSlug(array $args): string
-    {
-        $slug = sanitize_title((string) ($args["plugin_slug"] ?? ""));
-        return $slug;
-    }
-
-    private function isPluginSlugOwnedOrAllowed(string $pluginSlug): bool
-    {
-        $slug = sanitize_title($pluginSlug);
-        if ($slug === "") {
-            return false;
-        }
-
-        $owned = $this->getOwnedPluginSlugs();
-        if (in_array($slug, $owned, true)) {
-            return true;
-        }
-
-        $manualAllowed = $this->getManualAllowedPluginSlugs();
-        return in_array($slug, $manualAllowed, true);
-    }
-
-    private function getOwnedPluginSlugs(): array
-    {
-        $this->bootstrapOwnedPluginSlugsFromAuditLog();
-        $stored = get_option(self::OWNED_PLUGIN_OPTION, []);
-        if (!is_array($stored)) {
-            $stored = [];
-        }
-
-        $slugs = [];
-        foreach ($stored as $entry) {
-            $slug = sanitize_title((string) $entry);
-            if ($slug !== "") {
-                $slugs[] = $slug;
-            }
-        }
-        return array_values(array_unique($slugs));
-    }
-
-    private function getManualAllowedPluginSlugs(): array
-    {
-        static $cache = null;
-        if (is_array($cache)) {
-            return $cache;
-        }
-
-        $settings = $this->settings->getSettings();
-        $raw = (string) ($settings["allowed_plugin_slugs_manual"] ?? "");
-        $parts = preg_split("/[\s,;]+/u", $raw) ?: [];
-        $allowed = [];
-        foreach ($parts as $part) {
-            $slug = sanitize_title((string) $part);
-            if ($slug !== "") {
-                $allowed[] = $slug;
-            }
-        }
-        $cache = array_values(array_unique($allowed));
-        return $cache;
-    }
-
-    private function bootstrapOwnedPluginSlugsFromAuditLog(): void
-    {
-        if ((int) get_option(self::OWNED_PLUGIN_BOOTSTRAP_OPTION, 0) === 1) {
-            return;
-        }
-
-        global $wpdb;
-        $table = $wpdb->prefix . "levi_audit_log";
-        $tableExists =
-            $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) ===
-            $table;
-        if (!$tableExists) {
-            update_option(self::OWNED_PLUGIN_BOOTSTRAP_OPTION, 1, false);
-            return;
-        }
-
-        $rows = $wpdb->get_col(
-            "SELECT tool_args FROM {$table} WHERE tool_name = 'create_plugin' AND success = 1 ORDER BY id ASC",
-        );
-        if (!is_array($rows) || empty($rows)) {
-            update_option(self::OWNED_PLUGIN_BOOTSTRAP_OPTION, 1, false);
-            return;
-        }
-
-        $collected = [];
-        foreach ($rows as $rawArgs) {
-            if (!is_string($rawArgs) || $rawArgs === "") {
-                continue;
-            }
-            $decoded = json_decode($rawArgs, true);
-            if (!is_array($decoded)) {
-                continue;
-            }
-            $slug = sanitize_title(
-                (string) ($decoded["slug"] ?? ($decoded["plugin_slug"] ?? "")),
-            );
-            if ($slug !== "") {
-                $collected[] = $slug;
-            }
-        }
-
-        $existing = get_option(self::OWNED_PLUGIN_OPTION, []);
-        if (!is_array($existing)) {
-            $existing = [];
-        }
-        $merged = [];
-        foreach (array_merge($existing, $collected) as $entry) {
-            $slug = sanitize_title((string) $entry);
-            if ($slug !== "") {
-                $merged[] = $slug;
-            }
-        }
-        update_option(
-            self::OWNED_PLUGIN_OPTION,
-            array_values(array_unique($merged)),
-            false,
-        );
-        update_option(self::OWNED_PLUGIN_BOOTSTRAP_OPTION, 1, false);
-    }
-
-    private function trackOwnedPluginFromToolResult(
-        string $toolName,
-        array $toolArgs,
-        array $result,
-    ): void {
-        if ($toolName !== "create_plugin" || empty($result["success"])) {
-            return;
-        }
-
-        $slug = sanitize_title(
-            (string) ($result["slug"] ??
-                ($toolArgs["slug"] ?? ($toolArgs["plugin_slug"] ?? ""))),
-        );
-        if ($slug === "") {
-            return;
-        }
-
-        $existing = get_option(self::OWNED_PLUGIN_OPTION, []);
-        if (!is_array($existing)) {
-            $existing = [];
-        }
-
-        $normalized = [];
-        foreach ($existing as $entry) {
-            $candidate = sanitize_title((string) $entry);
-            if ($candidate !== "") {
-                $normalized[] = $candidate;
-            }
-        }
-        if (!in_array($slug, $normalized, true)) {
-            $normalized[] = $slug;
-            update_option(
-                self::OWNED_PLUGIN_OPTION,
-                array_values(array_unique($normalized)),
-                false,
-            );
-        }
-    }
-
-    private function applyResponseSafetyGates(
+    public function applyResponseSafetyGates(
         string $finalMessage,
         array $toolResults,
         array $taskIntent,
@@ -2570,51 +1579,6 @@ class ChatController extends WP_REST_Controller
         return $toolName . ":" . $discriminator;
     }
 
-    public function getHistory(WP_REST_Request $request): WP_REST_Response
-    {
-        $sessionId = $request->get_param("session_id");
-        $currentUserId = get_current_user_id();
-
-        // Session ownership: only owner or admin may read history
-        $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
-        if (
-            $ownerId !== null &&
-            $ownerId !== $currentUserId &&
-            !current_user_can("manage_options")
-        ) {
-            return new WP_REST_Response(
-                [
-                    "error" => "Session not found or access denied.",
-                    "session_id" => $sessionId,
-                ],
-                403,
-            );
-        }
-
-        $messages = $this->conversationRepo->getHistory($sessionId, 500);
-
-        return new WP_REST_Response(
-            [
-                "session_id" => $sessionId,
-                "messages" => $messages,
-            ],
-            200,
-        );
-    }
-
-    public function getUserSessions(WP_REST_Request $request): WP_REST_Response
-    {
-        $userId = get_current_user_id();
-        $sessions = $this->conversationRepo->getUserSessions($userId);
-
-        return new WP_REST_Response(
-            [
-                "sessions" => $sessions,
-            ],
-            200,
-        );
-    }
-
     public function deleteSession(WP_REST_Request $request): WP_REST_Response
     {
         $sessionId = (string) $request->get_param("session_id");
@@ -2625,7 +1589,7 @@ class ChatController extends WP_REST_Controller
             );
         }
 
-        $fullHistory = $this->conversationRepo->getHistory($sessionId, 500);
+        $fullHistory = $this->sessionManager->getHistory($sessionId, 500);
         $currentUserId = get_current_user_id();
         $isAdmin = current_user_can("manage_options");
         $ownerId = !empty($fullHistory)
@@ -2665,7 +1629,7 @@ class ChatController extends WP_REST_Controller
             spawn_cron();
         }
 
-        $this->conversationRepo->deleteSession($sessionId);
+        $this->sessionManager->deleteSession($sessionId);
         if ($isAdmin && $ownerId > 0 && $ownerId !== $currentUserId) {
             $this->clearSessionUploads($sessionId, $ownerId);
         } else {
@@ -2685,11 +1649,14 @@ class ChatController extends WP_REST_Controller
     {
         $sessionId = (string) ($request->get_param("session_id") ?? "");
         if ($sessionId === "") {
-            $sessionId = $this->generateSessionId();
+            $sessionId = $this->requestHandler->generateSessionId();
         }
 
         $userId = get_current_user_id();
-        $access = $this->assertSessionAccess($sessionId, $userId);
+        $access = $this->requestHandler->assertSessionAccess(
+            $sessionId,
+            $userId,
+        );
         if ($access !== true) {
             return $access;
         }
@@ -2764,7 +1731,10 @@ class ChatController extends WP_REST_Controller
         }
 
         $userId = get_current_user_id();
-        $access = $this->assertSessionAccess($sessionId, $userId);
+        $access = $this->requestHandler->assertSessionAccess(
+            $sessionId,
+            $userId,
+        );
         if ($access !== true) {
             return $access;
         }
@@ -2789,7 +1759,10 @@ class ChatController extends WP_REST_Controller
         }
 
         $userId = get_current_user_id();
-        $access = $this->assertSessionAccess($sessionId, $userId);
+        $access = $this->requestHandler->assertSessionAccess(
+            $sessionId,
+            $userId,
+        );
         if ($access !== true) {
             return $access;
         }
@@ -2818,7 +1791,10 @@ class ChatController extends WP_REST_Controller
         }
 
         $userId = get_current_user_id();
-        $access = $this->assertSessionAccess($sessionId, $userId);
+        $access = $this->requestHandler->assertSessionAccess(
+            $sessionId,
+            $userId,
+        );
         if ($access !== true) {
             return $access;
         }
@@ -2851,55 +1827,12 @@ class ChatController extends WP_REST_Controller
         );
     }
 
-    public function testConnection(WP_REST_Request $request): WP_REST_Response
-    {
-        $result = $this->aiClient->testConnection();
-
-        if (is_wp_error($result)) {
-            return new WP_REST_Response(
-                [
-                    "success" => false,
-                    "error" => $result->get_error_message(),
-                ],
-                200,
-            );
-        }
-
-        return new WP_REST_Response($result, 200);
-    }
-
-    private function generateSessionId(): string
-    {
-        return "sess_" . wp_generate_uuid4();
-    }
-
-    private function assertSessionAccess(
-        string $sessionId,
-        int $userId,
-    ): bool|WP_REST_Response {
-        $ownerId = $this->conversationRepo->getSessionOwnerId($sessionId);
-        if (
-            $ownerId !== null &&
-            $ownerId !== $userId &&
-            !current_user_can("manage_options")
-        ) {
-            return new WP_REST_Response(
-                [
-                    "error" => "Session not found or access denied.",
-                    "session_id" => $sessionId,
-                ],
-                403,
-            );
-        }
-        return true;
-    }
-
-    private function wasResponseTruncated(array $apiResponse): bool
+    public function wasResponseTruncated(array $apiResponse): bool
     {
         return ($apiResponse["choices"][0]["finish_reason"] ?? "") === "length";
     }
 
-    private function appendTruncationHint(string $message): string
+    public function appendTruncationHint(string $message): string
     {
         return $message .
             "\n\n---\n*Meine Antwort wurde aufgrund des Token-Limits abgeschnitten. Schreibe \"mach weiter\", damit ich fortfahre.*";

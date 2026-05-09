@@ -27,8 +27,8 @@ class CreatePageTool implements ToolInterface {
                 'required' => true,
             ],
             'parent' => [
-                'type' => 'integer',
-                'description' => 'Parent page ID (optional)',
+                'type' => ['integer', 'string'],
+                'description' => 'Parent page ID or page title (optional). If a string is given, the page is looked up by title.',
             ],
             'template' => [
                 'type' => 'string',
@@ -58,7 +58,15 @@ class CreatePageTool implements ToolInterface {
         ];
 
         if (!empty($params['parent'])) {
-            $pageData['post_parent'] = intval($params['parent']);
+            $parent = $params['parent'];
+            if (is_numeric($parent)) {
+                $pageData['post_parent'] = (int) $parent;
+            } else {
+                $found = get_page_by_title((string) $parent, OBJECT, 'page');
+                if ($found) {
+                    $pageData['post_parent'] = $found->ID;
+                }
+            }
         }
 
         $pageId = wp_insert_post($pageData, true);
