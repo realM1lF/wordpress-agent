@@ -23,30 +23,41 @@ use Levi\Agent\AI\Tools\Generic\HealthCheckTool;
  * - ~60% fewer tokens per request vs. the old registry
  * - Higher tool choice accuracy via clear, focused schemas
  */
-class GenericRegistry {
-
-    public const PROFILE_STANDARD = 'standard';
-    public const PROFILE_FULL = 'full';
-    public const VALID_PROFILES = [self::PROFILE_STANDARD, self::PROFILE_FULL];
+class GenericRegistry
+{
+    public const PROFILE_MINIMAL = "minimal";
+    public const PROFILE_STANDARD = "standard";
+    public const PROFILE_FULL = "full";
+    public const VALID_PROFILES = [
+        self::PROFILE_MINIMAL,
+        self::PROFILE_STANDARD,
+        self::PROFILE_FULL,
+    ];
 
     /** @var ToolInterface[] */
     private array $tools = [];
     private string $profile;
 
     /**
-     * Core generic tools — always available.
+     * Minimal profile — read-only + diagnostics.
      */
-    private const CORE_TOOLS = [
+    private const MINIMAL_TOOLS = [
         ReadTool::class,
-        WriteTool::class,
-        EditTool::class,
         ListTool::class,
         GrepTool::class,
+        FetchTool::class,
+        HealthCheckTool::class,
+    ];
+
+    /**
+     * Core generic tools — standard profile and above.
+     */
+    private const CORE_TOOLS = [
+        WriteTool::class,
+        EditTool::class,
         ExecuteTool::class,
         InstallTool::class,
         ManageTool::class,
-        FetchTool::class,
-        HealthCheckTool::class,
     ];
 
     /**
@@ -57,24 +68,31 @@ class GenericRegistry {
         ManageElementorTool::class,
     ];
 
-    public function __construct(string $profile = self::PROFILE_STANDARD) {
-        $this->profile = in_array($profile, self::VALID_PROFILES, true) ? $profile : self::PROFILE_STANDARD;
+    public function __construct(string $profile = self::PROFILE_STANDARD)
+    {
+        $this->profile = in_array($profile, self::VALID_PROFILES, true)
+            ? $profile
+            : self::PROFILE_STANDARD;
         $this->registerTools();
     }
 
-    public function getProfile(): string {
+    public function getProfile(): string
+    {
         return $this->profile;
     }
 
-    public function register(ToolInterface $tool): void {
+    public function register(ToolInterface $tool): void
+    {
         $this->tools[$tool->getName()] = $tool;
     }
 
-    public function getAll(): array {
+    public function getAll(): array
+    {
         return $this->tools;
     }
 
-    public function get(string $name): ?ToolInterface {
+    public function get(string $name): ?ToolInterface
+    {
         return $this->tools[$name] ?? null;
     }
 
@@ -82,7 +100,8 @@ class GenericRegistry {
      * Get all tool definitions for OpenAI/OpenRouter function calling.
      * No deferred loading — all tools are always sent (only 12 total).
      */
-    public function getDefinitions(): array {
+    public function getDefinitions(): array
+    {
         $definitions = [];
 
         foreach ($this->tools as $tool) {
@@ -93,18 +112,21 @@ class GenericRegistry {
             $rawParams = $tool->getParameters();
             $properties = [];
             foreach ($rawParams as $name => $config) {
-                $properties[$name] = array_intersect_key($config, array_flip(['type', 'description', 'enum', 'items']));
+                $properties[$name] = array_intersect_key(
+                    $config,
+                    array_flip(["type", "description", "enum", "items"]),
+                );
             }
 
             $definitions[] = [
-                'type' => 'function',
-                'function' => [
-                    'name' => $tool->getName(),
-                    'description' => $this->buildDescription($tool),
-                    'parameters' => [
-                        'type' => 'object',
-                        'properties' => $properties,
-                        'required' => $this->getRequiredParameters($rawParams),
+                "type" => "function",
+                "function" => [
+                    "name" => $tool->getName(),
+                    "description" => $this->buildDescription($tool),
+                    "parameters" => [
+                        "type" => "object",
+                        "properties" => $properties,
+                        "required" => $this->getRequiredParameters($rawParams),
                     ],
                 ],
             ];
@@ -116,7 +138,8 @@ class GenericRegistry {
     /**
      * Get definition for a single tool.
      */
-    public function getDefinitionForTool(string $toolName): ?array {
+    public function getDefinitionForTool(string $toolName): ?array
+    {
         $tool = $this->get($toolName);
         if ($tool === null || !$tool->checkPermission()) {
             return null;
@@ -125,18 +148,21 @@ class GenericRegistry {
         $rawParams = $tool->getParameters();
         $properties = [];
         foreach ($rawParams as $name => $config) {
-            $properties[$name] = array_intersect_key($config, array_flip(['type', 'description', 'enum', 'items']));
+            $properties[$name] = array_intersect_key(
+                $config,
+                array_flip(["type", "description", "enum", "items"]),
+            );
         }
 
         return [
-            'type' => 'function',
-            'function' => [
-                'name' => $tool->getName(),
-                'description' => $this->buildDescription($tool),
-                'parameters' => [
-                    'type' => 'object',
-                    'properties' => $properties,
-                    'required' => $this->getRequiredParameters($rawParams),
+            "type" => "function",
+            "function" => [
+                "name" => $tool->getName(),
+                "description" => $this->buildDescription($tool),
+                "parameters" => [
+                    "type" => "object",
+                    "properties" => $properties,
+                    "required" => $this->getRequiredParameters($rawParams),
                 ],
             ],
         ];
@@ -145,20 +171,21 @@ class GenericRegistry {
     /**
      * Execute a tool by name.
      */
-    public function execute(string $name, array $params): array {
+    public function execute(string $name, array $params): array
+    {
         $tool = $this->get($name);
 
         if (!$tool) {
             return [
-                'success' => false,
-                'error' => "Tool '{$name}' not found",
+                "success" => false,
+                "error" => "Tool '{$name}' not found",
             ];
         }
 
         if (!$tool->checkPermission()) {
             return [
-                'success' => false,
-                'error' => 'Permission denied for this tool',
+                "success" => false,
+                "error" => "Permission denied for this tool",
             ];
         }
 
@@ -166,8 +193,8 @@ class GenericRegistry {
             $result = $tool->execute($params);
         } catch (\Exception $e) {
             return [
-                'success' => false,
-                'error' => $e->getMessage(),
+                "success" => false,
+                "error" => $e->getMessage(),
             ];
         }
 
@@ -177,22 +204,33 @@ class GenericRegistry {
     /**
      * Count total available tools.
      */
-    public function count(): int {
-        return count(array_filter($this->tools, fn($t) => $t->checkPermission()));
+    public function count(): int
+    {
+        return count(
+            array_filter($this->tools, fn($t) => $t->checkPermission()),
+        );
     }
 
     /**
      * Profile labels for UI.
      */
-    public static function getProfileLabels(): array {
+    public static function getProfileLabels(): array
+    {
         return [
+            self::PROFILE_MINIMAL => [
+                "label" => "Minimal",
+                "description" =>
+                    "5 generische Tools (nur Lesen + Diagnose): Lesen, Listen, Suchen, HTTP, Health-Check.",
+            ],
             self::PROFILE_STANDARD => [
-                'label' => 'Standard',
-                'description' => '12 generische Tools: Lesen, Schreiben, Editieren, Listen, Suchen, Ausführen, Installieren, Verwalten, HTTP, Health-Check.',
+                "label" => "Standard",
+                "description" =>
+                    "10 generische Tools: Lesen, Schreiben, Editieren, Listen, Suchen, Ausführen, Installieren, Verwalten, HTTP, Health-Check.",
             ],
             self::PROFILE_FULL => [
-                'label' => 'Voll (Entwickler)',
-                'description' => '14 generische Tools inkl. WooCommerce und Elementor-Verwaltung.',
+                "label" => "Voll (Entwickler)",
+                "description" =>
+                    "12 generische Tools inkl. WooCommerce und Elementor-Verwaltung.",
             ],
         ];
     }
@@ -201,9 +239,20 @@ class GenericRegistry {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    private function registerTools(): void {
-        foreach (self::CORE_TOOLS as $class) {
+    private function registerTools(): void
+    {
+        // Minimal: read-only + diagnostics
+        foreach (self::MINIMAL_TOOLS as $class) {
             $this->register(new $class());
+        }
+
+        if (
+            $this->profile === self::PROFILE_STANDARD ||
+            $this->profile === self::PROFILE_FULL
+        ) {
+            foreach (self::CORE_TOOLS as $class) {
+                $this->register(new $class());
+            }
         }
 
         if ($this->profile === self::PROFILE_FULL) {
@@ -213,10 +262,11 @@ class GenericRegistry {
         }
     }
 
-    private function buildDescription(ToolInterface $tool): string {
+    private function buildDescription(ToolInterface $tool): string
+    {
         $description = $tool->getDescription();
 
-        if (!method_exists($tool, 'getInputExamples')) {
+        if (!method_exists($tool, "getInputExamples")) {
             return $description;
         }
 
@@ -227,16 +277,20 @@ class GenericRegistry {
 
         $lines = [];
         foreach ($examples as $example) {
-            $lines[] = json_encode($example, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $lines[] = json_encode(
+                $example,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,
+            );
         }
 
         return $description . "\n\nExample inputs:\n" . implode("\n", $lines);
     }
 
-    private function getRequiredParameters(array $parameters): array {
+    private function getRequiredParameters(array $parameters): array
+    {
         $required = [];
         foreach ($parameters as $name => $config) {
-            if ($config['required'] ?? false) {
+            if ($config["required"] ?? false) {
                 $required[] = $name;
             }
         }
