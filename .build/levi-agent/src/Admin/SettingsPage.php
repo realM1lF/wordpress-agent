@@ -103,16 +103,16 @@ class SettingsPage {
     private function deriveThoroughness(int $historyLimit, array $tuningMode): string {
         if (isset($tuningMode['thoroughness']) && in_array($tuningMode['thoroughness'], ['low', 'balanced', 'high'], true)) {
             $expected = match ($tuningMode['thoroughness']) {
-                'low' => 30, 'high' => 80, default => 50,
+                'low' => 10, 'high' => 40, default => 20,
             };
             if ($historyLimit === $expected) {
                 return $tuningMode['thoroughness'];
             }
         }
         return match (true) {
-            $historyLimit === 30 => 'low',
-            $historyLimit === 50 => 'balanced',
-            $historyLimit === 80 => 'high',
+            $historyLimit === 10 => 'low',
+            $historyLimit === 20 => 'balanced',
+            $historyLimit === 40 => 'high',
             default => 'custom',
         };
     }
@@ -211,6 +211,9 @@ class SettingsPage {
             $sanitized['web_search_enabled'] = !empty($input['web_search_enabled']) ? 1 : 0;
         }
 
+        if (array_key_exists('compact_model', $input)) {
+            $sanitized['compact_model'] = sanitize_text_field((string) ($input['compact_model'] ?? ''));
+        }
         if (array_key_exists('summary_model', $input)) {
             $sanitized['summary_model'] = sanitize_text_field((string) ($input['summary_model'] ?? ''));
         }
@@ -239,16 +242,16 @@ class SettingsPage {
 
         if (in_array($thoroughness, ['low', 'balanced', 'high'], true)) {
             $sanitized['history_context_limit'] = match ($thoroughness) {
-                'high' => 80,
-                'low' => 30,
-                default => 50,
+                'high' => 40,
+                'low' => 10,
+                default => 20,
             };
         } elseif (array_key_exists('history_context_limit', $input)) {
             $sanitized['history_context_limit'] = max(10, min(200, absint($input['history_context_limit'])));
         }
 
         if (in_array($safetyMode, ['strict', 'standard'], true)) {
-            $sanitized['require_confirmation_destructive'] = $safetyMode === 'strict' ? 1 : 0;
+            $sanitized['allow_destructive'] = $safetyMode === 'strict' ? 0 : 1;
         }
 
         if (in_array($speedMode, ['fast', 'balanced', 'careful'], true)) {
@@ -318,7 +321,7 @@ class SettingsPage {
         $activeTab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'general';
         
         $tabs = [
-            'general' => ['icon' => 'dashicons-admin-generic', 'label' => $this->tr('General', 'Allgemein')],
+            'general' => ['icon' => 'dashicons-dashboard', 'label' => $this->tr('Dashboard', 'Dashboard')],
             'ai-provider' => ['icon' => 'dashicons-cloud', 'label' => $this->tr('AI Provider', 'KI-Anbieter')],
             'memory' => ['icon' => 'dashicons-database', 'label' => $this->tr('Memory', 'Memory')],
             'safety' => ['icon' => 'dashicons-shield', 'label' => $this->tr('Limits & Safety', 'Limits & Sicherheit')],
@@ -492,44 +495,6 @@ class SettingsPage {
                                 <p class="levi-stat-files"><?php echo esc_html(implode(', ', $referenceNames)); ?></p>
                             <?php endif; ?>
                         </div>
-                    </div>
-                </div>
-
-                <!-- State Snapshot Card -->
-                <div class="levi-card">
-                    <div class="levi-card-header">
-                        <span class="dashicons dashicons-backup"></span>
-                        <h3><?php echo esc_html($this->tr('WordPress Snapshot', 'WordPress-Snapshot')); ?></h3>
-                    </div>
-                    <div class="levi-card-content">
-                        <?php 
-                        $snapshotMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMeta();
-                        $snapshotStatus = (string) ($snapshotMeta['status'] ?? 'not_run');
-                        $snapshotCapturedAt = (string) ($snapshotMeta['captured_at'] ?? '-');;
-                        ?>
-                        <div class="levi-status-row">
-                            <span class="levi-status-label"><?php echo esc_html($this->tr('Last Run', 'Letzter Lauf')); ?></span>
-                            <span class="levi-status-value"><?php echo esc_html($snapshotCapturedAt); ?></span>
-                        </div>
-                        <div class="levi-status-row">
-                            <span class="levi-status-label"><?php echo esc_html($this->tr('Status', 'Status')); ?></span>
-                            <span class="levi-status-badge levi-badge-<?php echo $snapshotStatus === 'changed_stored' ? 'success' : 'neutral'; ?>">
-                                <?php echo esc_html($this->translateSnapshotStatus($snapshotStatus)); ?>
-                            </span>
-                        </div>
-                    </div>
-                    <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr('Hint: The daily snapshot indexes your WordPress state (plugins, themes, config) so Levi can answer questions about your site. Run manually here or wait for the scheduled task.', 'Hinweis: Der taegliche Snapshot indexiert deinen WordPress-Stand (Plugins, Themes, Konfiguration), damit Levi Fragen zur Seite beantworten kann. Hier manuell starten oder auf den geplanten Lauf warten.')); ?>
-                    </p>
-                    <div class="levi-card-footer">
-                        <button type="button" id="levi-run-state-snapshot" class="levi-btn levi-btn-small levi-btn-secondary">
-                            <span class="dashicons dashicons-update"></span>
-                            <?php echo esc_html($this->tr('Run Now', 'Jetzt ausfuehren')); ?>
-                        </button>
-                        <div id="levi-state-snapshot-progress-wrap" class="levi-progress-wrap" style="display:none;">
-                            <div id="levi-state-snapshot-progress" class="levi-progress-bar"></div>
-                        </div>
-                        <span id="levi-state-snapshot-result"></span>
                     </div>
                 </div>
 
@@ -860,34 +825,6 @@ class SettingsPage {
                 </div>
             </div>
 
-            <!-- Web Search -->
-            <div class="levi-form-card">
-                <h3><?php echo esc_html($this->tr('Web Search', 'Web-Suche')); ?></h3>
-                <p class="levi-form-description">
-                    <?php echo esc_html($this->tr(
-                        'When enabled, a globe button appears in the chat input. Click it before sending a message to let Levi search the web for current information.',
-                        'Wenn aktiviert, erscheint ein Globus-Button im Chat. Klicke ihn vor dem Senden einer Nachricht, damit Levi im Internet nach aktuellen Infos suchen kann.'
-                    )); ?>
-                </p>
-                <div class="levi-form-group">
-                    <label class="levi-toggle-label">
-                        <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" value="0">
-                        <input type="checkbox" 
-                               name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" 
-                               value="1" 
-                               <?php checked(!empty($settings['web_search_enabled'])); ?>
-                               class="levi-toggle-input">
-                        <span class="levi-toggle-switch"></span>
-                        <span class="levi-toggle-text"><?php echo esc_html($this->tr('Enable Web Search', 'Web-Suche aktivieren')); ?></span>
-                    </label>
-                    <p class="levi-form-help levi-hint">
-                        <?php echo esc_html($this->tr(
-                            'Note: Web search incurs additional costs per request at OpenRouter. The user controls when to use it via the chat toggle.',
-                            'Hinweis: Web-Suche verursacht zusätzliche Kosten pro Anfrage bei OpenRouter. Der Nutzer steuert per Toggle im Chat, wann sie genutzt wird.'
-                        )); ?>
-                    </p>
-                </div>
-            </div>
         </div>
         <?php
     }
@@ -1006,6 +943,44 @@ class SettingsPage {
                             <?php echo esc_html($this->tr('Docs are fetched automatically daily at 04:00. Click "Fetch Docs" to trigger manually.', 'Docs werden taeglich um 04:00 Uhr automatisch abgerufen. Klicke "Docs abrufen" fuer manuellen Abruf.')); ?>
                         </p>
                     <?php endif; ?>
+                </div>
+
+                <!-- State Snapshot Card -->
+                <div class="levi-form-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-backup"></span>
+                        <h3><?php echo esc_html($this->tr('WordPress Snapshot', 'WordPress-Snapshot')); ?></h3>
+                    </div>
+                    <div class="levi-card-content">
+                        <?php 
+                        $snapshotMeta = \Levi\Agent\Memory\StateSnapshotService::getLastMeta();
+                        $snapshotStatus = (string) ($snapshotMeta['status'] ?? 'not_run');
+                        $snapshotCapturedAt = (string) ($snapshotMeta['captured_at'] ?? '-');
+                        ?>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Last Run', 'Letzter Lauf')); ?></span>
+                            <span class="levi-status-value"><?php echo esc_html($snapshotCapturedAt); ?></span>
+                        </div>
+                        <div class="levi-status-row">
+                            <span class="levi-status-label"><?php echo esc_html($this->tr('Status', 'Status')); ?></span>
+                            <span class="levi-status-badge levi-badge-<?php echo $snapshotStatus === 'changed_stored' ? 'success' : 'neutral'; ?>">
+                                <?php echo esc_html($this->translateSnapshotStatus($snapshotStatus)); ?>
+                            </span>
+                        </div>
+                    </div>
+                    <p class="levi-form-help levi-hint">
+                        <?php echo esc_html($this->tr('Hint: The daily snapshot indexes your WordPress state (plugins, themes, config) so Levi can answer questions about your site. Run manually here or wait for the scheduled task.', 'Hinweis: Der taegliche Snapshot indexiert deinen WordPress-Stand (Plugins, Themes, Konfiguration), damit Levi Fragen zur Seite beantworten kann. Hier manuell starten oder auf den geplanten Lauf warten.')); ?>
+                    </p>
+                    <div class="levi-card-footer">
+                        <button type="button" id="levi-run-state-snapshot" class="levi-btn levi-btn-small levi-btn-secondary">
+                            <span class="dashicons dashicons-update"></span>
+                            <?php echo esc_html($this->tr('Run Now', 'Jetzt ausfuehren')); ?>
+                        </button>
+                        <div id="levi-state-snapshot-progress-wrap" class="levi-progress-wrap" style="display:none;">
+                            <div id="levi-state-snapshot-progress" class="levi-progress-bar"></div>
+                        </div>
+                        <span id="levi-state-snapshot-result"></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1156,9 +1131,9 @@ class SettingsPage {
                     <?php
                     $tuningMode = get_option('levi_setup_tuning_mode', []);
                     if (!is_array($tuningMode)) { $tuningMode = []; }
-                    $curHistoryLimit = (int) ($settings['history_context_limit'] ?? 50);
+                    $curHistoryLimit = (int) ($settings['history_context_limit'] ?? 20);
                     $curThoroughness = $this->deriveThoroughness($curHistoryLimit, $tuningMode);
-                    $curSafety = !empty($settings['require_confirmation_destructive']) ? 'strict' : 'standard';
+                    $curSafety = empty($settings['allow_destructive']) ? 'strict' : 'standard';
                     $curMaxIterations = (int) ($settings['max_tool_iterations'] ?? 25);
                     $curSpeed = $this->deriveSpeed($curMaxIterations, $tuningMode);
                     ?>
@@ -1167,9 +1142,9 @@ class SettingsPage {
                         <label class="levi-form-label" for="levi_thoroughness"><?php echo esc_html($this->tr('How much chat history should Levi consider?', 'Wie viel Chat-Verlauf soll Levi beruecksichtigen?')); ?></label>
                         <div style="display: flex; gap: 0.75rem; align-items: center;">
                             <select id="levi_thoroughness" name="<?php echo esc_attr($this->optionName); ?>[levi_thoroughness]" class="levi-form-select" style="flex: 1;">
-                                <option value="low" <?php selected($curThoroughness, 'low'); ?>><?php echo esc_html($this->tr('Few (30 messages)', 'Wenig (30 Nachrichten)')); ?></option>
-                                <option value="balanced" <?php selected($curThoroughness, 'balanced'); ?>><?php echo esc_html($this->tr('Medium (50 messages, recommended)', 'Mittel (50 Nachrichten, empfohlen)')); ?></option>
-                                <option value="high" <?php selected($curThoroughness, 'high'); ?>><?php echo esc_html($this->tr('Many (80 messages)', 'Viel (80 Nachrichten)')); ?></option>
+                                <option value="low" <?php selected($curThoroughness, 'low'); ?>><?php echo esc_html($this->tr('Few (10 messages)', 'Wenig (10 Nachrichten)')); ?></option>
+                                <option value="balanced" <?php selected($curThoroughness, 'balanced'); ?>><?php echo esc_html($this->tr('Medium (20 messages, recommended)', 'Mittel (20 Nachrichten, empfohlen)')); ?></option>
+                                <option value="high" <?php selected($curThoroughness, 'high'); ?>><?php echo esc_html($this->tr('Many (40 messages)', 'Viel (40 Nachrichten)')); ?></option>
                                 <option value="custom" <?php selected($curThoroughness, 'custom'); ?>><?php echo esc_html($this->tr('Custom', 'Benutzerdefiniert')); ?></option>
                             </select>
                             <input type="number" id="levi_history_value"
@@ -1184,14 +1159,14 @@ class SettingsPage {
                     </div>
 
                     <div class="levi-form-group">
-                        <label class="levi-form-label" for="levi_safety_mode"><?php echo esc_html($this->tr('Confirmation before critical actions?', 'Bestaetigung vor kritischen Aktionen?')); ?></label>
+                        <label class="levi-form-label" for="levi_safety_mode"><?php echo esc_html($this->tr('Allow destructive actions?', 'Destruktive Aktionen erlauben?')); ?></label>
                         <select id="levi_safety_mode" name="<?php echo esc_attr($this->optionName); ?>[levi_safety_mode]" class="levi-form-select">
-                            <option value="strict" <?php selected($curSafety, 'strict'); ?>><?php echo esc_html($this->tr('Yes — Levi asks before deleting or changing', 'Ja — Levi fragt vor dem Loeschen oder Aendern')); ?></option>
-                            <option value="standard" <?php selected($curSafety, 'standard'); ?>><?php echo esc_html($this->tr('No — Levi executes directly', 'Nein — Levi fuehrt direkt aus')); ?></option>
+                            <option value="strict" <?php selected($curSafety, 'strict'); ?>><?php echo esc_html($this->tr('No — Levi cannot delete or remove anything (safer)', 'Nein — Levi darf nichts loeschen oder entfernen (sicherer)')); ?></option>
+                            <option value="standard" <?php selected($curSafety, 'standard'); ?>><?php echo esc_html($this->tr('Yes — Levi may delete posts, users, etc.', 'Ja — Levi darf Beitraege, Benutzer usw. loeschen')); ?></option>
                         </select>
                         <p class="levi-form-help"><?php echo esc_html($this->tr(
-                            'When active, Levi asks for your confirmation before destructive actions (deleting, theme switch, plugin install).',
-                            'Wenn aktiv, fragt Levi bei destruktiven Aktionen (Loeschen, Theme-Wechsel, Plugin-Installation) erst nach deiner Bestaetigung.'
+                            'When disabled, Levi will refuse destructive actions like deleting posts or managing users. He will inform you that this setting needs to be changed.',
+                            'Wenn deaktiviert, verweigert Levi destruktive Aktionen wie Beitraege loeschen oder Benutzer verwalten. Er weist dich darauf hin, dass diese Einstellung geaendert werden muss.'
                         )); ?></p>
                     </div>
 
@@ -1311,14 +1286,14 @@ class SettingsPage {
                     </div>
 
                     <div class="levi-form-group">
-                        <label class="levi-form-label"><?php echo esc_html($this->tr('Summary Model (optional)', 'Summary-Modell (optional)')); ?></label>
+                        <label class="levi-form-label"><?php echo esc_html($this->tr('Compaction Model (optional)', 'Compaction-Modell (optional)')); ?></label>
                         <input type="text"
-                               name="<?php echo esc_attr($this->optionName); ?>[summary_model]"
-                               value="<?php echo esc_attr($settings['summary_model'] ?? ''); ?>"
-                               placeholder="google/gemini-2.0-flash-001"
+                               name="<?php echo esc_attr($this->optionName); ?>[compact_model]"
+                               value="<?php echo esc_attr($settings['compact_model'] ?? $settings['summary_model'] ?? ''); ?>"
+                               placeholder="google/gemini-2.5-flash-lite"
                                class="levi-form-input">
                         <p class="levi-form-help">
-                            <?php echo esc_html($this->tr('Fast/cheap model used to summarize older messages when context limit is exceeded. Leave empty for default (Gemini 2.0 Flash).', 'Schnelles/guenstiges Modell fuer die Zusammenfassung aelterer Nachrichten bei Kontext-Ueberschreitung. Leer lassen fuer Standard (Gemini 2.0 Flash).')); ?>
+                            <?php echo esc_html($this->tr('Cheap model for compacting older messages when context limit is reached. Falls back to primary model on failure. Leave empty for provider default.', 'Guenstiges Modell fuer die Komprimierung aelterer Nachrichten bei Kontext-Ueberschreitung. Bei Fehler wird automatisch das Hauptmodell verwendet. Leer lassen fuer Provider-Standard.')); ?>
                         </p>
                     </div>
                 </div>
@@ -1407,6 +1382,38 @@ class SettingsPage {
                             <?php _e('Repair Tables', 'levi-agent'); ?>
                         </button>
                         <span id="levi-repair-result"></span>
+                    </div>
+                </div>
+
+                <!-- Web Search -->
+                <div class="levi-form-card">
+                    <div class="levi-card-header">
+                        <span class="dashicons dashicons-admin-site-alt3"></span>
+                        <h3><?php echo esc_html($this->tr('Web Search', 'Web-Suche')); ?></h3>
+                    </div>
+                    <p class="levi-form-description">
+                        <?php echo esc_html($this->tr(
+                            'When enabled, a globe button appears in the chat input. Click it before sending a message to let Levi search the web for current information.',
+                            'Wenn aktiviert, erscheint ein Globus-Button im Chat. Klicke ihn vor dem Senden einer Nachricht, damit Levi im Internet nach aktuellen Infos suchen kann.'
+                        )); ?>
+                    </p>
+                    <div class="levi-form-group">
+                        <label class="levi-toggle-label">
+                            <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" value="0">
+                            <input type="checkbox" 
+                                   name="<?php echo esc_attr($this->optionName); ?>[web_search_enabled]" 
+                                   value="1" 
+                                   <?php checked(!empty($settings['web_search_enabled'])); ?>
+                                   class="levi-toggle-input">
+                            <span class="levi-toggle-switch"></span>
+                            <span class="levi-toggle-text"><?php echo esc_html($this->tr('Enable Web Search', 'Web-Suche aktivieren')); ?></span>
+                        </label>
+                        <p class="levi-form-help levi-hint">
+                            <?php echo esc_html($this->tr(
+                                'Note: Web search incurs additional costs per request at OpenRouter. The user controls when to use it via the chat toggle.',
+                                'Hinweis: Web-Suche verursacht zusätzliche Kosten pro Anfrage bei OpenRouter. Der Nutzer steuert per Toggle im Chat, wann sie genutzt wird.'
+                            )); ?>
+                        </p>
                     </div>
                 </div>
 
@@ -1588,21 +1595,22 @@ class SettingsPage {
             'openai_model' => 'gpt-4o-mini',
             'anthropic_model' => 'claude-3-5-sonnet-20241022',
             'rate_limit' => 100,
-            'max_tool_iterations' => 25,
+            'max_tool_iterations' => 30,
             'max_tokens' => 131072,
             'ai_timeout' => 120,
-            'php_time_limit' => 300,
+            'php_time_limit' => 0,
             'max_context_tokens' => 100000,
-            'history_context_limit' => 50,
+            'history_context_limit' => 20,
             'tool_profile' => 'standard',
             'allowed_plugin_slugs_manual' => '',
-            'require_confirmation_destructive' => 1,
+            'allow_destructive' => 0,
             'memory_identity_k' => 5,
-            'memory_reference_k' => 5,
-            'memory_min_similarity' => 0.6,
+            'memory_reference_k' => 8,
+            'memory_min_similarity' => 0.5,
             'pii_redaction' => 1,
             'blocked_post_types' => '',
             'web_search_enabled' => 0,
+            'compact_model' => '',
             'summary_model' => '',
         ];
     }
@@ -1614,6 +1622,11 @@ class SettingsPage {
         }
         if (!is_array($settings)) {
             $settings = [];
+        }
+
+        // Migrate old setting key (inverted logic: old 1=confirm → new 0=not allowed)
+        if (isset($settings['require_confirmation_destructive']) && !isset($settings['allow_destructive'])) {
+            $settings['allow_destructive'] = empty($settings['require_confirmation_destructive']) ? 1 : 0;
         }
 
         return array_merge($this->getDefaults(), $settings);

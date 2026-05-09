@@ -32,42 +32,14 @@ class AIClientFactory {
     }
 
     /**
-     * Get appropriate model for a query based on complexity.
-     * Returns alternative model for simple queries, default model for complex ones.
-     * 
-     * @param string $query The user query
-     * @return string|null The model to use, or null for default
+     * Get appropriate model for a query.
+     * Always returns null (use default model). The model is configured by the user
+     * in settings — no automatic switching based on query classification.
+     *
+     * @param string $query The user query (unused, kept for API compatibility)
+     * @return string|null Always null (use default model)
      */
     public static function getModelForQuery(string $query): ?string {
-        $settings = new SettingsPage();
-        $provider = $settings->getProvider();
-        
-        // Only OpenRouter supports alternative models currently
-        if ($provider !== 'openrouter') {
-            return null;
-        }
-
-        $altModel = $settings->getAltModel();
-        $defaultModel = $settings->getModelForProvider('openrouter');
-        
-        // If alternative model is same as default, always use default
-        if ($altModel === $defaultModel) {
-            return null;
-        }
-
-        // Check if query is simple
-        try {
-            $classifier = new QueryClassifier();
-            if (!$classifier->needsDeepRetrieval($query)) {
-                // Simple query - use alternative (faster) model
-                return $altModel;
-            }
-        } catch (\Throwable $e) {
-            // On error, fall back to default model
-            return null;
-        }
-
-        // Complex query - use default model
         return null;
     }
 }

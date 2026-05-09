@@ -97,12 +97,20 @@ class ManageUserTool implements ToolInterface {
             ];
         }
 
+        $verify = [
+            ['type' => 'user_field', 'user_id' => $userId, 'field' => 'role', 'expected' => $userdata['role']],
+        ];
+        if (!empty($params['email'])) {
+            $verify[] = ['type' => 'user_field', 'user_id' => $userId, 'field' => 'user_email', 'expected' => sanitize_email($params['email'])];
+        }
+
         return [
             'success' => true,
             'user_id' => $userId,
             'username' => $params['username'],
             'role' => $userdata['role'],
             'message' => 'User created successfully.',
+            '_verify' => $verify,
         ];
     }
 
@@ -152,11 +160,27 @@ class ManageUserTool implements ToolInterface {
             ];
         }
 
-        return [
+        $verify = [];
+        if (!empty($params['role'])) {
+            $verify[] = ['type' => 'user_field', 'user_id' => $userId, 'field' => 'role', 'expected' => $params['role']];
+        }
+        if (!empty($params['email'])) {
+            $verify[] = ['type' => 'user_field', 'user_id' => $userId, 'field' => 'user_email', 'expected' => sanitize_email($params['email'])];
+        }
+        if (!empty($params['display_name'])) {
+            $verify[] = ['type' => 'user_field', 'user_id' => $userId, 'field' => 'display_name', 'expected' => sanitize_text_field($params['display_name'])];
+        }
+
+        $result = [
             'success' => true,
             'user_id' => $params['user_id'],
             'message' => 'User updated successfully.',
         ];
+        if (!empty($verify)) {
+            $result['_verify'] = $verify;
+        }
+
+        return $result;
     }
 
 }

@@ -215,7 +215,7 @@ PROMPT;
 
     private function resolveModel(array $settings, string $provider): string {
         $providerKey = match ($provider) {
-            'openrouter' => 'openrouter_model',
+            'openrouter' => 'openrouter_alt_model',
             'openai' => 'openai_model',
             'anthropic' => 'anthropic_model',
             default => '',
@@ -228,8 +228,8 @@ PROMPT;
 
         return match ($provider) {
             'openrouter' => 'moonshotai/kimi-k2.5',
-            'openai' => 'gpt-4.1-mini',
-            'anthropic' => 'claude-sonnet-4-20250514',
+            'openai' => 'gpt-5-mini',
+            'anthropic' => 'claude-haiku-4-5',
             default => 'moonshotai/kimi-k2.5',
         };
     }

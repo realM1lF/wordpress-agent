@@ -86,6 +86,9 @@ class DeleteThemeFileTool implements ToolInterface {
             'theme_slug' => $slug,
             'relative_path' => $relativePath,
             'message' => 'Theme file deleted.',
+            '_verify' => [
+                ['type' => 'file_exists', 'path' => $targetPathReal, 'expected' => false],
+            ],
         ];
     }
 

@@ -110,17 +110,47 @@ class SetupWizardPage {
     private function handleSaveProSetup(): void {
         check_admin_referer('levi_setup_wizard_step2');
 
-        $apiKey = trim((string) ($_POST['levi_openrouter_api_key'] ?? ''));
+        $provider = sanitize_key((string) ($_POST['levi_ai_provider'] ?? 'openrouter'));
+        $settingsPage = new SettingsPage();
+        $validProviders = $settingsPage->getProviderLabels();
+        if (!isset($validProviders[$provider])) {
+            $provider = 'openrouter';
+        }
+
+        $keyFieldMap = [
+            'openrouter' => 'levi_openrouter_api_key',
+            'anthropic'  => 'levi_anthropic_api_key',
+            'openai'     => 'levi_openai_api_key',
+        ];
+        $apiKey = trim((string) ($_POST[$keyFieldMap[$provider] ?? 'levi_openrouter_api_key'] ?? ''));
         if ($apiKey === '') {
             wp_safe_redirect(admin_url('admin.php?page=' . $this->pageSlug . '&step=2&error=missing_key'));
             exit;
         }
 
+        $settingKeyMap = [
+            'openrouter' => 'openrouter_api_key',
+            'anthropic'  => 'anthropic_api_key',
+            'openai'     => 'openai_api_key',
+        ];
+
+        $allowedModels = $settingsPage->getAllowedModelsForProvider($provider);
+        $selectedModel = sanitize_text_field((string) ($_POST['levi_selected_model'] ?? ''));
+        if (!isset($allowedModels[$selectedModel])) {
+            $selectedModel = array_key_first($allowedModels);
+        }
+
+        $modelSettingKey = match ($provider) {
+            'openai' => 'openai_model',
+            'anthropic' => 'anthropic_model',
+            default => 'openrouter_alt_model',
+        };
+
         $settings = $this->getSettings();
-        $settings['ai_provider'] = 'openrouter';
+        $settings['ai_provider'] = $provider;
         $settings['ai_auth_method'] = 'api_key';
-        $settings['openrouter_api_key'] = sanitize_text_field($apiKey);
-        $settings['openrouter_model'] = 'moonshotai/kimi-k2.5';
+        $settings[$settingKeyMap[$provider]] = sanitize_text_field($apiKey);
+        $settings[$modelSettingKey] = $selectedModel;
         $settings['tool_profile'] = 'standard';
         $settings['allow_destructive'] = 0;
         $settings['max_tool_iterations'] = 30;
@@ -318,10 +348,11 @@ class SetupWizardPage {
     private function renderStepConnect(string $saved, string $error): void {
         $oauth = new OpenRouterOAuth();
         $isOAuthConnected = $oauth->isOAuthConnected();
+        $settingsPage = new SettingsPage();
         ?>
         <section class="levi-form-card levi-setup-card">
             <h2><?php esc_html_e('Ich brauche Zugang zu einem KI-Modell', 'levi-agent'); ?></h2>
-            <p><?php esc_html_e('Damit ich denken kann, brauche ich Zugang zu einem KI-Modell. Dafür nutze ich OpenRouter — einen Dienst, der verschiedene KI-Modelle anbietet. Du zahlst dort nur, was du tatsächlich verbrauchst.', 'levi-agent'); ?></p>
+            <p><?php esc_html_e('Damit ich denken kann, brauche ich Zugang zu einem KI-Modell. Du kannst dich mit OpenRouter verbinden oder direkt einen API-Key von Anthropic, OpenAI oder OpenRouter eingeben. Du zahlst nur, was du tatsaechlich verbrauchst.', 'levi-agent'); ?></p>
 
             <?php if ($isOAuthConnected): ?>
                 <div class="levi-notice levi-notice-success">
@@ -345,14 +376,14 @@ class SetupWizardPage {
                     </div>
                 <?php endif; ?>
 
+                <!-- Option 1: OpenRouter OAuth (recommended) -->
                 <?php $oauthUrl = $oauth->getAuthUrl('wizard'); ?>
-
                 <div class="levi-connect-primary">
                     <a href="<?php echo esc_url($oauthUrl); ?>" class="levi-btn levi-btn-primary levi-btn-lg levi-btn-connect">
                         <span class="dashicons dashicons-admin-links"></span>
                         <?php esc_html_e('Mit OpenRouter verbinden', 'levi-agent'); ?>
                     </a>
-                    <p class="levi-form-help"><?php esc_html_e('Du wirst kurz zu OpenRouter weitergeleitet. Falls du noch kein Konto hast, kannst du dort in 30 Sekunden eins erstellen.', 'levi-agent'); ?></p>
+                    <p class="levi-form-help"><?php esc_html_e('Empfohlen — einfachste Verbindung, Zugang zu vielen Modellen. Du wirst kurz zu OpenRouter weitergeleitet.', 'levi-agent'); ?></p>
                 </div>
 
                 <div class="levi-cost-box">
@@ -367,23 +398,99 @@ class SetupWizardPage {
                     <span><?php esc_html_e('oder', 'levi-agent'); ?></span>
                 </div>
 
-                <details class="levi-collapsible-section">
-                    <summary class="levi-collapsible-trigger"><?php esc_html_e('Ich habe schon einen API-Key', 'levi-agent'); ?></summary>
-                    <div class="levi-collapsible-content">
+                <!-- Option 2: Manual API Key (any provider) -->
+                <div class="levi-form-card" style="margin-top: 0; border: 1px solid rgba(124, 58, 237, 0.2);">
+                    <h3 style="margin-top: 0;"><?php esc_html_e('Eigenen API-Key verwenden', 'levi-agent'); ?></h3>
+                    <p class="levi-form-help" style="margin-bottom: 16px;"><?php esc_html_e('Du hast bereits einen API-Key von OpenRouter, Anthropic oder OpenAI? Dann kannst du ihn hier direkt eingeben.', 'levi-agent'); ?></p>
+                    <div>
                         <form method="post" action="">
                             <?php wp_nonce_field('levi_setup_wizard_step2'); ?>
                             <input type="hidden" name="levi_setup_action" value="save_pro_setup">
 
                             <div class="levi-form-group">
+                                <label class="levi-form-label"><?php esc_html_e('Anbieter', 'levi-agent'); ?></label>
+                                <select name="levi_ai_provider" id="levi-wizard-provider" class="levi-form-input">
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="anthropic">Anthropic (direkt)</option>
+                                    <option value="openai">OpenAI (direkt)</option>
+                                </select>
+                            </div>
+
+                            <!-- OpenRouter Key -->
+                            <div class="levi-form-group levi-wizard-key-group" data-provider="openrouter">
                                 <label class="levi-form-label" for="levi_openrouter_api_key"><?php esc_html_e('OpenRouter API-Key', 'levi-agent'); ?></label>
-                                <input id="levi_openrouter_api_key" name="levi_openrouter_api_key" type="password" class="levi-form-input" placeholder="sk-or-..." required>
+                                <input id="levi_openrouter_api_key" name="levi_openrouter_api_key" type="password" class="levi-form-input" autocomplete="new-password" placeholder="sk-or-...">
                                 <p class="levi-form-help"><?php esc_html_e('Hole deinen Key auf', 'levi-agent'); ?> <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a></p>
+                            </div>
+
+                            <!-- Anthropic Key -->
+                            <div class="levi-form-group levi-wizard-key-group" data-provider="anthropic" style="display:none;">
+                                <label class="levi-form-label" for="levi_anthropic_api_key"><?php esc_html_e('Anthropic API-Key', 'levi-agent'); ?></label>
+                                <input id="levi_anthropic_api_key" name="levi_anthropic_api_key" type="password" class="levi-form-input" autocomplete="new-password" placeholder="sk-ant-...">
+                                <p class="levi-form-help"><?php esc_html_e('Hole deinen Key auf', 'levi-agent'); ?> <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a></p>
+                            </div>
+
+                            <!-- OpenAI Key -->
+                            <div class="levi-form-group levi-wizard-key-group" data-provider="openai" style="display:none;">
+                                <label class="levi-form-label" for="levi_openai_api_key"><?php esc_html_e('OpenAI API-Key', 'levi-agent'); ?></label>
+                                <input id="levi_openai_api_key" name="levi_openai_api_key" type="password" class="levi-form-input" autocomplete="new-password" placeholder="sk-...">
+                                <p class="levi-form-help"><?php esc_html_e('Hole deinen Key auf', 'levi-agent'); ?> <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a></p>
+                            </div>
+
+                            <!-- Model Selection -->
+                            <div class="levi-form-group">
+                                <label class="levi-form-label"><?php esc_html_e('KI-Modell', 'levi-agent'); ?></label>
+                                <?php
+                                $allProviderModels = [];
+                                foreach (['openrouter', 'anthropic', 'openai'] as $p) {
+                                    $allProviderModels[$p] = $settingsPage->getAllowedModelsForProvider($p);
+                                }
+                                ?>
+                                <select name="levi_selected_model" id="levi-wizard-model" class="levi-form-input">
+                                    <?php foreach ($allProviderModels['openrouter'] as $mId => $mLabel): ?>
+                                        <option value="<?php echo esc_attr($mId); ?>" data-provider="openrouter"><?php echo esc_html($mLabel); ?></option>
+                                    <?php endforeach; ?>
+                                    <?php foreach ($allProviderModels['anthropic'] as $mId => $mLabel): ?>
+                                        <option value="<?php echo esc_attr($mId); ?>" data-provider="anthropic" style="display:none;"><?php echo esc_html($mLabel); ?></option>
+                                    <?php endforeach; ?>
+                                    <?php foreach ($allProviderModels['openai'] as $mId => $mLabel): ?>
+                                        <option value="<?php echo esc_attr($mId); ?>" data-provider="openai" style="display:none;"><?php echo esc_html($mLabel); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
                             </div>
 
                             <button type="submit" class="levi-btn levi-btn-primary"><?php esc_html_e('Key speichern & weiter', 'levi-agent'); ?></button>
                         </form>
+
+                        <script>
+                        (function() {
+                            var providerSelect = document.getElementById('levi-wizard-provider');
+                            var modelSelect = document.getElementById('levi-wizard-model');
+                            if (!providerSelect || !modelSelect) return;
+
+                            providerSelect.addEventListener('change', function() {
+                                var p = this.value;
+                                document.querySelectorAll('.levi-wizard-key-group').forEach(function(el) {
+                                    el.style.display = el.dataset.provider === p ? '' : 'none';
+                                    var input = el.querySelector('input');
+                                    if (input) input.required = el.dataset.provider === p;
+                                });
+                                var options = modelSelect.querySelectorAll('option');
+                                var firstVisible = null;
+                                options.forEach(function(opt) {
+                                    var show = opt.dataset.provider === p;
+                                    opt.style.display = show ? '' : 'none';
+                                    opt.disabled = !show;
+                                    if (show && !firstVisible) firstVisible = opt;
+                                });
+                                if (firstVisible) modelSelect.value = firstVisible.value;
+                            });
+
+                            providerSelect.dispatchEvent(new Event('change'));
+                        })();
+                        </script>
                     </div>
-                </details>
+                </div>
 
                 <div class="levi-form-actions">
                     <a class="levi-btn levi-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=' . $this->pageSlug . '&step=1')); ?>"><?php esc_html_e('Zurück', 'levi-agent'); ?></a>

@@ -24,9 +24,17 @@ trait ManagesContext {
         return 0;
     }
 
+    private function getMaxContextTokensForModel(): int {
+        $provider = $this->settings->getProvider();
+        $model = $this->settings->getModelForProvider($provider);
+        $limits = $this->settings->getModelLimits($provider, $model);
+        $contextLimit = $limits['context_limit'] ?? 128000;
+        $maxOutput = $limits['max_output_tokens'] ?? 16384;
+        return max(1000, $contextLimit - $maxOutput);
+    }
+
     private function trimMessagesToBudget(array $messages, ?string $sessionId = null): array {
-        $runtimeSettings = $this->settings->getSettings();
-        $maxContextTokens = max(1000, (int) ($runtimeSettings['max_context_tokens'] ?? 100000));
+        $maxContextTokens = $this->getMaxContextTokensForModel();
 
         $totalTokens = 0;
         foreach ($messages as $msg) {
@@ -206,8 +214,7 @@ trait ManagesContext {
         }
 
         // Estimate fill ratio for progressive pruning
-        $runtimeSettings = $this->settings->getSettings();
-        $maxContextTokens = max(1000, (int) ($runtimeSettings['max_context_tokens'] ?? 100000));
+        $maxContextTokens = $this->getMaxContextTokensForModel();
 
         $totalTokens = 0;
         foreach ($compacted as $msg) {
@@ -313,6 +320,8 @@ trait ManagesContext {
         }
 
         // --- Stage 3: Hard-Clear (fill > 0.55) ---
+        // Instead of blanking content entirely, compress to the generic summary.
+        // The model retains at least the tool name, status, IDs and counts.
         if ($fillRatio > 0.55) {
             $unprotected = [];
             foreach ($toolIndices as $ti) {
@@ -327,7 +336,8 @@ trait ManagesContext {
                 if (!isset($hardClearSet[$i])) {
                     continue;
                 }
-                $msg['content'] = '[Tool-Ergebnis entfernt — altes Ergebnis, nur Content geloescht, tool_call_id intakt]';
+                $toolName = (string) ($msg['_levi_tool'] ?? $this->extractToolNameFromContext($messages, $i));
+                $msg['content'] = $this->summarizeOldToolResult((string) ($msg['content'] ?? ''), $toolName ?: 'unknown');
             }
             unset($msg);
         }
@@ -410,112 +420,170 @@ trait ManagesContext {
     }
 
     /**
-     * Create a semantic one-line summary of a tool result for context compression.
-     * Used for tool results older than 3 iterations to drastically reduce token usage
-     * while preserving the essential information the model needs.
+     * Generic tool-result summarizer for context compression.
+     * Works for ANY tool — extracts identifiers, status, lists and counts
+     * automatically from the JSON structure. No per-tool case needed.
      */
     private function summarizeOldToolResult(string $content, string $toolName): string {
         $data = @json_decode($content, true);
         if (!is_array($data)) {
-            return '[' . $toolName . ': ' . mb_substr($content, 0, 150) . '...]';
+            return "[{$toolName}: " . mb_substr($content, 0, 300) . ']';
         }
 
-        $success = ($data['success'] ?? false) ? 'Erfolg' : 'Fehler';
+        $parts = [];
 
-        switch ($toolName) {
-            case 'read_plugin_file':
-            case 'read_theme_file':
-                $slug = $data['plugin_slug'] ?? $data['theme_slug'] ?? '?';
-                $path = $data['relative_path'] ?? '?';
-                $lines = $data['meta']['line_count'] ?? $data['total_lines'] ?? '?';
-                $symbols = [];
-                $raw = $data['content'] ?? '';
-                if (is_string($raw) && $raw !== '') {
-                    if (preg_match_all('/\bfunction\s+(\w+)\s*\(/m', $raw, $m)) {
-                        $symbols = array_merge($symbols, array_map(fn($f) => $f . '()', array_slice($m[1], 0, 8)));
-                    }
-                    if (preg_match_all('/\bclass\s+(\w+)/m', $raw, $m)) {
-                        $symbols = array_merge($symbols, array_slice($m[1], 0, 4));
-                    }
-                }
-                $sym = !empty($symbols) ? ', Symbole: ' . implode(', ', $symbols) : '';
-                return "[Gelesen: {$slug}/{$path}, {$lines} Zeilen{$sym}]";
+        $parts[] = ($data['success'] ?? false) ? 'OK' : 'FEHLER';
 
-            case 'list_plugin_files':
-            case 'list_theme_files':
-                $slug = $data['plugin_slug'] ?? $data['theme_slug'] ?? '?';
-                $total = $data['total'] ?? count($data['entries'] ?? []);
-                $dirs = [];
-                foreach (($data['entries'] ?? []) as $entry) {
-                    if (($entry['type'] ?? '') === 'dir' && !str_contains(($entry['path'] ?? ''), '/')) {
-                        $dirs[] = $entry['path'] . '/';
-                    }
-                }
-                $dirStr = !empty($dirs) ? ', Verzeichnisse: ' . implode(', ', array_slice($dirs, 0, 6)) : '';
-                return "[Dateiliste: {$slug}, {$total} Dateien{$dirStr}]";
-
-            case 'grep_plugin_files':
-            case 'grep_theme_files':
-                $pattern = $data['pattern'] ?? '?';
-                $totalMatches = $data['total_matches'] ?? 0;
-                $filesMatched = $data['files_matched'] ?? 0;
-                $fileNames = [];
-                foreach (array_slice($data['results'] ?? [], 0, 5) as $r) {
-                    $f = basename($r['file'] ?? '');
-                    if ($f !== '' && !in_array($f, $fileNames, true)) {
-                        $fileNames[] = $f;
-                    }
-                }
-                $files = !empty($fileNames) ? ': ' . implode(', ', $fileNames) : '';
-                return "[Suche: '{$pattern}' → {$totalMatches} Treffer in {$filesMatched} Dateien{$files}]";
-
-            case 'get_posts':
-            case 'get_pages':
-                $type = $data['queried_post_type'] ?? ($toolName === 'get_pages' ? 'page' : 'post');
-                $count = $data['count'] ?? count($data['posts'] ?? $data['pages'] ?? []);
-                $items = $data['posts'] ?? $data['pages'] ?? [];
-                $ids = array_slice(array_column($items, 'id'), 0, 5);
-                $idStr = !empty($ids) ? ', IDs: ' . implode(', ', $ids) : '';
-                return "[Gelesen: {$count} Eintraege ({$type}){$idStr}]";
-
-            case 'get_post':
-                $id = $data['post']['id'] ?? $data['id'] ?? '?';
-                $title = $data['post']['title'] ?? $data['title'] ?? '';
-                $titleStr = $title !== '' ? ": {$title}" : '';
-                return "[Gelesen: Beitrag #{$id}{$titleStr}]";
-
-            case 'write_plugin_file':
-            case 'write_theme_file':
-                $slug = $data['plugin_slug'] ?? $data['theme_slug'] ?? '?';
-                $path = $data['relative_path'] ?? '?';
-                $bytes = $data['bytes_written'] ?? '?';
-                return "[Geschrieben: {$slug}/{$path}, {$bytes} Bytes, {$success}]";
-
-            case 'patch_plugin_file':
-            case 'patch_theme_file':
-                $slug = $data['plugin_slug'] ?? $data['theme_slug'] ?? '?';
-                $path = $data['relative_path'] ?? '?';
-                $count = $data['patches_applied'] ?? 0;
-                return "[Gepatcht: {$slug}/{$path}, {$count} Ersetzungen, {$success}]";
-
-            case 'check_plugin_health':
-                $slug = $data['plugin_slug'] ?? '?';
-                $healthy = ($data['healthy'] ?? false) ? 'gesund' : 'Probleme';
-                $checked = $data['files_checked'] ?? 0;
-                $issues = count($data['issues'] ?? []);
-                return "[Health-Check: {$slug}, {$checked} Dateien, {$healthy}, {$issues} Issues]";
-
-            case 'read_error_log':
-                $lineCount = $data['total_lines'] ?? count($data['lines'] ?? []);
-                return "[Error-Log: {$lineCount} Zeilen gelesen]";
-
-            default:
-                if (!($data['success'] ?? true)) {
-                    $err = $data['error'] ?? 'unbekannt';
-                    return "[{$toolName}: Fehler — " . mb_substr($err, 0, 100) . "]";
-                }
-                return '[' . $toolName . ': ' . mb_substr($content, 0, 150) . '...]';
+        if (!empty($data['error']) && is_string($data['error'])) {
+            $parts[] = mb_substr($data['error'], 0, 120);
         }
+        if (!empty($data['message']) && is_string($data['message'])) {
+            $parts[] = mb_substr($data['message'], 0, 120);
+        }
+
+        $ids = $this->extractScalarIdentifiers($data);
+        if (!empty($ids)) {
+            $parts[] = implode(', ', $ids);
+        }
+
+        $listSummaries = $this->summarizeListFields($data);
+        if (!empty($listSummaries)) {
+            $parts[] = implode('; ', $listSummaries);
+        }
+
+        $numeric = $this->extractNumericMeta($data);
+        if (!empty($numeric)) {
+            $parts[] = implode(', ', $numeric);
+        }
+
+        $summary = "[{$toolName}: " . implode(' | ', $parts) . ']';
+
+        if (mb_strlen($summary) > 800) {
+            $summary = mb_substr($summary, 0, 797) . '...]';
+        }
+
+        return $summary;
+    }
+
+    private const IDENTIFIER_KEYS = [
+        'id', 'post_id', 'page_id', 'attachment_id', 'product_id', 'user_id',
+        'order_id', 'coupon_id', 'variation_id', 'menu_id', 'term_id',
+        'title', 'name', 'post_title', 'slug', 'plugin_slug', 'theme_slug',
+        'relative_path', 'file_path', 'path', 'url', 'edit_url',
+        'status', 'post_type', 'role', 'action',
+        'permanently_deleted', 'activated', 'healthy',
+    ];
+
+    private const SKIP_LARGE_KEYS = [
+        'content', 'raw_html', 'html', 'body', 'code', 'source',
+        'rendered', 'description', 'excerpt', 'raw',
+        '_verify', 'suggestion',
+    ];
+
+    /**
+     * Extract scalar identifier fields (id, title, slug, status, path, etc.)
+     */
+    private function extractScalarIdentifiers(array $data): array {
+        $found = [];
+        foreach (self::IDENTIFIER_KEYS as $key) {
+            if (!isset($data[$key])) {
+                continue;
+            }
+            $val = $data[$key];
+            if (is_bool($val)) {
+                $found[] = $key . '=' . ($val ? 'true' : 'false');
+            } elseif (is_scalar($val)) {
+                $strVal = (string) $val;
+                if ($strVal !== '' && mb_strlen($strVal) <= 120) {
+                    $found[] = $key . '=' . $strVal;
+                }
+            }
+        }
+        return $found;
+    }
+
+    /**
+     * Summarize array-of-objects fields: extract count + per-item identifiers.
+     */
+    private function summarizeListFields(array $data): array {
+        $summaries = [];
+
+        foreach ($data as $key => $value) {
+            if (!is_array($value) || empty($value) || !isset($value[0]) || !is_array($value[0])) {
+                continue;
+            }
+            if (in_array($key, self::SKIP_LARGE_KEYS, true) || str_starts_with($key, '_')) {
+                continue;
+            }
+
+            $count = count($value);
+            $itemLabels = [];
+            foreach (array_slice($value, 0, 12) as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $label = $this->labelForItem($item);
+                if ($label !== null) {
+                    $itemLabels[] = $label;
+                }
+            }
+
+            if (!empty($itemLabels)) {
+                $summaries[] = $count . 'x ' . $key . ': ' . implode(', ', $itemLabels);
+            } else {
+                $summaries[] = $count . 'x ' . $key;
+            }
+        }
+
+        return $summaries;
+    }
+
+    /**
+     * Build a compact label for a single list item (e.g. #42 "My Page" (draft)).
+     */
+    private function labelForItem(array $item): ?string {
+        $id = $item['id'] ?? $item['post_id'] ?? $item['term_id'] ?? $item['user_id']
+            ?? $item['product_id'] ?? $item['attachment_id'] ?? null;
+        $title = $item['title'] ?? $item['name'] ?? $item['post_title']
+            ?? $item['label'] ?? $item['display_name'] ?? $item['slug'] ?? null;
+        $status = $item['status'] ?? $item['post_status'] ?? null;
+
+        if ($id === null && $title === null) {
+            return null;
+        }
+
+        $label = '';
+        if ($id !== null) {
+            $label .= '#' . $id;
+        }
+        if ($title !== null && is_string($title) && $title !== '') {
+            $shortTitle = mb_strlen($title) > 40 ? mb_substr($title, 0, 37) . '...' : $title;
+            $label .= ($label !== '' ? ' ' : '') . '"' . $shortTitle . '"';
+        }
+        if ($status !== null && is_string($status) && $status !== '' && $status !== 'publish') {
+            $label .= " ({$status})";
+        }
+        return $label !== '' ? $label : null;
+    }
+
+    /**
+     * Extract notable numeric metadata (counts, totals, bytes, lines, etc.)
+     */
+    private function extractNumericMeta(array $data): array {
+        $found = [];
+        $numericKeys = [
+            'count', 'total', 'total_lines', 'total_matches', 'files_matched',
+            'bytes_written', 'patches_applied', 'files_checked', 'files_changed',
+            'line_count',
+        ];
+
+        foreach ($numericKeys as $key) {
+            $val = $data[$key] ?? ($data['meta'][$key] ?? null);
+            if ($val !== null && is_numeric($val) && (int) $val !== 0) {
+                $found[] = $key . '=' . $val;
+            }
+        }
+        return $found;
     }
 
     private function compactToolResultForModel(array $result): string {

@@ -72,6 +72,9 @@ class DeletePostTool implements ToolInterface {
             'post_type' => $post->post_type,
             'permanently_deleted' => $forceDelete,
             'message' => $forceDelete ? 'Post permanently deleted.' : 'Post moved to trash.',
+            '_verify' => [
+                ['type' => 'post_deleted', 'post_id' => $postId, 'force' => $forceDelete],
+            ],
         ];
 
         if ($post->post_type !== 'post') {

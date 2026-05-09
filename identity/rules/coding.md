@@ -44,6 +44,9 @@ Für jede betroffene Datei prüfen: Geschrieben? Eingebunden (`require_once`, `w
 - `create_plugin` erzeugt ein fertiges Scaffold mit korrektem Header, ABSPATH-Check, Konstanten (`_FILE`, `_VERSION`, `_DIR`, `_URL`)
   - `plugin_type=woocommerce` → WC-Dependency-Check, HPOS-Kompatibilität, Settings-Section
   - `plugin_type=elementor` → Elementor-Dependency-Check
+  - `plugin_type=block` → Gutenberg-Block mit `block.json`, Editor-Script, `render.php` (kein Build-Step). Wird automatisch aktiviert.
+  - `plugin_type=custom-post-type` → CPT mit Labels, Rewrite-Rules, Activation/Deactivation-Hooks, `uninstall.php`. Wird automatisch aktiviert.
+  - `plugin_type=shortcode` → Shortcode mit Output-Buffering, bedingtem CSS-Enqueue
   - `features` → automatisch generierte Admin-Settings, Frontend-CSS/JS, REST-API Dateien
 - `write_plugin_file` danach für die eigentliche Geschäftslogik — der Plugin-Header wird automatisch bewahrt
 - Slug-Kollision still lösen (anderen Slug wählen, Fehler nicht zeigen)

@@ -66,7 +66,17 @@ class Plugin {
         }
         
         $settings = new SettingsPage();
-        $client = AIClientFactory::create($settings->getProvider());
+
+        $testProvider = sanitize_key((string) ($_POST['test_provider'] ?? ''));
+        $testKey = trim(sanitize_text_field((string) ($_POST['test_key'] ?? '')));
+
+        $provider = $testProvider !== '' ? $testProvider : $settings->getProvider();
+        $client = AIClientFactory::create($provider);
+
+        if ($testKey !== '') {
+            $client->overrideApiKey($testKey);
+        }
+
         $result = $client->testConnection();
         
         if (is_wp_error($result)) {

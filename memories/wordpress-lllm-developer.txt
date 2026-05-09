@@ -13,7 +13,7 @@ url: https://developer.wordpress.org/block-editor/?output_format=md
 Title: Block Editor Handbook
 Author: Scott Reilly
 Published: May 2, 2019
-Last modified: December 30, 2025
+Last modified: April 5, 2026
 
 ---
 
@@ -109,7 +109,7 @@ to block development. However, there are other resources that can help you.
  * **[Learn WordPress](https://learn.wordpress.org/):** The WordPress hub for learning
    resources where you can find courses like [Introduction to Block Development: Build your first custom block](https://learn.wordpress.org/course/introduction-to-block-development-build-your-first-custom-block/),
    [Converting a Shortcode to a Block](https://learn.wordpress.org/course/converting-a-shortcode-to-a-block/),
-   or [Using the WordPress Data Layer](https://learn.wordpress.org/course/using-the-wordpress-data-layer/)
+   or [Using the WordPress Data Layer](https://learn.wordpress.org/course/using-the-wordpress-data-layer/).
  * **[WordPress.tv](https://wordpress.tv/):** A hub of WordPress-related videos (
    from talks at WordCamps to recordings of online workshops) curated and moderated
    by the WordPress community. You’re sure to find something to aid your learning
@@ -147,7 +147,7 @@ May 2, 2019
 
 Last updated
 
-December 30, 2025
+April 5, 2026
 
 Edit article
 
@@ -1066,7 +1066,7 @@ url: https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?
 
 Title: Core Blocks Reference
 Published: December 20, 2021
-Last modified: March 13, 2026
+Last modified: April 29, 2026
 
 ---
 
@@ -1179,12 +1179,12 @@ Last modified: March 13, 2026
  * [Social Icons](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#social-icons)
  * [Spacer](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#spacer)
  * [Tab](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab)
+ * [Tab List](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-list)
  * [Tab Panel](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-panel)
+ * [Tab Panels](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-panels)
  * [Table](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#table)
  * [Table of Contents](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#table-of-contents)
  * [Tabs](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tabs)
- * [Tabs Menu](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tabs-menu)
- * [Tab Menu Item](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-menu-item)
  * [Tag Cloud](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tag-cloud)
  * [Template Part](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#template-part)
  * [Term Count](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#term-count)
@@ -1237,8 +1237,8 @@ Wraps the heading and panel in one unit. ([Source](https://github.com/WordPress/
  * **Parent:** core/accordion
  * **Allowed Blocks:** core/accordion-heading, core/accordion-panel
  * **Supports:** color (background, gradients, text), contentRole, interactivity,
-   layout (~allowEditing~), shadow, spacing (blockGap, margin), typography (fontSize,
-   lineHeight), ~html~
+   layout (~allowEditing~), shadow, spacing (blockGap, margin, padding), typography(
+   fontSize, lineHeight), ~html~
  * **Attributes:** openByDefault
 
 ## 󠀁[Accordion Panel](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#accordion-panel)󠁿
@@ -1604,7 +1604,7 @@ A form. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/blo
 
  * **Name:** core/form
  * **Experimental:** true
- * **Category:** common
+ * **Category:** widgets
  * **Allowed Blocks:** core/paragraph, core/heading, core/form-input, core/form-
    submit-button, core/form-submission-notification, core/group, core/columns
  * **Supports:** anchor, color (background, gradients, link, text), spacing (margin,
@@ -1617,7 +1617,7 @@ The basic building block for forms. ([Source](https://github.com/WordPress/guten
 
  * **Name:** core/form-input
  * **Experimental:** true
- * **Category:** common
+ * **Category:** widgets
  * **Ancestor:** core/form
  * **Supports:** anchor, spacing (margin), ~reusable~
  * **Attributes:** inlineLabel, label, name, placeholder, required, type, value,
@@ -1629,7 +1629,7 @@ Provide a notification message after the form has been submitted. ([Source](http
 
  * **Name:** core/form-submission-notification
  * **Experimental:** true
- * **Category:** common
+ * **Category:** widgets
  * **Ancestor:** core/form
  * **Attributes:** type
 
@@ -1639,7 +1639,7 @@ A submission button for forms. ([Source](https://github.com/WordPress/gutenberg/
 
  * **Name:** core/form-submit-button
  * **Experimental:** true
- * **Category:** common
+ * **Category:** widgets
  * **Ancestor:** core/form
  * **Allowed Blocks:** core/buttons, core/button
 
@@ -1675,10 +1675,10 @@ Gather blocks in a layout container. ([Source](https://github.com/WordPress/gute
  * **Name:** core/group
  * **Category:** design
  * **Supports:** align (full, wide), allowedBlocks, anchor, ariaLabel, background(
-   backgroundImage, backgroundSize), color (background, button, gradients, heading,
-   link, text), dimensions (minHeight), interactivity (clientNavigation), layout(
-   allowSizingOnChildren), position (sticky), shadow, spacing (blockGap, margin,
-   padding), typography (fontSize, lineHeight), ~html~
+   backgroundImage, backgroundSize, gradient), color (background, button, gradients,
+   heading, link, text), dimensions (minHeight, minWidth), interactivity (clientNavigation),
+   layout (allowSizingOnChildren), position (sticky), shadow, spacing (blockGap,
+   margin, padding), typography (fontSize, lineHeight), ~html~
  * **Attributes:** tagName, templateLock
 
 ## 󠀁[Heading](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#heading)󠁿
@@ -1786,7 +1786,7 @@ An individual item within a list. ([Source](https://github.com/WordPress/gutenbe
  * **Allowed Blocks:** core/list
  * **Supports:** anchor, color (background, gradients, link, text), interactivity(
    clientNavigation), spacing (margin, padding), splitting, typography (fontSize,
-   lineHeight), ~className~
+   lineHeight), ~className~, ~html~
  * **Attributes:** content, placeholder
 
 ## 󠀁[Login/out](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#login-out)󠁿
@@ -2070,9 +2070,9 @@ Display a custom date. ([Source](https://github.com/WordPress/gutenberg/tree/tru
  * **Name:** core/post-date
  * **Category:** theme
  * **Supports:** anchor, color (background, gradients, link, text), interactivity(
-   clientNavigation), spacing (margin, padding), typography (fontSize, lineHeight),
-   ~html~
- * **Attributes:** datetime, format, isLink, textAlign
+   clientNavigation), spacing (margin, padding), typography (fontSize, lineHeight,
+   textAlign), ~html~
+ * **Attributes:** datetime, format, isLink
 
 ## 󠀁[Excerpt](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#excerpt)󠁿
 
@@ -2311,8 +2311,8 @@ Help visitors find your content. ([Source](https://github.com/WordPress/gutenber
  * **Supports:** align (center, left, right), anchor, color (background, gradients,
    text), interactivity, spacing (margin), typography (fontSize, lineHeight), ~html
    ~
- * **Attributes:** buttonPosition, buttonText, buttonUseIcon, isSearchFieldHidden,
-   label, placeholder, query, showLabel, width, widthUnit
+ * **Attributes:** buttonPosition, buttonText, buttonUseIcon, label, placeholder,
+   query, showLabel, width, widthUnit
 
 ## 󠀁[Separator](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#separator)󠁿
 
@@ -2408,30 +2408,55 @@ Add white space between blocks and customize its height. ([Source](https://githu
 
 ## 󠀁[Tab](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab)󠁿
 
-Content for a tab in a tabbed interface. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block-library/src/tab))
+A single tab button in the tab list. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block-library/src/tab))
 
  * **Name:** core/tab
  * **Experimental:** true
  * **Category:** design
- * **Parent:** core/tab-panel
- * **Supports:** anchor, color (background, text), layout, renaming, spacing (blockGap,
-   padding, ~margin~), typography (fontSize), ~html~, ~reusable~
- * **Attributes:** label
+ * **Parent:** core/tab-list
+ * **Supports:** color (background, text), spacing (padding), typography (fontSize,
+   textAlign), ~html~, ~lock~, ~reusable~, ~visibility~
 
-## 󠀁[Tab Panel](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-panel)󠁿
+## 󠀁[Tab List](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-list)󠁿
 
-Container for tab panel content in a tabbed interface. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block-library/src/tab-panel))
+Display the tab buttons for a tabbed interface. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block-library/src/tab-list))
 
- * **Name:** core/tab-panel
+ * **Name:** core/tab-list
  * **Experimental:** true
  * **Category:** design
  * **Parent:** core/tabs
  * **Allowed Blocks:** core/tab
+ * **Supports:** color (background, text), dimensions (~aspectRatio~, ~height~, 
+   ~minHeight~, ~width~), layout (allowJustification, allowOrientation, allowVerticalAlignment,
+   default, ~allowSwitching~), spacing (blockGap, margin, padding), typography (
+   fontSize), ~html~, ~lock~, ~reusable~, ~visibility~
+
+## 󠀁[Tab Panel](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-panel)󠁿
+
+Content for a tab in a tabbed interface. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block-library/src/tab-panel))
+
+ * **Name:** core/tab-panel
+ * **Experimental:** true
+ * **Category:** design
+ * **Parent:** core/tab-panels
+ * **Supports:** anchor, color (background, text), layout, renaming, spacing (blockGap,
+   padding, ~margin~), typography (fontSize), ~html~, ~reusable~, ~visibility~
+ * **Attributes:** label
+
+## 󠀁[Tab Panels](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-panels)󠁿
+
+Container for tab panel content in a tabbed interface. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block-library/src/tab-panels))
+
+ * **Name:** core/tab-panels
+ * **Experimental:** true
+ * **Category:** design
+ * **Parent:** core/tabs
+ * **Allowed Blocks:** core/tab-panel
  * **Supports:** color (background, heading, link, text), dimensions (~aspectRatio
    ~, ~height~, ~minHeight~, ~width~), layout (allowJustification, default, ~allowOrientation
    ~, ~allowSizingOnChildren~, ~allowSwitching~, ~allowVerticalAlignment~), spacing(
    margin, padding, ~blockGap~), typography (fontSize), ~anchor~, ~html~, ~lock~,
-   ~reusable~
+   ~reusable~, ~visibility~
 
 ## 󠀁[Table](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#table)󠁿
 
@@ -2464,38 +2489,12 @@ ease. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block
  * **Name:** core/tabs
  * **Experimental:** true
  * **Category:** design
- * **Allowed Blocks:** core/tabs-menu, core/tab-panel
+ * **Allowed Blocks:** core/tab-list, core/tab-panels
  * **Supports:** align, anchor, color (background, text), interactivity, layout (
    allowJustification, allowOrientation, allowSizingOnChildren, allowVerticalAlignment,
    default, ~allowSwitching~), renaming, spacing (blockGap, margin, padding), typography(
    fontSize), ~html~
  * **Attributes:** activeTabIndex, editorActiveTabIndex
-
-## 󠀁[Tabs Menu](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tabs-menu)󠁿
-
-Display the tab buttons for a tabbed interface. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block-library/src/tabs-menu))
-
- * **Name:** core/tabs-menu
- * **Experimental:** true
- * **Category:** design
- * **Parent:** core/tabs
- * **Allowed Blocks:** core/tabs-menu-item
- * **Supports:** color (background, text), dimensions (~aspectRatio~, ~height~, 
-   ~minHeight~, ~width~), layout (allowJustification, allowOrientation, allowVerticalAlignment,
-   default, ~allowSwitching~), spacing (blockGap, margin, padding), typography (
-   fontSize), ~html~, ~lock~, ~reusable~
-
-## 󠀁[Tab Menu Item](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tab-menu-item)󠁿
-
-A single tab button in the tabs menu. ([Source](https://github.com/WordPress/gutenberg/tree/trunk/packages/block-library/src/tabs-menu-item))
-
- * **Name:** core/tabs-menu-item
- * **Experimental:** true
- * **Category:** design
- * **Parent:** core/tabs-menu
- * **Supports:** color (background, text), layout (~allowEditing~), spacing (padding),
-   typography (fontSize, textAlign), ~html~, ~lock~, ~reusable~
- * **Attributes:** anchor
 
 ## 󠀁[Tag Cloud](https://developer.wordpress.org/block-editor/reference-guides/core-blocks/?output_format=md#tag-cloud)󠁿
 
@@ -2610,7 +2609,7 @@ December 20, 2021
 
 Last updated
 
-March 13, 2026
+April 29, 2026
 
 Edit article
 
@@ -2626,7 +2625,7 @@ url: https://developer.wordpress.org/block-editor/explanations/architecture/key-
 
 Title: Key Concepts
 Published: March 9, 2021
-Last modified: March 10, 2026
+Last modified: April 23, 2026
 
 ---
 
@@ -2783,7 +2782,7 @@ March 9, 2021
 
 Last updated
 
-March 10, 2026
+April 23, 2026
 
 Edit article
 
@@ -2799,7 +2798,7 @@ url: https://developer.wordpress.org/block-editor/explanations/architecture/data
 
 Title: Data Flow and Data Format
 Published: March 9, 2021
-Last modified: March 10, 2026
+Last modified: April 23, 2026
 
 ---
 
@@ -3014,7 +3013,7 @@ March 9, 2021
 
 Last updated
 
-March 10, 2026
+April 23, 2026
 
 Edit article
 
@@ -10758,7 +10757,7 @@ url: https://developer.wordpress.org/cli/commands/core/?output_format=md
 
 Title: wp core
 Published: February 5, 2018
-Last modified: March 15, 2026
+Last modified: May 4, 2026
 
 ---
 
@@ -10774,8 +10773,8 @@ Downloads, installs, updates, and manages a WordPress installation.
 
  [ ⌊GitHub⌉ ](https://github.com/wp-cli/core-command)
 
- [ View Open Issues (7) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore+sort%3Aupdated-desc+org%3Awp-cli+is%3Aopen)
-[ View Closed Issues (163) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
+ [ View Open Issues (3) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore+sort%3Aupdated-desc+org%3Awp-cli+is%3Aopen)
+[ View Closed Issues (171) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
 [Create New Issue](https://github.com/wp-cli/core-command/issues/new)
 
 ### 󠀁[Examples](https://developer.wordpress.org/cli/commands/core/?output_format=md#examples)󠁿
@@ -10869,7 +10868,7 @@ url: https://developer.wordpress.org/cli/commands/core/download/?output_format=m
 
 Title: wp core download
 Published: February 5, 2018
-Last modified: March 15, 2026
+Last modified: May 4, 2026
 
 ---
 
@@ -10886,8 +10885,8 @@ Downloads core WordPress files.
 
  [ ⌊GitHub⌉ ](https://github.com/wp-cli/core-command)
 
- [ View Open Issues (1) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore-download+sort%3Aupdated-desc+org%3Awp-cli+is%3Aopen)
-[ View Closed Issues (47) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore-download+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
+ [ View Open Issues (0) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore-download+sort%3Aupdated-desc+org%3Awp-cli+is%3Aopen)
+[ View Closed Issues (49) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Acore-download+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
 [Create New Issue](https://github.com/wp-cli/core-command/issues/new)
 
 This command runs on the `before_wp_load` hook, just before the WP load process 
@@ -10950,7 +10949,7 @@ url: https://developer.wordpress.org/cli/commands/db/?output_format=md
 
 Title: wp db
 Published: February 5, 2018
-Last modified: March 15, 2026
+Last modified: May 4, 2026
 
 ---
 
@@ -10966,8 +10965,8 @@ Performs basic database operations using credentials stored in wp-config.php.
 
  [ ⌊GitHub⌉ ](https://github.com/wp-cli/db-command)
 
- [ View Open Issues (14) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Adb+sort%3Aupdated-desc+org%3Awp-cli+is%3Aopen)
-[ View Closed Issues (113) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Adb+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
+ [ View Open Issues (12) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Adb+sort%3Aupdated-desc+org%3Awp-cli+is%3Aopen)
+[ View Closed Issues (116) ](https://github.com/login?return_to=%2Fissues%3Fq%3Dlabel%3Acommand%3Adb+sort%3Aupdated-desc+org%3Awp-cli+is%3Aclosed)
 [Create New Issue](https://github.com/wp-cli/db-command/issues/new)
 
 Unless overridden, these commands run on the `after_wp_config_load` hook, after 

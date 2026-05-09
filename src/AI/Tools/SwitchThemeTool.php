@@ -50,6 +50,9 @@ class SwitchThemeTool implements ToolInterface {
             'new_theme' => $theme,
             'theme_name' => $themeObj->get('Name'),
             'message' => "Switched from '$oldTheme' to '$theme'.",
+            '_verify' => [
+                ['type' => 'theme_active', 'expected' => $theme],
+            ],
         ];
     }
 

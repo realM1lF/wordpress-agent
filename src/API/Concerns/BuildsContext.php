@@ -3,7 +3,6 @@
 namespace Levi\Agent\API\Concerns;
 
 use Levi\Agent\Agent\Identity;
-use Levi\Agent\AI\QueryClassifier;
 use Levi\Agent\Memory\EmbeddingCache;
 use Levi\Agent\Memory\StateSnapshotService;
 use Levi\Agent\Memory\VectorStore;
@@ -20,10 +19,10 @@ trait BuildsContext
         return '';
     }
 
-    private function buildMessages(string $sessionId, string $newMessage, bool $includeUploadedContext = true): array {
+    private function buildMessages(string $sessionId, string $newMessage, bool $includeUploadedContext = true, ?array $preClassification = null): array {
         $messages = [];
 
-        [$stablePrompt, $dynamicPrompt] = $this->getSystemPromptParts($newMessage, $sessionId, $includeUploadedContext);
+        [$stablePrompt, $dynamicPrompt] = $this->getSystemPromptParts($newMessage, $sessionId, $includeUploadedContext, $preClassification);
         $messages[] = [
             'role' => 'system',
             'content' => $stablePrompt,
@@ -112,7 +111,7 @@ trait BuildsContext
      *
      * No query classification — the model gets everything and decides itself.
      */
-    private function getSystemPromptParts(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true): array {
+    private function getSystemPromptParts(string $query = '', ?string $sessionId = null, bool $includeUploadedContext = true, ?array $preClassification = null): array {
         // ---- STABLE PART (cacheable): identity + ALL rule modules ----
         try {
             $stablePrompt = $this->getCachedIdentity(self::ALL_RULE_MODULES);
@@ -131,10 +130,9 @@ trait BuildsContext
         }
 
         if (!empty($query)) {
-            $classifier = new QueryClassifier();
-            $strategy = $classifier->getRetrievalStrategy($query);
+            $classification = $preClassification ?? $this->classifyQuery($query, $sessionId);
             try {
-                $contextMemories = $this->getContextMemories($query, $strategy);
+                $contextMemories = $this->getContextMemories($query, $classification);
                 if (!empty($contextMemories)) {
                     $dynamicParts[] = "# Relevant Context\n\n" . $contextMemories;
                 }
@@ -273,16 +271,18 @@ PROMPT;
 
     
     /**
-     * Fetch context memories from Vector DB using hybrid search (Semantic + BM25),
-     * confidence-based reranking with the primary model, and retrieval gating.
+     * Fetch context memories from Vector DB.
+     * SIMPLE/CRUD: episodic memory only (fast).
+     * COMPLEX: full pipeline — hybrid search + reranking + snapshots + episodic.
      */
-    private function getContextMemories(string $query, array $strategy): string {
-        $needsReference = !empty($strategy['reference']);
-        $needsSnapshot = !empty($strategy['snapshot']);
+    private function getContextMemories(string $query, array $classification): string {
+        $category = $classification['category'] ?? 'COMPLEX';
 
-        if (!$needsReference && !$needsSnapshot) {
+        if ($category !== 'COMPLEX') {
             return $this->getEpisodicMemoriesOnly($query);
         }
+
+        $searchQueries = $classification['search_queries'] ?? [$query];
 
         try {
             $vectorStore = new VectorStore();
@@ -292,11 +292,6 @@ PROMPT;
         }
 
         $cache = new EmbeddingCache();
-        $expander = new \Levi\Agent\AI\QueryExpander();
-        $searchQueries = $expander->expand($query);
-        $isComplex = $expander->isLastQueryComplex();
-        $needsReferenceRetrieval = $expander->needsRetrieval();
-
         $embeddings = [];
         foreach ($searchQueries as $q) {
             $emb = $cache->get($q);
@@ -315,7 +310,6 @@ PROMPT;
             return '';
         }
 
-        // Initialize BM25 for hybrid search
         $bm25 = null;
         $db = $vectorStore->getDatabase();
         if ($db !== null) {
@@ -331,44 +325,34 @@ PROMPT;
             $runtimeSettings = $this->settings->getSettings();
             $referenceK = max(1, (int) ($runtimeSettings['memory_reference_k'] ?? 8));
             $similarity = (float) ($runtimeSettings['memory_min_similarity'] ?? 0.5);
+            $referenceK = (int) ceil($referenceK * 1.6);
 
-            if ($isComplex) {
-                $referenceK = (int) ceil($referenceK * 1.6);
+            $overfetchK = $referenceK * 2;
+            $candidates = $this->hybridSearch(
+                $vectorStore, $bm25, $embeddings, $searchQueries, 'reference', $overfetchK, $similarity
+            );
+
+            if (!empty($candidates)) {
+                $reranker = new \Levi\Agent\AI\ChunkReranker();
+                $reranked = $reranker->rerank($query, $candidates, $referenceK);
+                if (!empty($reranked)) {
+                    $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $reranked));
+                }
             }
 
-            // Retrieval gating: skip reference docs for simple CRUD/status queries.
-            // Snapshots and episodic memory are always fetched.
-            if (!empty($strategy['reference']) && $needsReferenceRetrieval) {
-                // Overfetch 2x for reranking, then let the reranker filter down
-                $overfetchK = $referenceK * 2;
-                $candidates = $this->hybridSearch(
-                    $vectorStore, $bm25, $embeddings, $searchQueries, 'reference', $overfetchK, $similarity
-                );
-
-                if (!empty($candidates)) {
-                    $reranker = new \Levi\Agent\AI\ChunkReranker();
-                    $reranked = $reranker->rerank($query, $candidates, $referenceK);
-                    if (!empty($reranked)) {
-                        $memories[] = "## Reference Knowledge\n" . implode("\n", array_map(fn($r) => $r['content'], $reranked));
+            $snapshotSimilarity = max(0.5, $similarity - 0.1);
+            $mergedSnapshots = $this->multiQuerySearch(
+                $vectorStore, $embeddings, 'state_snapshot', 2, $snapshotSimilarity
+            );
+            if (!empty($mergedSnapshots)) {
+                $snapshotTexts = array_map(function ($r) {
+                    $content = (string) ($r['content'] ?? '');
+                    if (mb_strlen($content) > 1500) {
+                        $content = mb_substr($content, 0, 1500) . "\n...[truncated]";
                     }
-                }
-            }
-
-            if (!empty($strategy['snapshot'])) {
-                $snapshotSimilarity = max(0.5, $similarity - 0.1);
-                $mergedSnapshots = $this->multiQuerySearch(
-                    $vectorStore, $embeddings, 'state_snapshot', 2, $snapshotSimilarity
-                );
-                if (!empty($mergedSnapshots)) {
-                    $snapshotTexts = array_map(function ($r) {
-                        $content = (string) ($r['content'] ?? '');
-                        if (mb_strlen($content) > 1500) {
-                            $content = mb_substr($content, 0, 1500) . "\n...[truncated]";
-                        }
-                        return $content;
-                    }, $mergedSnapshots);
-                    $memories[] = "## Historical System Snapshots\n" . implode("\n\n", $snapshotTexts);
-                }
+                    return $content;
+                }, $mergedSnapshots);
+                $memories[] = "## Historical System Snapshots\n" . implode("\n\n", $snapshotTexts);
             }
 
             $userId = get_current_user_id();
@@ -455,7 +439,7 @@ PROMPT;
 
     /**
      * Fast-path: only fetch episodic memories (local DB, ~20ms).
-     * Skips QueryExpander, Embeddings API, and ChunkReranker entirely.
+     * Skips Embeddings API and ChunkReranker entirely.
      */
     private function getEpisodicMemoriesOnly(string $query): string {
         $userId = get_current_user_id();
@@ -486,5 +470,105 @@ PROMPT;
 
         $facts = array_map(fn($r) => '- ' . $r['fact'], $episodic);
         return "## Learnings from previous sessions\n" . implode("\n", $facts);
+    }
+
+    private const CLASSIFY_PROMPT = <<<'PROMPT'
+You are a query router for a WordPress AI assistant. Classify the user's intent into exactly one category.
+
+Categories:
+- SIMPLE: Greetings, chitchat, general knowledge questions, capability questions ("hi", "was kannst du?", "wie funktioniert SEO?")
+- CRUD: Direct operations on existing content — create/read/update/delete pages, posts, media, products, users, plugins, settings. No code writing needed. ("lösche diese 3 Seiten", "veröffentliche den Beitrag", "installiere Yoast", "welche Plugins sind aktiv?")
+- COMPLEX: Tasks requiring technical documentation — plugin/theme development, custom code, hook/filter implementation, API integration, debugging PHP errors, architecture decisions. ("erstelle ein Plugin für Events", "füge einen WooCommerce Hook hinzu", "warum wirft mein Code einen Fehler?")
+
+Rules:
+- If the user references items from a previous message (e.g. "veröffentliche diese", "lösch die", "mach das"), that is CRUD.
+- If in doubt between CRUD and COMPLEX, choose COMPLEX (safe default).
+- For COMPLEX only: also output 3 short English search queries for a WordPress documentation database, one per line.
+
+Output format:
+Line 1: SIMPLE, CRUD, or COMPLEX
+Lines 2-4 (COMPLEX only): search queries
+PROMPT;
+
+    /**
+     * Classify user intent using the main model with minimal context.
+     *
+     * @return array{category: string, search_queries: string[]}
+     */
+    private function classifyQuery(string $query, ?string $sessionId = null): array
+    {
+        $default = ['category' => 'COMPLEX', 'search_queries' => [$query]];
+
+        $userContent = '';
+
+        if ($sessionId !== null) {
+            $recentHistory = $this->conversationRepo->getHistory($sessionId, 3);
+            $snippets = [];
+            foreach ($recentHistory as $msg) {
+                if (!in_array($msg['role'] ?? '', ['user', 'assistant'], true) || empty($msg['content'])) {
+                    continue;
+                }
+                $role = $msg['role'] === 'user' ? 'User' : 'Assistant';
+                $snippets[] = "{$role}: " . mb_substr((string) $msg['content'], 0, 200);
+            }
+            if (!empty($snippets)) {
+                $userContent .= "Recent conversation:\n" . implode("\n", $snippets) . "\n\n";
+            }
+        }
+
+        $userContent .= "Current message: {$query}";
+
+        try {
+            $response = $this->aiClient->chat([
+                ['role' => 'system', 'content' => self::CLASSIFY_PROMPT],
+                ['role' => 'user', 'content' => $userContent],
+            ]);
+
+            if (is_wp_error($response)) {
+                error_log('Levi classifyQuery failed: ' . $response->get_error_message());
+                return $default;
+            }
+
+            $content = trim((string) ($response['choices'][0]['message']['content'] ?? ''));
+            if ($content === '') {
+                return $default;
+            }
+
+            return $this->parseClassification($content, $query);
+        } catch (\Throwable $e) {
+            error_log('Levi classifyQuery exception: ' . $e->getMessage());
+            return $default;
+        }
+    }
+
+    private function parseClassification(string $content, string $fallbackQuery): array
+    {
+        $lines = array_filter(array_map('trim', explode("\n", $content)), fn(string $l) => $l !== '');
+        $firstLine = strtoupper(array_shift($lines) ?? '');
+
+        $category = match (true) {
+            str_starts_with($firstLine, 'SIMPLE') => 'SIMPLE',
+            str_starts_with($firstLine, 'CRUD') => 'CRUD',
+            default => 'COMPLEX',
+        };
+
+        $searchQueries = [];
+        if ($category === 'COMPLEX') {
+            foreach ($lines as $line) {
+                $cleaned = preg_replace('/^\d+[\.\)]\s*/', '', $line);
+                $cleaned = trim($cleaned, '- ');
+                if ($cleaned !== '' && mb_strlen($cleaned) >= 5 && mb_strlen($cleaned) <= 200) {
+                    $searchQueries[] = $cleaned;
+                }
+            }
+        }
+
+        if ($category === 'COMPLEX' && empty($searchQueries)) {
+            $searchQueries = [$fallbackQuery];
+        }
+
+        error_log("Levi QueryRouter: {$category}" . ($category === 'COMPLEX' ? ' (' . count($searchQueries) . ' queries)' : ''));
+
+        return ['category' => $category, 'search_queries' => $searchQueries];
     }
 }

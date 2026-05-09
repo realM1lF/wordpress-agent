@@ -112,9 +112,17 @@ class OpenRouterOAuth {
             return false;
         }
 
-        return ($settings['ai_auth_method'] ?? '') === 'oauth'
-            && !empty($settings['openrouter_api_key'])
-            && !empty($settings['oauth_connected_at']);
+        $hasKey = !empty($settings['openrouter_api_key']);
+        $hasTimestamp = !empty($settings['oauth_connected_at']);
+        $methodIsOAuth = ($settings['ai_auth_method'] ?? '') === 'oauth';
+
+        if ($hasKey && $hasTimestamp && !$methodIsOAuth) {
+            $settings['ai_auth_method'] = 'oauth';
+            update_option($this->settingsOption, $settings);
+            return true;
+        }
+
+        return $methodIsOAuth && $hasKey && $hasTimestamp;
     }
 
     private function exchangeCodeForKey(string $code, string $verifier): string|\WP_Error {
@@ -154,6 +162,7 @@ class OpenRouterOAuth {
             $settings = [];
         }
 
+        $settings['ai_provider'] = 'openrouter';
         $settings['openrouter_api_key'] = sanitize_text_field($apiKey);
         $settings['ai_auth_method'] = 'oauth';
         $settings['oauth_connected_at'] = time();
@@ -180,7 +189,9 @@ class OpenRouterOAuth {
             $settings = [];
         }
 
+        $settings['ai_provider'] = 'openrouter';
         $settings['openrouter_model'] = $settings['openrouter_model'] ?? 'moonshotai/kimi-k2.5';
+        $settings['openrouter_alt_model'] = $settings['openrouter_alt_model'] ?? 'moonshotai/kimi-k2.5';
         $settings['tool_profile'] = $settings['tool_profile'] ?? 'standard';
         $settings['allow_destructive'] = $settings['allow_destructive'] ?? 0;
         $settings['max_tool_iterations'] = $settings['max_tool_iterations'] ?? 25;

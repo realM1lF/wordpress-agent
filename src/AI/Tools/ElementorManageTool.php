@@ -142,6 +142,10 @@ class ElementorManageTool implements ToolInterface {
             'type' => $type,
             'edit_url' => admin_url('post.php?post=' . $postId . '&action=elementor'),
             'message' => "Template '$title' imported successfully.",
+            '_verify' => [
+                ['type' => 'post_field', 'post_id' => $postId, 'field' => 'post_type', 'expected' => 'elementor_library'],
+                ['type' => 'post_meta', 'post_id' => $postId, 'meta_key' => '_elementor_template_type', 'expected' => $type],
+            ],
         ];
     }
 
@@ -200,6 +204,9 @@ class ElementorManageTool implements ToolInterface {
             'template_id' => $templateId,
             'title' => $title,
             'message' => "Template '$title' deleted.",
+            '_verify' => [
+                ['type' => 'post_deleted', 'post_id' => $templateId, 'force' => true],
+            ],
         ];
     }
 }

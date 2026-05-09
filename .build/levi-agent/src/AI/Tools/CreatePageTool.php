@@ -9,7 +9,9 @@ class CreatePageTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Create a new WordPress page. Always creates as draft first.';
+        return 'Create a new WordPress page (Seite). Returns the new page as a draft by default — use update_post to publish. '
+            . 'Supports title, content (HTML), slug, parent page, featured image, and page template. '
+            . 'For blog posts or custom post types, use create_post instead.';
     }
 
     public function getParameters(): array {
@@ -68,9 +70,9 @@ class CreatePageTool implements ToolInterface {
             ];
         }
 
-        // Set page template if provided
         if (!empty($params['template'])) {
             update_post_meta($pageId, '_wp_page_template', sanitize_text_field($params['template']));
+            clean_post_cache($pageId);
         }
 
         $created = get_post($pageId);
@@ -85,6 +87,14 @@ class CreatePageTool implements ToolInterface {
             'edit_url' => get_edit_post_link($pageId, 'raw'),
             'preview_url' => get_preview_post_link($pageId),
             'message' => 'Page created as draft. Review before publishing.',
+        ];
+    }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['title' => 'About', 'content' => '<p>Ueber uns...</p>'],
+            ['title' => 'Impressum', 'content' => '<p>Angaben gemaess §5 TMG...</p>', 'template' => 'elementor_header_footer'],
         ];
     }
 }

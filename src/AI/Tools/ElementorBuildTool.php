@@ -400,6 +400,9 @@ class ElementorBuildTool implements ToolInterface {
             'element_count' => $this->countElements($remapped),
             'edit_url' => admin_url('post.php?post=' . $postId . '&action=elementor'),
             'message' => "Template '{$template->post_title}' applied to page.",
+            '_verify' => [
+                ['type' => 'post_meta', 'post_id' => $postId, 'meta_key' => '_elementor_edit_mode', 'expected' => 'builder'],
+            ],
         ];
     }
 

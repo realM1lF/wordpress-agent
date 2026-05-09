@@ -9,7 +9,7 @@ class GetPagesTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Get WordPress pages (post_type=page) with optional full content. CRITICAL: Always use status="any" unless user explicitly asks for specific status (draft/trash/publish). Examples: "alle Seiten" -> status="any", "Entwürfe" -> status="draft", "gelöschte Seiten" -> status="trash". Returns EXACT data from database. Show EVERY page with EXACT ID - never skip, never invent.';
+        return 'Query WordPress pages (Seiten) with filters. For posts/blog use get_posts instead. Default status is "any" to include drafts.';
     }
 
     public function getParameters(): array {
@@ -96,6 +96,8 @@ class GetPagesTool implements ToolInterface {
 
         return [
             'success' => true,
+            '_data_type' => 'pages',
+            '_hint' => 'This is SEITEN (pages) data. Do NOT present these as "Beiträge" (posts).',
             'page' => $pageNum,
             'per_page' => $perPage,
             'has_more' => $query->max_num_pages > $pageNum,
@@ -131,5 +133,13 @@ class GetPagesTool implements ToolInterface {
         }
 
         return $result;
+    }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['status' => 'publish'],
+            ['status' => 'draft', 'number' => 5, 'include_content' => true],
+        ];
     }
 }

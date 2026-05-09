@@ -53,6 +53,9 @@ class Plugin {
 
         // Wizard sync endpoint (step-by-step initial setup)
         add_action('wp_ajax_levi_wizard_sync', [$this, 'ajaxWizardSync']);
+
+        // Async session learnings extraction
+        add_action('levi_extract_session_learnings', [\Levi\Agent\AI\SessionLearningsExtractor::class, 'handleCron']);
     }
     
     public function ajaxTestConnection(): void {
@@ -89,6 +92,9 @@ class Plugin {
         
         $loader = new \Levi\Agent\Memory\MemoryLoader();
         $results = $loader->reloadChangedFiles();
+
+        global $wpdb;
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_levi_identity_%' OR option_name LIKE '_transient_timeout_levi_identity_%'");
 
         StateSnapshotService::updateSyncMetaFromReload($results);
         

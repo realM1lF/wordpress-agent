@@ -9,7 +9,17 @@ class ManageTaxonomyTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Query, create, or assign taxonomy terms (categories, tags, product categories, etc.). Actions: "get_terms" lists terms of a taxonomy, "get_post_terms" gets terms assigned to a specific post, "set_post_terms" assigns terms to a post, "create_term" creates a new term.';
+        return 'Query, create, or assign taxonomy terms (categories, tags, product categories, etc.). '
+            . 'Actions: get_terms (list terms of a taxonomy), get_post_terms (terms on a specific post), set_post_terms (assign terms to a post), create_term (create new term). '
+            . 'Works with any registered taxonomy: category, post_tag, product_cat, product_tag, and custom taxonomies.';
+    }
+
+    public function getInputExamples(): array {
+        return [
+            ['action' => 'get_terms', 'taxonomy' => 'product_cat'],
+            ['action' => 'create_term', 'taxonomy' => 'product_cat', 'term_name' => 'Sale Items'],
+            ['action' => 'set_post_terms', 'post_id' => 42, 'taxonomy' => 'category', 'terms' => [3, 7]],
+        ];
     }
 
     public function getParameters(): array {
@@ -185,6 +195,8 @@ class ManageTaxonomyTool implements ToolInterface {
             return ['success' => false, 'error' => $result->get_error_message()];
         }
 
+        clean_post_cache($postId);
+
         $currentTerms = wp_get_object_terms($postId, $taxonomy);
         $names = is_array($currentTerms) ? array_map(fn($t) => $t->name, $currentTerms) : [];
 
@@ -227,6 +239,8 @@ class ManageTaxonomyTool implements ToolInterface {
             }
             return ['success' => false, 'error' => $result->get_error_message()];
         }
+
+        clean_term_cache($result['term_id'], $taxonomy);
 
         return [
             'success' => true,

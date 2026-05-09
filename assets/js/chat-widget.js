@@ -388,6 +388,7 @@
                 case 'status':
                     if (data.message) {
                         typing.setLabel(data.message);
+                        typing.setPulse(true);
                     }
                     return false;
 
@@ -407,6 +408,7 @@
 
                 case 'stream_start':
                     typing.setLabel('Levi antwortet...');
+                    typing.setPulse(false);
                     return false;
 
                 case 'stream_end':
@@ -993,12 +995,19 @@
             let isStreaming = false;
             let streamBuffer = '';
             let activeCardEl = null;
-            let dotsHidden = false;
+            let dotsVisible = true;
 
             const hideDots = () => {
-                if (!dotsHidden && dotsEl) {
+                if (dotsVisible && dotsEl) {
                     dotsEl.style.display = 'none';
-                    dotsHidden = true;
+                    dotsVisible = false;
+                }
+            };
+
+            const showDots = () => {
+                if (!dotsVisible && dotsEl) {
+                    dotsEl.style.display = '';
+                    dotsVisible = true;
                 }
             };
 
@@ -1044,7 +1053,14 @@
                         activeCardEl = card;
                     }
                     setLabel(label);
+                    setPulse(false);
                     messages.scrollTop = messages.scrollHeight;
+                } else if (phase === 'thinking') {
+                    showDots();
+                    setLabel(label);
+                    setPulse(true);
+                    messages.scrollTop = messages.scrollHeight;
+                    return;
                 } else if (phase === 'done' || phase === 'failed') {
                     var targetCard = activeCardEl;
                     if (!targetCard) {
@@ -1086,10 +1102,10 @@
                             '<span class="levi-tool-duration">' + durText + '</span>';
                         timelineEl.appendChild(card);
                     }
+                    hideDots();
+                    setPulse(false);
                     setLabel(label);
                     messages.scrollTop = messages.scrollHeight;
-                } else if (phase === 'thinking') {
-                    setLabel(data.message || 'Levi denkt nach...');
                 }
             };
 
@@ -1132,17 +1148,31 @@
                     if (streamEl) { streamEl.remove(); streamEl = null; }
                     contentEl.classList.add('levi-typing');
                     if (labelEl) labelEl.style.display = '';
+                    setPulse(true);
                     if (progressTrack) progressTrack.style.display = '';
                     if (timelineEl) timelineEl.style.display = '';
-                    setLabel('Levi bereitet naechste Schritte vor...');
+                    showDots();
+                    setLabel('Levi prueft das Ergebnis...');
                     messages.scrollTop = messages.scrollHeight;
                 }
             };
 
+            const setPulse = (on) => {
+                if (labelEl) {
+                    if (on) {
+                        labelEl.classList.add('levi-label-pulse');
+                    } else {
+                        labelEl.classList.remove('levi-label-pulse');
+                    }
+                }
+            };
+
             setLabel('Levi verarbeitet die Anfrage...');
+            setPulse(true);
 
             return {
                 setLabel,
+                setPulse,
                 addToolCard,
                 appendDelta,
                 clearStream,

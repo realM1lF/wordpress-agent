@@ -1,22 +1,103 @@
-/* Levi Setup Wizard – Purple accent */
+/* Levi Setup Wizard */
+
 .levi-setup-wrap .levi-settings-main {
-    max-width: 960px;
+    max-width: 720px;
 }
 
-.levi-setup-progress {
-    width: 100%;
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(124, 58, 237, 0.15);
+/* ---- Step Dots Navigation ---- */
+
+.levi-step-dots {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
     margin-bottom: var(--levi-space-xl);
-    overflow: hidden;
+    padding: 0 var(--levi-space-md);
 }
 
-.levi-setup-progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #a78bfa, #7c3aed);
-    transition: width 240ms ease;
+.levi-step-dot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+    flex-shrink: 0;
 }
+
+.levi-step-dot-circle {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
+    border: 2px solid var(--levi-border-subtle);
+    background: var(--levi-bg-surface);
+    color: var(--levi-text-muted);
+    transition: all var(--levi-transition-normal);
+}
+
+.levi-step-dot-circle .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+}
+
+.levi-step-dot-label {
+    font-size: 11px;
+    color: var(--levi-text-muted);
+    white-space: nowrap;
+    transition: color var(--levi-transition-normal);
+}
+
+.levi-step-dot.is-current .levi-step-dot-circle {
+    border-color: var(--levi-accent);
+    background: rgba(124, 58, 237, 0.15);
+    color: #a78bfa;
+    box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.1);
+}
+
+.levi-step-dot.is-current .levi-step-dot-label {
+    color: var(--levi-text-primary);
+    font-weight: 600;
+}
+
+.levi-step-dot.is-done .levi-step-dot-circle {
+    border-color: var(--levi-success);
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--levi-success);
+}
+
+.levi-step-dot.is-done .levi-step-dot-label {
+    color: var(--levi-text-secondary);
+}
+
+.levi-step-dot-line {
+    width: 40px;
+    height: 2px;
+    background: var(--levi-border-subtle);
+    margin: 0 4px;
+    margin-bottom: 22px;
+    transition: background var(--levi-transition-normal);
+}
+
+.levi-step-dot-line.is-done {
+    background: var(--levi-success);
+}
+
+@media (max-width: 600px) {
+    .levi-step-dot-line {
+        width: 20px;
+    }
+    .levi-step-dot-label {
+        display: none;
+    }
+}
+
+/* ---- Setup Card (shared) ---- */
 
 .levi-setup-card h2 {
     margin: 0 0 var(--levi-space-md);
@@ -26,210 +107,315 @@
 .levi-setup-card p {
     color: var(--levi-text-secondary);
     margin: 0 0 var(--levi-space-md);
+    line-height: 1.6;
 }
 
-.levi-setup-link {
-    color: #a78bfa;
-    text-decoration: none;
+.levi-form-actions-center {
+    justify-content: center;
+    text-align: center;
 }
 
-.levi-setup-link:hover {
-    text-decoration: underline;
+.levi-btn-lg {
+    font-size: 16px !important;
+    padding: 14px 32px !important;
 }
 
-.levi-setup-plan-grid {
+/* ---- Step 1: Welcome ---- */
+
+.levi-welcome-hero {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--levi-space-lg);
+    margin-bottom: var(--levi-space-xl);
+}
+
+.levi-welcome-avatar img {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    border: 3px solid rgba(124, 58, 237, 0.3);
+    flex-shrink: 0;
+}
+
+.levi-welcome-bubble {
+    background: rgba(124, 58, 237, 0.08);
+    border: 1px solid rgba(124, 58, 237, 0.2);
+    border-radius: var(--levi-radius-md);
+    padding: var(--levi-space-md) var(--levi-space-lg);
+    position: relative;
+    flex: 1;
+}
+
+.levi-welcome-bubble::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 20px;
+    width: 14px;
+    height: 14px;
+    background: rgba(124, 58, 237, 0.08);
+    border-left: 1px solid rgba(124, 58, 237, 0.2);
+    border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+    transform: rotate(45deg);
+}
+
+.levi-welcome-bubble p {
+    margin: 0;
+    color: var(--levi-text-primary);
+    font-size: 15px;
+}
+
+.levi-welcome-bubble-sub {
+    margin-top: var(--levi-space-sm) !important;
+    font-weight: 600;
+    color: #a78bfa !important;
+}
+
+.levi-feature-cards {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, 1fr);
     gap: var(--levi-space-md);
-    margin-top: var(--levi-space-lg);
+    margin-bottom: var(--levi-space-xl);
 }
 
-.levi-setup-plan {
-    display: block;
-    padding: var(--levi-space-lg);
+.levi-feature-card {
+    background: var(--levi-bg-surface);
     border: 1px solid var(--levi-border-subtle);
     border-radius: var(--levi-radius-md);
-    background: var(--levi-bg-surface);
-    cursor: pointer;
+    padding: var(--levi-space-lg) var(--levi-space-md);
+    text-align: center;
     transition: all var(--levi-transition-normal);
 }
 
-.levi-setup-plan:hover {
-    border-color: rgba(124, 58, 237, 0.4);
-    transform: translateY(-1px);
+.levi-feature-card:hover {
+    border-color: rgba(124, 58, 237, 0.3);
+    transform: translateY(-2px);
 }
 
-.levi-setup-plan input[type='radio'] {
+.levi-feature-card-icon {
+    display: block;
+    font-size: 28px;
     margin-bottom: var(--levi-space-sm);
+    line-height: 1;
 }
 
-.levi-setup-plan h3 {
-    margin: 0 0 var(--levi-space-sm);
+.levi-feature-card strong {
+    display: block;
     color: var(--levi-text-primary);
+    margin-bottom: 4px;
+    font-size: 14px;
 }
 
-.levi-setup-plan p {
+.levi-feature-card p {
     margin: 0;
+    font-size: 13px;
     color: var(--levi-text-secondary);
+    line-height: 1.4;
 }
 
-.levi-setup-plan-active {
-    border-color: var(--levi-accent);
-    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.25);
-    background: rgba(124, 58, 237, 0.08);
-}
-
-@media (max-width: 782px) {
-    .levi-setup-plan-grid {
+@media (max-width: 600px) {
+    .levi-welcome-hero {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+    .levi-welcome-bubble::before {
+        display: none;
+    }
+    .levi-feature-cards {
         grid-template-columns: 1fr;
     }
 }
 
-.levi-setup-list {
-    margin: 0 0 var(--levi-space-lg);
-    padding-left: 18px;
-    color: var(--levi-text-secondary);
+/* ---- Step 2: Connect ---- */
+
+.levi-connect-primary {
+    text-align: center;
+    margin: var(--levi-space-xl) 0;
 }
 
-.levi-setup-list li {
-    margin-bottom: var(--levi-space-sm);
-}
-
-.levi-setup-payment-state {
-    border: 1px solid var(--levi-border-subtle);
-    border-radius: var(--levi-radius-md);
-    padding: var(--levi-space-md);
-    margin-bottom: var(--levi-space-md);
-    background: var(--levi-bg-surface);
-    color: var(--levi-text-secondary);
-}
-
-.levi-setup-payment-state.is-active {
-    border-color: rgba(34, 197, 94, 0.35);
-    background: rgba(34, 197, 94, 0.08);
-    color: #86efac;
-}
-
-.levi-setup-payment-state.is-pending {
-    border-color: rgba(245, 158, 11, 0.35);
-    background: rgba(245, 158, 11, 0.08);
-    color: #fcd34d;
-}
-
-/* Success notice */
-.levi-notice-success {
-    background: var(--levi-success-bg);
-    border: 1px solid rgba(34, 197, 94, 0.2);
-    color: var(--levi-success);
-    padding: var(--levi-space-md);
-    border-radius: var(--levi-radius-md);
-    margin-bottom: var(--levi-space-md);
-}
-
-/* Error notice */
-.levi-notice-error {
-    background: var(--levi-error-bg);
-    border: 1px solid rgba(239, 68, 68, 0.2);
-    color: var(--levi-error);
-    padding: var(--levi-space-md);
-    border-radius: var(--levi-radius-md);
-    margin-bottom: var(--levi-space-md);
-}
-
-/* Info box (API key instructions) */
-.levi-setup-info-box {
-    border: 1px solid rgba(124, 58, 237, 0.2);
-    border-radius: var(--levi-radius-md);
-    padding: var(--levi-space-md) var(--levi-space-lg);
-    margin-bottom: var(--levi-space-lg);
-    background: rgba(124, 58, 237, 0.05);
-    color: var(--levi-text-secondary);
-}
-
-.levi-setup-info-box strong {
-    display: block;
-    margin-bottom: var(--levi-space-sm);
-    color: var(--levi-text-primary);
-}
-
-.levi-setup-info-box a {
-    color: #a78bfa;
+.levi-btn-connect {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 8px;
     text-decoration: none;
 }
 
-.levi-setup-info-box a:hover {
-    text-decoration: underline;
+.levi-connect-primary .levi-form-help {
+    margin-top: var(--levi-space-sm);
+    max-width: 420px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
-/* Numbered list */
-.levi-setup-list-numbered {
-    list-style: decimal;
-    padding-left: 22px;
-}
-
-/* Tool profile options */
-.levi-setup-profile-option {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    margin-bottom: 0.5rem;
-    border: 1px solid var(--levi-border-subtle);
+.levi-cost-box {
+    background: rgba(124, 58, 237, 0.06);
+    border: 1px solid rgba(124, 58, 237, 0.15);
     border-radius: var(--levi-radius-md);
-    background: var(--levi-bg-surface);
-    cursor: pointer;
-    transition: all var(--levi-transition-normal);
+    padding: var(--levi-space-md) var(--levi-space-lg);
+    margin-bottom: var(--levi-space-lg);
 }
 
-.levi-setup-profile-option:hover {
-    border-color: rgba(124, 58, 237, 0.4);
-}
-
-.levi-setup-profile-option input[type="radio"] {
-    margin-top: 3px;
-    flex-shrink: 0;
-}
-
-.levi-setup-profile-option-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-
-.levi-setup-profile-option-content strong {
+.levi-cost-box strong {
+    display: block;
     color: var(--levi-text-primary);
+    margin-bottom: var(--levi-space-xs);
+    font-size: 14px;
 }
 
-.levi-setup-profile-option-desc {
+.levi-cost-box p {
+    margin: 0 0 var(--levi-space-sm);
     font-size: 13px;
     color: var(--levi-text-secondary);
 }
 
-.levi-setup-profile-option-active {
-    border-color: var(--levi-accent);
-    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.25);
-    background: rgba(124, 58, 237, 0.08);
+.levi-cost-box-highlight {
+    margin-top: var(--levi-space-sm);
+    padding-top: var(--levi-space-sm);
+    border-top: 1px solid rgba(124, 58, 237, 0.15);
+    color: var(--levi-text-primary);
+    font-weight: 600;
+    font-size: 14px;
 }
 
-/* Plan feature lists */
-.levi-setup-plan-features {
-    list-style: none;
-    padding: 0;
-    margin: var(--levi-space-md) 0 0;
-    font-size: 13px;
+.levi-divider-or {
+    display: flex;
+    align-items: center;
+    gap: var(--levi-space-md);
+    margin: var(--levi-space-lg) 0;
 }
 
-.levi-setup-plan-features li {
-    margin-bottom: var(--levi-space-xs);
+.levi-divider-or::before,
+.levi-divider-or::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--levi-border-subtle);
+}
+
+.levi-divider-or span {
     color: var(--levi-text-muted);
+    font-size: 13px;
+    flex-shrink: 0;
 }
 
-.levi-setup-plan p + .levi-setup-plan-features {
-    border-top: 1px solid var(--levi-border-subtle);
-    padding-top: var(--levi-space-md);
+.levi-collapsible-section {
+    margin-bottom: var(--levi-space-lg);
 }
 
-/* Wizard sync steps */
+.levi-collapsible-trigger {
+    cursor: pointer;
+    color: var(--levi-text-secondary);
+    font-size: 14px;
+    padding: var(--levi-space-sm) 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: var(--levi-space-sm);
+}
+
+.levi-collapsible-trigger::-webkit-details-marker {
+    display: none;
+}
+
+.levi-collapsible-trigger::before {
+    content: '▸';
+    font-size: 12px;
+    transition: transform var(--levi-transition-fast);
+}
+
+details[open] .levi-collapsible-trigger::before {
+    transform: rotate(90deg);
+}
+
+.levi-collapsible-trigger:hover {
+    color: var(--levi-text-primary);
+}
+
+.levi-collapsible-content {
+    padding: var(--levi-space-md) 0 0;
+}
+
+/* ---- Step 3: Safety Cards ---- */
+
+.levi-safety-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--levi-space-md);
+    margin: var(--levi-space-lg) 0;
+}
+
+.levi-safety-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: var(--levi-space-xl) var(--levi-space-lg);
+    border: 2px solid var(--levi-border-subtle);
+    border-radius: var(--levi-radius-lg);
+    background: var(--levi-bg-surface);
+    cursor: pointer;
+    transition: all var(--levi-transition-normal);
+    position: relative;
+}
+
+.levi-safety-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.levi-safety-card:hover {
+    border-color: rgba(124, 58, 237, 0.4);
+    transform: translateY(-2px);
+}
+
+.levi-safety-card.is-selected,
+.levi-safety-card:has(input:checked) {
+    border-color: var(--levi-accent);
+    background: rgba(124, 58, 237, 0.08);
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}
+
+.levi-safety-card-icon {
+    font-size: 36px;
+    line-height: 1;
+    margin-bottom: var(--levi-space-md);
+}
+
+.levi-safety-card strong {
+    display: block;
+    color: var(--levi-text-primary);
+    font-size: 18px;
+    margin-bottom: var(--levi-space-xs);
+}
+
+.levi-safety-card-badge {
+    display: inline-block;
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--levi-success);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 999px;
+    margin-bottom: var(--levi-space-sm);
+}
+
+.levi-safety-card p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--levi-text-secondary);
+    line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+    .levi-safety-cards {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ---- Step 4: Sync Steps ---- */
+
 .levi-wizard-sync {
     margin: var(--levi-space-lg) 0;
 }
@@ -271,7 +457,7 @@
 }
 
 .levi-wizard-sync-step.is-running .levi-wizard-sync-icon {
-    animation: levi-spin 1.2s linear infinite;
+    animation: levi-pulse 1.5s ease-in-out infinite;
 }
 
 .levi-wizard-sync-step.is-running .levi-wizard-sync-label {
@@ -283,6 +469,10 @@
     background: rgba(34, 197, 94, 0.06);
 }
 
+.levi-wizard-sync-step.is-done .levi-wizard-sync-icon {
+    color: var(--levi-success);
+}
+
 .levi-wizard-sync-step.is-done .levi-wizard-sync-label {
     color: var(--levi-text-primary);
 }
@@ -292,7 +482,84 @@
     background: rgba(245, 158, 11, 0.06);
 }
 
-@keyframes levi-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+@keyframes levi-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.1); }
+}
+
+/* ---- Step 5: Done / Celebration ---- */
+
+.levi-setup-card-done {
+    text-align: center;
+}
+
+.levi-done-hero {
+    margin-bottom: var(--levi-space-xl);
+}
+
+.levi-done-checkmark {
+    display: block;
+    font-size: 64px;
+    line-height: 1;
+    margin-bottom: var(--levi-space-md);
+    animation: levi-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes levi-pop {
+    0% { transform: scale(0); opacity: 0; }
+    60% { transform: scale(1.2); }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.levi-done-hero h2 {
+    font-size: 28px;
+    margin-bottom: var(--levi-space-sm);
+}
+
+.levi-done-hero p {
+    font-size: 15px;
+    max-width: 420px;
+    margin: 0 auto;
+}
+
+.levi-done-tip {
+    background: rgba(124, 58, 237, 0.06);
+    border: 1px solid rgba(124, 58, 237, 0.15);
+    border-radius: var(--levi-radius-md);
+    padding: var(--levi-space-md) var(--levi-space-lg);
+    margin-bottom: var(--levi-space-xl);
+    text-align: left;
+}
+
+.levi-done-tip strong {
+    display: block;
+    color: var(--levi-text-primary);
+    margin-bottom: var(--levi-space-xs);
+}
+
+.levi-done-tip p {
+    margin: 0;
+    color: var(--levi-text-secondary);
+    font-size: 14px;
+    font-style: italic;
+}
+
+/* ---- Notices ---- */
+
+.levi-notice-success {
+    background: var(--levi-success-bg);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    color: var(--levi-success);
+    padding: var(--levi-space-md);
+    border-radius: var(--levi-radius-md);
+    margin-bottom: var(--levi-space-md);
+}
+
+.levi-notice-error {
+    background: var(--levi-error-bg);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: var(--levi-error);
+    padding: var(--levi-space-md);
+    border-radius: var(--levi-radius-md);
+    margin-bottom: var(--levi-space-md);
 }

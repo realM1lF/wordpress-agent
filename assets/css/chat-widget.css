@@ -759,6 +759,15 @@
     30% { transform: translateY(-10px); }
 }
 
+.levi-label-pulse {
+    animation: levi-label-pulse 2s ease-in-out infinite;
+}
+
+@keyframes levi-label-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
 /* Tool timeline */
 .levi-tool-timeline {
     display: flex;

@@ -122,6 +122,13 @@ class StoreSessionImageTool implements ToolInterface {
             clean_post_cache($attachToPost);
         }
 
+        $verify = [
+            ['type' => 'post_field', 'post_id' => $attachmentId, 'field' => 'post_type', 'expected' => 'attachment'],
+        ];
+        if ($altText !== '') {
+            $verify[] = ['type' => 'post_meta', 'post_id' => $attachmentId, 'meta_key' => '_wp_attachment_image_alt', 'expected' => $altText];
+        }
+
         return [
             'success' => true,
             'attachment_id' => $attachmentId,
@@ -129,6 +136,7 @@ class StoreSessionImageTool implements ToolInterface {
             'title' => get_the_title($attachmentId),
             'set_as_featured' => $setFeatured && $attachToPost > 0,
             'message' => 'Bild in Mediathek gespeichert.',
+            '_verify' => $verify,
         ];
     }
 

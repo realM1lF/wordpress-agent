@@ -331,6 +331,8 @@ class ChatController extends WP_REST_Controller {
     }
 
     private function processMessageStreaming(WP_REST_Request $request): void {
+        $this->lastStreamedContent = null;
+
         $message = $request->get_param('message');
         $sessionId = $request->get_param('session_id') ?? $this->generateSessionId();
         $userId = get_current_user_id();
@@ -375,9 +377,45 @@ class ChatController extends WP_REST_Controller {
 
         $hasUploadedContext = !empty($this->getSessionUploads($sessionId, $userId));
 
-        $this->discoveredToolNames = [];
+        // ── Upfront classification ──────────────────────────────────────
         $this->emitSSE('status', ['message' => 'Kontext laden...']);
-        $messages = $this->buildMessages($sessionId, $message, true);
+        $classification = $this->classifyQuery((string) $message, $sessionId);
+        $queryCategory = $classification['category'] ?? 'COMPLEX';
+
+        // ── SIMPLE fast-path: no tools, no memories, no gate ────────────
+        if ($queryCategory === 'SIMPLE' && !$hasUploadedContext) {
+            error_log('Levi: SIMPLE fast-path for: ' . mb_substr((string) $message, 0, 80));
+            $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
+            $lightMessages = $this->buildMessagesLight($sessionId, (string) $message);
+            $streamResult = $this->streamChatWithTracking($lightMessages, []);
+
+            if (!is_wp_error($streamResult)) {
+                $assistantMessage = $this->sanitizeAssistantMessageContent(
+                    (string) ($streamResult['content'] ?? '')
+                );
+                if ($assistantMessage === '') {
+                    $assistantMessage = $this->getEmptyResponseFallback();
+                }
+            } else {
+                $assistantMessage = $this->getEmptyResponseFallback();
+            }
+
+            try {
+                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+            } catch (\Exception $e) {
+                error_log('Levi DB Error: ' . $e->getMessage());
+            }
+            $this->emitSSE('stream_end', trim($assistantMessage) !== '' ? ['preserve' => true] : []);
+            $this->emitSSE('done', [
+                'session_id' => $sessionId,
+                'message' => $assistantMessage,
+            ]);
+            return;
+        }
+
+        // ── Normal path: CRUD / COMPLEX ─────────────────────────────────
+        $this->discoveredToolNames = [];
+        $messages = $this->buildMessages($sessionId, $message, true, $classification);
         $tools = $this->getToolDefs();
 
         // Heartbeat callback for SSE keepalive during non-streaming API calls
@@ -388,10 +426,6 @@ class ChatController extends WP_REST_Controller {
             $this->emitSSE('heartbeat', []);
         };
 
-        // Get AI client (uses alternative model for simple queries)
-        $aiClient = $this->getAIClient();
-        
-        // --- Primary path: streaming with real-time delta output ---
         $this->emitSSE('status', ['message' => 'Levi denkt nach...']);
         $streamResult = $this->streamChatWithTracking($messages, $tools);
 
@@ -413,6 +447,11 @@ class ChatController extends WP_REST_Controller {
                 }
                 return;
             }
+
+            // Gate removed from initial response: if the model chose to respond with
+            // text only (plan, question, greeting), that is a legitimate decision.
+            // The mutation gate remains active inside the tool loop where it catches
+            // actual "claimed but not executed" scenarios.
 
             $assistantMessage = $this->sanitizeAssistantMessageContent(
                 (string) ($streamResult['content'] ?? '')
@@ -605,12 +644,42 @@ class ChatController extends WP_REST_Controller {
 
         $hasUploadedContext = !empty($this->getSessionUploads($sessionId, $userId));
 
-        $this->discoveredToolNames = [];
-        $messages = $this->buildMessages($sessionId, $message, true);
-        $tools = $this->getToolDefs();
+        // ── Upfront classification ──────────────────────────────────────
+        $classification = $this->classifyQuery((string) $message, $sessionId);
+        $queryCategory = $classification['category'] ?? 'COMPLEX';
 
-        // Get AI client (uses alternative model for simple queries)
-        $aiClient = $this->getAIClient();
+        // ── SIMPLE fast-path (non-streaming) ────────────────────────────
+        if ($queryCategory === 'SIMPLE' && !$hasUploadedContext) {
+            error_log('Levi: SIMPLE fast-path (non-streaming) for: ' . mb_substr((string) $message, 0, 80));
+            $lightMessages = $this->buildMessagesLight($sessionId, (string) $message);
+            $response = $this->chatWithTracking($lightMessages, []);
+
+            $assistantMessage = '';
+            if (!is_wp_error($response)) {
+                $assistantMessage = $this->sanitizeAssistantMessageContent(
+                    (string) ($response['choices'][0]['message']['content'] ?? '')
+                );
+            }
+            if ($assistantMessage === '') {
+                $assistantMessage = $this->getEmptyResponseFallback();
+            }
+
+            try {
+                $this->conversationRepo->saveMessage($sessionId, $userId, 'assistant', $assistantMessage);
+            } catch (\Exception $e) {
+                error_log('Levi DB Error: ' . $e->getMessage());
+            }
+
+            return new WP_REST_Response([
+                'message' => $assistantMessage,
+                'session_id' => $sessionId,
+            ]);
+        }
+
+        // ── Normal path: CRUD / COMPLEX ─────────────────────────────────
+        $this->discoveredToolNames = [];
+        $messages = $this->buildMessages($sessionId, $message, true, $classification);
+        $tools = $this->getToolDefs();
 
         // Call AI – try with tools first, fallback to no tools on provider error
         $response = $this->chatWithTracking($messages, $tools, null, $webSearch);
@@ -760,8 +829,15 @@ class ChatController extends WP_REST_Controller {
         ], 200);
     }
 
-    private function chatWithTracking(array $messages, array $tools = [], ?callable $heartbeat = null, bool $webSearch = false): array|WP_Error {
-        $response = $this->aiClient->chat($messages, $tools, $heartbeat, $webSearch);
+    private function chatWithTracking(array $messages, array $tools = [], ?callable $heartbeat = null, bool $webSearch = false, ?string $toolChoice = null): array|WP_Error {
+        if ($toolChoice !== null) {
+            $this->aiClient->setToolChoice($toolChoice);
+        }
+        if ($this->aiClient instanceof \Levi\Agent\AI\OpenRouterClient) {
+            $response = $this->aiClient->chat($messages, $tools, $heartbeat, $webSearch);
+        } else {
+            $response = $this->aiClient->chat($messages, $tools);
+        }
         if (!is_wp_error($response)) {
             $this->accumulateUsage($response);
         }
@@ -861,13 +937,13 @@ class ChatController extends WP_REST_Controller {
         $retryResult = $this->aiClient->streamChat($guardedMessages, $onChunk, []);
 
         if (!is_wp_error($retryResult)) {
-            $this->emitSSE('stream_end', []);
+            $this->emitSSE('stream_end', trim($streamedContent) !== '' ? ['preserve' => true] : []);
             $this->accumulateStreamUsage($retryResult);
             return $this->streamResultToResponse($retryResult);
         }
 
         if ($streamedContent !== '') {
-            $this->emitSSE('stream_end', []);
+            $this->emitSSE('stream_end', trim($streamedContent) !== '' ? ['preserve' => true] : []);
             error_log('Levi: stream retry partially completed (' . strlen($streamedContent) . ' chars shown)');
             $this->usageAccumulator['api_calls']++;
             return $this->streamResultToResponse([
@@ -881,12 +957,9 @@ class ChatController extends WP_REST_Controller {
 
         error_log('Levi: stream retry also failed, blocking fallback without tools');
         $heartbeat = fn() => $this->emitSSE('heartbeat', []);
-        $fallback = $this->aiClient->chat($guardedMessages, [], $heartbeat, $webSearch);
+        $fallback = $this->chatWithTracking($guardedMessages, [], $heartbeat, $webSearch);
         $this->emitSSE('stream_end', []);
 
-        if (!is_wp_error($fallback)) {
-            $this->accumulateUsage($fallback);
-        }
         return $fallback;
     }
 
@@ -1169,13 +1242,6 @@ class ChatController extends WP_REST_Controller {
         ], true);
     }
 
-    private function requestedMutationIntent(array $taskIntent): bool {
-        if (!empty($taskIntent['explicit_modify']) || !empty($taskIntent['explicit_create'])) {
-            return true;
-        }
-        return in_array($taskIntent['mode'] ?? 'unknown', ['modify_existing', 'create_new', 'probable_modify'], true);
-    }
-
     private function hasSuccessfulMutation(array $toolResults): bool {
         foreach ($toolResults as $row) {
             $tool = (string) ($row['tool'] ?? '');
@@ -1187,19 +1253,245 @@ class ChatController extends WP_REST_Controller {
         return false;
     }
 
-    private function shouldNudgePendingMutation(array $toolResults, array $taskIntent, int $nudgeCount): bool {
-        if ($nudgeCount >= 1) {
-            return false;
+    private function hasFailedMutation(array $toolResults): bool {
+        foreach ($toolResults as $row) {
+            $tool = (string) ($row['tool'] ?? '');
+            $success = (bool) ($row['result']['success'] ?? false);
+            if (!$success && $this->isMutatingToolName($tool)) {
+                return true;
+            }
         }
-        if (!$this->requestedMutationIntent($taskIntent)) {
-            return false;
-        }
-        if ($this->hasSuccessfulMutation($toolResults)) {
-            return false;
-        }
-        return !empty($toolResults);
+        return false;
     }
 
+    /**
+     * LLM-based classification: does the user expect a mutation (write/create/update/delete)?
+     * Uses the last few messages as context so implicit replies like "Ja" or "ok mach das"
+     * are correctly classified as mutation intent.
+     */
+    private function classifyMutationIntent(string $userMessage, array $messages): bool {
+        $contextSnippets = [];
+        $recentMessages = array_slice($messages, -6);
+        foreach ($recentMessages as $msg) {
+            $role = $msg['role'] ?? '';
+            $content = $msg['content'] ?? '';
+            if (!in_array($role, ['user', 'assistant'], true) || !is_string($content) || $content === '') {
+                continue;
+            }
+            $truncated = mb_substr($content, 0, 300);
+            $contextSnippets[] = ($role === 'user' ? 'Nutzer' : 'Assistent') . ': ' . $truncated;
+        }
+
+        $contextBlock = !empty($contextSnippets)
+            ? "Konversationskontext:\n" . implode("\n", $contextSnippets) . "\n\n"
+            : '';
+
+        $classifyMessages = [
+            [
+                'role' => 'system',
+                'content' => 'Du bist ein Klassifikator. Deine einzige Aufgabe: Bestimme, ob der Nutzer erwartet, '
+                    . 'dass an seiner WordPress-Website etwas geaendert, erstellt, geloescht, aktualisiert, '
+                    . 'veroeffentlicht, installiert oder konfiguriert wird. '
+                    . 'Antworte NUR mit einem einzigen Wort: ja oder nein',
+            ],
+            [
+                'role' => 'user',
+                'content' => $contextBlock . 'Aktuelle Nutzer-Nachricht: ' . mb_substr($userMessage, 0, 500)
+                    . "\n\nErwartet der Nutzer eine Aenderung an der Website? (ja/nein)",
+            ],
+        ];
+
+        try {
+            $response = $this->aiClient->chat($classifyMessages, []);
+            if (is_wp_error($response)) {
+                error_log('Levi: classifyMutationIntent failed: ' . $response->get_error_message());
+                return true;
+            }
+            $answer = mb_strtolower(trim((string) ($response['choices'][0]['message']['content'] ?? '')));
+            $this->usageAccumulator['api_calls']++;
+            $promptTokens = (int) ($response['usage']['prompt_tokens'] ?? 0);
+            $completionTokens = (int) ($response['usage']['completion_tokens'] ?? 0);
+            $this->usageAccumulator['prompt_tokens'] += $promptTokens;
+            $this->usageAccumulator['completion_tokens'] += $completionTokens;
+
+            return str_starts_with($answer, 'ja');
+        } catch (\Throwable $e) {
+            error_log('Levi: classifyMutationIntent exception: ' . $e->getMessage());
+            return true;
+        }
+    }
+
+    /**
+     * LLM-based classification: were ALL requested actions completed?
+     * Called when mutations DID run but the model wants to stop — checks if the task is fully done.
+     */
+    private function classifyTaskCompleteness(string $userMessage, array $toolResults, array $messages): bool {
+        $toolSummaries = [];
+        foreach ($toolResults as $r) {
+            $tool = (string) ($r['tool'] ?? '');
+            $success = ($r['result']['success'] ?? false) ? 'OK' : 'FEHLER';
+            $summary = $this->summarizeToolResult(is_array($r['result'] ?? null) ? $r['result'] : []);
+            $toolSummaries[] = "- {$tool}: {$success}" . ($summary !== '' ? " ({$summary})" : '');
+        }
+
+        $contextSnippets = [];
+        $recentMessages = array_slice($messages, -4);
+        foreach ($recentMessages as $msg) {
+            $role = $msg['role'] ?? '';
+            $content = $msg['content'] ?? '';
+            if (!in_array($role, ['user', 'assistant'], true) || !is_string($content) || $content === '') {
+                continue;
+            }
+            $truncated = mb_substr($content, 0, 200);
+            $contextSnippets[] = ($role === 'user' ? 'Nutzer' : 'Assistent') . ': ' . $truncated;
+        }
+
+        $contextBlock = !empty($contextSnippets)
+            ? "Konversationskontext:\n" . implode("\n", $contextSnippets) . "\n\n"
+            : '';
+
+        $classifyMessages = [
+            [
+                'role' => 'system',
+                'content' => 'Du bist ein Klassifikator. Deine einzige Aufgabe: Bestimme, ob ALLE vom Nutzer '
+                    . 'angeforderten Aenderungen durch die ausgefuehrten Tools erledigt wurden. '
+                    . 'Wenn der Nutzer z.B. "erstelle 3 Seiten und veroeffentliche sie" sagt, '
+                    . 'muessen sowohl Erstellungs- als auch Veroeffentlichungs-Calls vorhanden sein. '
+                    . 'Antworte NUR mit einem einzigen Wort: ja oder nein',
+            ],
+            [
+                'role' => 'user',
+                'content' => $contextBlock
+                    . 'Nutzer-Anfrage: ' . mb_substr($userMessage, 0, 500)
+                    . "\n\nAusgefuehrte Tools:\n" . implode("\n", $toolSummaries)
+                    . "\n\nWurde alles erledigt was der Nutzer wollte? (ja/nein)",
+            ],
+        ];
+
+        try {
+            $response = $this->aiClient->chat($classifyMessages, []);
+            if (is_wp_error($response)) {
+                error_log('Levi: classifyTaskCompleteness failed: ' . $response->get_error_message());
+                return true;
+            }
+            $answer = mb_strtolower(trim((string) ($response['choices'][0]['message']['content'] ?? '')));
+            $this->usageAccumulator['api_calls']++;
+            $promptTokens = (int) ($response['usage']['prompt_tokens'] ?? 0);
+            $completionTokens = (int) ($response['usage']['completion_tokens'] ?? 0);
+            $this->usageAccumulator['prompt_tokens'] += $promptTokens;
+            $this->usageAccumulator['completion_tokens'] += $completionTokens;
+
+            return str_starts_with($answer, 'ja');
+        } catch (\Throwable $e) {
+            error_log('Levi: classifyTaskCompleteness exception: ' . $e->getMessage());
+            return true;
+        }
+    }
+
+    /**
+     * Mutation Enforcement Gate — prevents the model from claiming actions it didn't perform.
+     *
+     * Two paths:
+     *  A) No mutations ran → classify if user expects one → force tool_choice:'required'
+     *  B) Mutations ran → classify if task is fully complete → nudge for remaining steps
+     *
+     * @return array|null  Non-null = new messageData with tool_calls to feed back into the loop.
+     *                     Null = gate passed, response may be sent to user.
+     */
+    private function enforceMutationGate(
+        array &$messages,
+        array $messageData,
+        array $toolResults,
+        string $userMessage,
+        bool $webSearch,
+        ?callable $heartbeat = null
+    ): ?array {
+        $hasMutation = $this->hasSuccessfulMutation($toolResults);
+
+        if (!$hasMutation) {
+            // Path A: No mutations ran — does the user even expect one?
+            if (!$this->classifyMutationIntent($userMessage, $messages)) {
+                return null;
+            }
+
+            error_log('Levi: enforceMutationGate Path A — user expects mutation but none ran, enforcing tool_choice:required');
+
+            for ($attempt = 0; $attempt < 2; $attempt++) {
+                $assistantEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+                if (!empty($messageData['reasoning_content'])) {
+                    $assistantEntry['reasoning_content'] = $messageData['reasoning_content'];
+                }
+                $messages[] = $assistantEntry;
+                $messages[] = [
+                    'role' => 'system',
+                    'content' => '[SYSTEM – MUTATION ENFORCEMENT] Du hast nur Text generiert, aber der Nutzer erwartet '
+                        . 'eine konkrete Aenderung an der Website. Fuehre JETZT die passenden Tools aus. '
+                        . 'Falls du die Aenderung nicht durchfuehren kannst, erklaere ehrlich warum — '
+                        . 'aber behaupte NICHT, dass du etwas erledigt hast.',
+                ];
+
+                $enforced = $this->chatWithTracking($messages, $this->getToolDefs(), $heartbeat, $webSearch, 'required');
+                if (is_wp_error($enforced)) {
+                    error_log('Levi: enforceMutationGate retry failed: ' . $enforced->get_error_message());
+                    continue;
+                }
+
+                $enforcedData = $enforced['choices'][0]['message'] ?? [];
+                if (!empty($enforcedData['tool_calls'])) {
+                    return $enforcedData;
+                }
+
+                $messageData = $enforcedData;
+            }
+
+            error_log('Levi: enforceMutationGate Path A exhausted — sending honest failure');
+            return null;
+        }
+
+        // Path B: Mutations ran — is the task fully complete?
+        // Fast path: all mutations succeeded with no failures → trust the model's decision to stop.
+        // Only invoke the expensive LLM check when there are partial failures.
+        if (!$this->hasFailedMutation($toolResults)) {
+            error_log('Levi: enforceMutationGate Path B — all mutations succeeded, skipping completeness check');
+            return null;
+        }
+
+        if ($this->classifyTaskCompleteness($userMessage, $toolResults, $messages)) {
+            return null;
+        }
+
+        error_log('Levi: enforceMutationGate Path B — task incomplete, nudging for remaining steps');
+
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $assistantEntry = ['role' => 'assistant', 'content' => $messageData['content'] ?? ''];
+            if (!empty($messageData['reasoning_content'])) {
+                $assistantEntry['reasoning_content'] = $messageData['reasoning_content'];
+            }
+            $messages[] = $assistantEntry;
+            $messages[] = [
+                'role' => 'system',
+                'content' => '[SYSTEM – COMPLETENESS ENFORCEMENT] Du hast die Aufgabe nur teilweise erledigt. '
+                    . 'Pruefe, welche Schritte aus der Nutzer-Anfrage noch fehlen und fuehre sie JETZT aus. '
+                    . 'Melde dem Nutzer erst "fertig", wenn ALLE angeforderten Aenderungen durchgefuehrt sind.',
+            ];
+
+            $enforced = $this->chatWithTracking($messages, $this->getToolDefs(), $heartbeat, $webSearch, 'required');
+            if (is_wp_error($enforced)) {
+                error_log('Levi: enforceMutationGate completeness retry failed: ' . $enforced->get_error_message());
+                continue;
+            }
+
+            $enforcedData = $enforced['choices'][0]['message'] ?? [];
+            if (!empty($enforcedData['tool_calls'])) {
+                return $enforcedData;
+            }
+
+            $messageData = $enforcedData;
+        }
+
+        error_log('Levi: enforceMutationGate Path B exhausted — letting partial response through');
+        return null;
+    }
 
     /**
      * Validates whether a tool call is allowed.

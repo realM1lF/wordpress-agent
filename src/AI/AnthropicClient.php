@@ -13,6 +13,11 @@ class AnthropicClient implements AIClientInterface {
     private string $model;
     private int $timeout;
     private int $maxTokens;
+    private ?string $pendingToolChoice = null;
+
+    public function setToolChoice(?string $toolChoice): void {
+        $this->pendingToolChoice = $toolChoice;
+    }
 
     public function __construct(?string $modelOverride = null) {
         $settings = new SettingsPage();
@@ -20,11 +25,18 @@ class AnthropicClient implements AIClientInterface {
         $this->model = $modelOverride ?? $settings->getModelForProvider('anthropic');
         $allSettings = $settings->getSettings();
         $this->timeout = max(1, (int) ($allSettings['ai_timeout'] ?? 120));
-        $this->maxTokens = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
+        $userMax = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
+        $limits = $settings->getModelLimits('anthropic', $this->model);
+        $modelMaxOutput = $limits['max_output_tokens'] ?? 16384;
+        $this->maxTokens = min($userMax, $modelMaxOutput);
     }
 
     public function isConfigured(): bool {
         return $this->apiKey !== null;
+    }
+
+    public function overrideApiKey(string $key): void {
+        $this->apiKey = $key;
     }
 
     public function chat(array $messages, array $tools = []): array|WP_Error {
@@ -32,7 +44,9 @@ class AnthropicClient implements AIClientInterface {
             return new WP_Error('not_configured', 'Anthropic API key not configured');
         }
 
-        $anthropicPayload = $this->toAnthropicPayload($messages, $tools);
+        $toolChoice = $this->pendingToolChoice;
+        $this->pendingToolChoice = null;
+        $anthropicPayload = $this->toAnthropicPayload($messages, $tools, $toolChoice);
 
         return $this->executeWithRetry(
             fn() => $this->executeApiCall($anthropicPayload),
@@ -79,6 +93,184 @@ class AnthropicClient implements AIClientInterface {
     }
 
     public function streamChat(array $messages, callable $onChunk, array $tools = []): array|WP_Error {
+        if (!$this->apiKey) {
+            return new WP_Error('not_configured', 'Anthropic API key not configured');
+        }
+
+        $toolChoice = $this->pendingToolChoice;
+        $this->pendingToolChoice = null;
+
+        if (!function_exists('curl_init')) {
+            $this->pendingToolChoice = $toolChoice;
+            return $this->streamChatFallback($messages, $onChunk, $tools);
+        }
+
+        $anthropicPayload = $this->toAnthropicPayload($messages, $tools, $toolChoice);
+        $anthropicPayload['stream'] = true;
+
+        $fullContent = '';
+        $finishReason = null;
+        $usage = [];
+        $model = null;
+        $hasToolCalls = false;
+        $toolCallBlocks = [];
+        $currentBlockIndex = -1;
+        $currentBlockType = null;
+        $sseBuffer = '';
+        $rawResponseBody = '';
+
+        $ch = curl_init(self::API_BASE . '/messages');
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => wp_json_encode($anthropicPayload),
+            CURLOPT_HTTPHEADER => [
+                'x-api-key: ' . $this->apiKey,
+                'anthropic-version: 2023-06-01',
+                'anthropic-beta: prompt-caching-2024-07-31',
+                'Content-Type: application/json',
+                'Accept: text/event-stream',
+            ],
+            CURLOPT_RETURNTRANSFER => false,
+            CURLOPT_WRITEFUNCTION => function ($ch, $data) use (
+                $onChunk, &$fullContent, &$finishReason, &$usage, &$model,
+                &$hasToolCalls, &$toolCallBlocks, &$currentBlockIndex, &$currentBlockType, &$sseBuffer, &$rawResponseBody
+            ) {
+                $rawResponseBody .= $data;
+                $sseBuffer .= $data;
+
+                while (($pos = strpos($sseBuffer, "\n")) !== false) {
+                    $line = substr($sseBuffer, 0, $pos);
+                    $sseBuffer = substr($sseBuffer, $pos + 1);
+                    $line = rtrim($line, "\r");
+
+                    if (str_starts_with($line, 'event: ')) {
+                        continue;
+                    }
+
+                    if (!str_starts_with($line, 'data: ')) {
+                        continue;
+                    }
+
+                    $json = substr($line, 6);
+                    $event = json_decode($json, true);
+                    if (!is_array($event)) {
+                        continue;
+                    }
+
+                    $type = $event['type'] ?? '';
+
+                    if ($type === 'message_start') {
+                        $msg = $event['message'] ?? [];
+                        $model = $msg['model'] ?? null;
+                        $u = $msg['usage'] ?? [];
+                        if (!empty($u)) {
+                            $usage = array_merge($usage, $u);
+                        }
+                        continue;
+                    }
+
+                    if ($type === 'content_block_start') {
+                        $currentBlockIndex = $event['index'] ?? 0;
+                        $block = $event['content_block'] ?? [];
+                        $currentBlockType = $block['type'] ?? 'text';
+
+                        if ($currentBlockType === 'tool_use') {
+                            $hasToolCalls = true;
+                            $toolCallBlocks[$currentBlockIndex] = [
+                                'id' => $block['id'] ?? ('tool_' . uniqid()),
+                                'type' => 'function',
+                                'function' => [
+                                    'name' => $block['name'] ?? '',
+                                    'arguments' => '',
+                                ],
+                            ];
+                            $onChunk(json_encode(['tool' => $block['name'] ?? '', 'index' => $currentBlockIndex]), 'tool_call_start');
+                        }
+                        continue;
+                    }
+
+                    if ($type === 'content_block_delta') {
+                        $delta = $event['delta'] ?? [];
+                        $deltaType = $delta['type'] ?? '';
+
+                        if ($deltaType === 'text_delta') {
+                            $text = $delta['text'] ?? '';
+                            if ($text !== '') {
+                                $fullContent .= $text;
+                                $onChunk($text);
+                            }
+                        } elseif ($deltaType === 'input_json_delta') {
+                            $partial = $delta['partial_json'] ?? '';
+                            if ($partial !== '' && isset($toolCallBlocks[$currentBlockIndex])) {
+                                $toolCallBlocks[$currentBlockIndex]['function']['arguments'] .= $partial;
+                            }
+                        }
+                        continue;
+                    }
+
+                    if ($type === 'content_block_stop') {
+                        $currentBlockType = null;
+                        continue;
+                    }
+
+                    if ($type === 'message_delta') {
+                        $delta = $event['delta'] ?? [];
+                        $stopReason = $delta['stop_reason'] ?? null;
+                        if ($stopReason !== null) {
+                            $finishReason = match ($stopReason) {
+                                'tool_use' => 'tool_calls',
+                                'max_tokens' => 'length',
+                                default => 'stop',
+                            };
+                        }
+                        $u = $event['usage'] ?? [];
+                        if (!empty($u)) {
+                            $usage = array_merge($usage, $u);
+                        }
+                        continue;
+                    }
+                }
+
+                return strlen($data);
+            },
+            CURLOPT_TIMEOUT => $this->timeout,
+        ]);
+
+        curl_exec($ch);
+
+        if (curl_errno($ch)) {
+            $error = curl_error($ch);
+            $errno = curl_errno($ch);
+            curl_close($ch);
+            $isTimeout = $errno === CURLE_OPERATION_TIMEDOUT || $errno === 28;
+            return new WP_Error($isTimeout ? 'timeout' : 'curl_error', $error);
+        }
+
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode !== 200) {
+            $errorMessage = "Anthropic streaming returned HTTP $httpCode";
+            $parsed = json_decode($rawResponseBody, true);
+            if (is_array($parsed) && !empty($parsed['error']['message'])) {
+                $errorMessage = (string) $parsed['error']['message'];
+            }
+            return new WP_Error('api_error', $errorMessage, ['status' => $httpCode]);
+        }
+
+        $oaiToolCalls = !empty($toolCallBlocks) ? array_values($toolCallBlocks) : [];
+
+        return [
+            'content' => $fullContent,
+            'finish_reason' => $finishReason ?? 'stop',
+            'usage' => $usage,
+            'model' => $model ?? $this->model,
+            'has_tool_calls' => $hasToolCalls,
+            'tool_calls' => $oaiToolCalls,
+        ];
+    }
+
+    private function streamChatFallback(array $messages, callable $onChunk, array $tools = []): array|WP_Error {
         $response = $this->chat($messages, $tools);
         if (is_wp_error($response)) {
             return $response;
@@ -96,7 +288,7 @@ class AnthropicClient implements AIClientInterface {
             'content' => $text,
             'finish_reason' => $response['choices'][0]['finish_reason'] ?? ($hasToolCalls ? 'tool_calls' : 'stop'),
             'usage' => $response['usage'] ?? [],
-            'model' => $response['model'] ?? 'anthropic',
+            'model' => $response['model'] ?? $this->model,
             'has_tool_calls' => $hasToolCalls,
             'tool_calls' => $toolCalls,
         ];
@@ -108,7 +300,7 @@ class AnthropicClient implements AIClientInterface {
         }
 
         $payload = [
-            'model' => 'claude-3-5-haiku-20241022',
+            'model' => 'claude-haiku-4-5',
             'max_tokens' => 16,
             'messages' => [
                 ['role' => 'user', 'content' => 'Say "OK" and nothing else.'],
@@ -119,6 +311,7 @@ class AnthropicClient implements AIClientInterface {
             'headers' => [
                 'x-api-key' => $this->apiKey,
                 'anthropic-version' => '2023-06-01',
+                'anthropic-beta' => 'prompt-caching-2024-07-31',
                 'Content-Type' => 'application/json',
             ],
             'body' => wp_json_encode($payload),
@@ -139,7 +332,7 @@ class AnthropicClient implements AIClientInterface {
         return ['success' => true, 'message' => 'Connection successful'];
     }
 
-    private function toAnthropicPayload(array $messages, array $tools): array {
+    private function toAnthropicPayload(array $messages, array $tools, ?string $toolChoice = null): array {
         $systemParts = [];
         $anthropicMessages = [];
 
@@ -215,6 +408,14 @@ class AnthropicClient implements AIClientInterface {
             $lastIdx = count($convertedTools) - 1;
             $convertedTools[$lastIdx]['cache_control'] = ['type' => 'ephemeral'];
             $payload['tools'] = $convertedTools;
+
+            if ($toolChoice !== null && $toolChoice !== 'auto') {
+                $payload['tool_choice'] = match ($toolChoice) {
+                    'required' => ['type' => 'any'],
+                    'none' => ['type' => 'auto'],
+                    default => ['type' => 'auto'],
+                };
+            }
         }
 
         return $payload;

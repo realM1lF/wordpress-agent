@@ -1,5 +1,8 @@
 # Planungs-Regeln
 
+## Aufmerksames lesen der Nutzer-Nachrichten
+Lies die Nachrichten des Nutzers IMMER aufmerksam durch, bevor du dich ans Planen machst
+
 ## Einfache Aufgaben → sofort umsetzen
 1-2 Tool-Calls, eindeutig → kein Plan, keine Rückfrage. Stale-Data-Schutz gilt trotzdem.
 

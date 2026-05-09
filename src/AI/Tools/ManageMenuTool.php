@@ -206,6 +206,9 @@ class ManageMenuTool implements ToolInterface {
             'success' => true,
             'item_id' => $result,
             'message' => 'Menu item added.',
+            '_verify' => [
+                ['type' => 'post_field', 'post_id' => $result, 'field' => 'post_type', 'expected' => 'nav_menu_item'],
+            ],
         ];
     }
 
@@ -235,6 +238,9 @@ class ManageMenuTool implements ToolInterface {
             'success' => true,
             'item_id' => $itemId,
             'message' => 'Menu item removed.',
+            '_verify' => [
+                ['type' => 'post_deleted', 'post_id' => $itemId, 'force' => true],
+            ],
         ];
     }
 

@@ -197,6 +197,12 @@ class RenameInPluginTool extends AbstractTool {
             'occurrences' => $f['occurrences'],
         ], $affectedFiles);
 
+        $verify = array_map(fn($f) => [
+            'type' => 'file_exists',
+            'path' => $f['path'],
+            'expected' => true,
+        ], $affectedFiles);
+
         return [
             'success' => true,
             'plugin_slug' => $slug,
@@ -206,6 +212,7 @@ class RenameInPluginTool extends AbstractTool {
             'total_occurrences' => $totalOccurrences,
             'files' => $filesSummary,
             'message' => "Renamed '{$oldName}' to '{$newName}' across " . count($affectedFiles) . " file(s) ({$totalOccurrences} occurrences).",
+            '_verify' => $verify,
         ];
     }
 

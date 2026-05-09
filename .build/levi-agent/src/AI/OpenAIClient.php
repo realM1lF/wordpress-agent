@@ -3,9 +3,11 @@
 namespace Levi\Agent\AI;
 
 use Levi\Agent\Admin\SettingsPage;
+use Levi\Agent\AI\Concerns\RetriableApiCall;
 use WP_Error;
 
 class OpenAIClient implements AIClientInterface {
+    use RetriableApiCall;
     private const API_BASE = 'https://api.openai.com/v1';
     private ?string $apiKey;
     private string $model;
@@ -43,6 +45,13 @@ class OpenAIClient implements AIClientInterface {
             $payload['tool_choice'] = 'auto';
         }
 
+        return $this->executeWithRetry(
+            fn() => $this->executeApiCall($payload),
+            'OpenAI'
+        );
+    }
+
+    private function executeApiCall(array $payload): array|WP_Error {
         $response = wp_remote_post(self::API_BASE . '/chat/completions', [
             'headers' => [
                 'Authorization' => 'Bearer ' . $this->apiKey,
@@ -86,7 +95,7 @@ class OpenAIClient implements AIClientInterface {
         return $body;
     }
 
-    public function streamChat(array $messages, callable $onChunk): array|WP_Error {
+    public function streamChat(array $messages, callable $onChunk, array $tools = []): array|WP_Error {
         if (!$this->apiKey) {
             return new WP_Error('not_configured', 'OpenAI API key not configured');
         }
@@ -97,7 +106,20 @@ class OpenAIClient implements AIClientInterface {
             'temperature' => 0.7,
             'max_tokens' => $this->maxTokens,
             'stream' => true,
+            'stream_options' => ['include_usage' => true],
         ];
+
+        if (!empty($tools)) {
+            $payload['tools'] = $tools;
+            $payload['tool_choice'] = 'auto';
+        }
+
+        $fullContent = '';
+        $finishReason = null;
+        $usage = [];
+        $hasToolCalls = false;
+        $toolCallChunks = [];
+        $sseBuffer = '';
 
         $ch = curl_init(self::API_BASE . '/chat/completions');
         curl_setopt_array($ch, [
@@ -109,19 +131,69 @@ class OpenAIClient implements AIClientInterface {
                 'Accept: text/event-stream',
             ],
             CURLOPT_RETURNTRANSFER => false,
-            CURLOPT_WRITEFUNCTION => function ($ch, $data) use ($onChunk) {
-                $lines = explode("\n", $data);
-                foreach ($lines as $line) {
+            CURLOPT_WRITEFUNCTION => function ($ch, $data) use ($onChunk, &$fullContent, &$finishReason, &$usage, &$hasToolCalls, &$toolCallChunks, &$sseBuffer) {
+                $sseBuffer .= $data;
+                while (($pos = strpos($sseBuffer, "\n")) !== false) {
+                    $line = substr($sseBuffer, 0, $pos);
+                    $sseBuffer = substr($sseBuffer, $pos + 1);
                     $line = trim($line);
-                    if (str_starts_with($line, 'data: ')) {
-                        $json = substr($line, 6);
-                        if ($json === '[DONE]') {
-                            return strlen($data);
+
+                    if ($line === '' || !str_starts_with($line, 'data: ')) {
+                        continue;
+                    }
+
+                    $json = substr($line, 6);
+                    if ($json === '[DONE]') {
+                        continue;
+                    }
+
+                    $chunk = json_decode($json, true);
+                    if (!is_array($chunk)) {
+                        continue;
+                    }
+
+                    if (!empty($chunk['usage'])) {
+                        $usage = $chunk['usage'];
+                    }
+
+                    $choice = $chunk['choices'][0] ?? null;
+                    if ($choice === null) {
+                        continue;
+                    }
+
+                    if (isset($choice['finish_reason']) && $choice['finish_reason'] !== null) {
+                        $finishReason = $choice['finish_reason'];
+                    }
+
+                    $delta = $choice['delta'] ?? [];
+
+                    if (!empty($delta['tool_calls'])) {
+                        $hasToolCalls = true;
+                        foreach ($delta['tool_calls'] as $tc) {
+                            $idx = $tc['index'] ?? 0;
+                            if (!isset($toolCallChunks[$idx])) {
+                                $toolCallChunks[$idx] = [
+                                    'id' => $tc['id'] ?? '',
+                                    'type' => 'function',
+                                    'function' => ['name' => '', 'arguments' => ''],
+                                ];
+                            }
+                            if (!empty($tc['id'])) {
+                                $toolCallChunks[$idx]['id'] = $tc['id'];
+                            }
+                            if (!empty($tc['function']['name'])) {
+                                $toolCallChunks[$idx]['function']['name'] .= $tc['function']['name'];
+                            }
+                            if (isset($tc['function']['arguments'])) {
+                                $toolCallChunks[$idx]['function']['arguments'] .= $tc['function']['arguments'];
+                            }
                         }
-                        $chunk = json_decode($json, true);
-                        if ($chunk && isset($chunk['choices'][0]['delta']['content'])) {
-                            $onChunk($chunk['choices'][0]['delta']['content']);
-                        }
+                        continue;
+                    }
+
+                    if (isset($delta['content']) && $delta['content'] !== '') {
+                        $fullContent .= $delta['content'];
+                        $onChunk($delta['content']);
                     }
                 }
                 return strlen($data);
@@ -136,7 +208,15 @@ class OpenAIClient implements AIClientInterface {
             return new WP_Error('curl_error', $error);
         }
         curl_close($ch);
-        return ['success' => true];
+
+        return [
+            'content' => $fullContent,
+            'finish_reason' => $finishReason ?? 'stop',
+            'usage' => $usage,
+            'model' => $this->model,
+            'has_tool_calls' => $hasToolCalls,
+            'tool_calls' => $hasToolCalls ? array_values($toolCallChunks) : [],
+        ];
     }
 
     public function testConnection(): array|WP_Error {

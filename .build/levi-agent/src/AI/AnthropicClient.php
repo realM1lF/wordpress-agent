@@ -3,9 +3,11 @@
 namespace Levi\Agent\AI;
 
 use Levi\Agent\Admin\SettingsPage;
+use Levi\Agent\AI\Concerns\RetriableApiCall;
 use WP_Error;
 
 class AnthropicClient implements AIClientInterface {
+    use RetriableApiCall;
     private const API_BASE = 'https://api.anthropic.com/v1';
     private ?string $apiKey;
     private string $model;
@@ -32,13 +34,21 @@ class AnthropicClient implements AIClientInterface {
 
         $anthropicPayload = $this->toAnthropicPayload($messages, $tools);
 
+        return $this->executeWithRetry(
+            fn() => $this->executeApiCall($anthropicPayload),
+            'Anthropic'
+        );
+    }
+
+    private function executeApiCall(array $payload): array|WP_Error {
         $response = wp_remote_post(self::API_BASE . '/messages', [
             'headers' => [
                 'x-api-key' => $this->apiKey,
                 'anthropic-version' => '2023-06-01',
+                'anthropic-beta' => 'prompt-caching-2024-07-31',
                 'Content-Type' => 'application/json',
             ],
-            'body' => wp_json_encode($anthropicPayload),
+            'body' => wp_json_encode($payload),
             'timeout' => $this->timeout,
         ]);
 
@@ -68,17 +78,28 @@ class AnthropicClient implements AIClientInterface {
         return $this->toOpenAICompatibleResponse($body);
     }
 
-    public function streamChat(array $messages, callable $onChunk): array|WP_Error {
-        // Keep streaming fallback simple and robust for now
-        $response = $this->chat($messages, []);
+    public function streamChat(array $messages, callable $onChunk, array $tools = []): array|WP_Error {
+        $response = $this->chat($messages, $tools);
         if (is_wp_error($response)) {
             return $response;
         }
-        $text = (string) (($response['choices'][0]['message']['content'] ?? ''));
-        if ($text !== '') {
+        $msgData = $response['choices'][0]['message'] ?? [];
+        $text = (string) ($msgData['content'] ?? '');
+        $toolCalls = $msgData['tool_calls'] ?? [];
+        $hasToolCalls = !empty($toolCalls);
+
+        if ($text !== '' && !$hasToolCalls) {
             $onChunk($text);
         }
-        return ['success' => true];
+
+        return [
+            'content' => $text,
+            'finish_reason' => $response['choices'][0]['finish_reason'] ?? ($hasToolCalls ? 'tool_calls' : 'stop'),
+            'usage' => $response['usage'] ?? [],
+            'model' => $response['model'] ?? 'anthropic',
+            'has_tool_calls' => $hasToolCalls,
+            'tool_calls' => $toolCalls,
+        ];
     }
 
     public function testConnection(): array|WP_Error {
@@ -186,15 +207,40 @@ class AnthropicClient implements AIClientInterface {
         ];
 
         if (!empty($systemParts)) {
-            $payload['system'] = implode("\n\n", $systemParts);
+            $payload['system'] = $this->buildSystemBlocks($systemParts);
         }
 
         $convertedTools = $this->convertTools($tools);
         if (!empty($convertedTools)) {
+            $lastIdx = count($convertedTools) - 1;
+            $convertedTools[$lastIdx]['cache_control'] = ['type' => 'ephemeral'];
             $payload['tools'] = $convertedTools;
         }
 
         return $payload;
+    }
+
+    /**
+     * Build system content blocks with cache_control on the stable identity
+     * prefix so Anthropic can cache it across turns in tool loops.
+     *
+     * @param string[] $parts System message texts (first = stable identity, rest = dynamic)
+     * @return array<int, array{type: string, text: string, cache_control?: array}>
+     */
+    private function buildSystemBlocks(array $parts): array {
+        $blocks = [];
+        foreach ($parts as $i => $text) {
+            $text = trim($text);
+            if ($text === '') {
+                continue;
+            }
+            $block = ['type' => 'text', 'text' => $text];
+            if ($i === 0 && mb_strlen($text) > 1024) {
+                $block['cache_control'] = ['type' => 'ephemeral'];
+            }
+            $blocks[] = $block;
+        }
+        return $blocks;
     }
 
     private function convertTools(array $tools): array {

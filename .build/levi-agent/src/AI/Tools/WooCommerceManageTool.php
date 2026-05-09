@@ -4,15 +4,39 @@ namespace Levi\Agent\AI\Tools;
 
 class WooCommerceManageTool implements ToolInterface {
 
+    private const ACTION_REQUIRED_PARAMS = [
+        'create_product'         => ['name'],
+        'update_product'         => ['product_id'],
+        'delete_product'         => ['product_id'],
+        'set_product_attributes' => ['product_id', 'attributes'],
+        'create_variations'      => ['product_id'],
+        'update_variation'       => ['variation_id'],
+        'delete_variation'       => ['variation_id'],
+        'update_order_status'    => ['order_id', 'order_status'],
+        'configure_tax'          => [],
+        'create_coupon'          => ['coupon_code'],
+        'update_coupon'          => ['coupon_id'],
+        'delete_coupon'          => ['coupon_id'],
+    ];
+
     public function getName(): string {
         return 'manage_woocommerce';
     }
 
     public function getDescription(): string {
-        return 'Write operations for WooCommerce: create/update/delete products (simple, variable, grouped), '
-            . 'manage product attributes and variations, update order status, configure taxes, '
-            . 'and create/update/delete coupons. Always use this tool instead of execute_wp_code for WooCommerce tasks. '
-            . 'For variable products: first create_product (type=variable), then set_product_attributes, then create_variations.';
+        return 'Manage WooCommerce products, attributes, variations, orders, taxes, and coupons. '
+            . 'Actions: create_product, update_product, delete_product, set_product_attributes, create_variations, update_variation, delete_variation, update_order_status, configure_tax, create_coupon, update_coupon, delete_coupon. '
+            . 'For variable products follow this order: create_product (type=variable) → set_product_attributes → create_variations. '
+            . 'Always verify results with get_woocommerce_data after writing.';
+    }
+
+    public function getInputExamples(): array {
+        return [
+            ['action' => 'create_product', 'name' => 'Basic T-Shirt', 'product_type' => 'simple', 'regular_price' => '29.99', 'status' => 'publish'],
+            ['action' => 'set_product_attributes', 'product_id' => 42, 'attributes' => [['name' => 'Farbe', 'options' => ['Rot', 'Blau']], ['name' => 'Größe', 'options' => ['S', 'M', 'L']]]],
+            ['action' => 'create_variations', 'product_id' => 42, 'uniform_price' => '29.99'],
+            ['action' => 'create_coupon', 'coupon_code' => 'SUMMER25', 'discount_type' => 'percent', 'amount' => '25'],
+        ];
     }
 
     public function getParameters(): array {
@@ -151,6 +175,11 @@ class WooCommerceManageTool implements ToolInterface {
 
         $action = (string) ($params['action'] ?? '');
 
+        $paramCheck = $this->validateRequiredParams($action, $params);
+        if ($paramCheck !== null) {
+            return $paramCheck;
+        }
+
         return match ($action) {
             'create_product' => $this->createProduct($params),
             'update_product' => $this->updateProduct($params),
@@ -217,8 +246,9 @@ class WooCommerceManageTool implements ToolInterface {
         }
 
         $product->save();
+        $this->clearProductTransients($product->get_id());
 
-        return [
+        $result = [
             'success' => true,
             'product_id' => $product->get_id(),
             'product_name' => $product->get_name(),
@@ -227,6 +257,17 @@ class WooCommerceManageTool implements ToolInterface {
             'permalink' => $product->get_permalink(),
             'message' => "Product '{$name}' created (type: {$type}).",
         ];
+
+        if ($type === 'variable') {
+            $result['next_steps'] = [
+                '1. set_product_attributes — define attributes like Color, Size with their options',
+                '2. create_variations — generate purchasable variations from attribute combinations',
+            ];
+        } elseif (!isset($params['regular_price']) && $type === 'simple') {
+            $result['warning'] = 'No price set. Product will not be purchasable until a regular_price is defined.';
+        }
+
+        return $result;
     }
 
     private function updateProduct(array $params): array {
@@ -290,6 +331,7 @@ class WooCommerceManageTool implements ToolInterface {
         }
 
         $product->save();
+        $this->clearProductTransients($productId);
 
         return [
             'success' => true,
@@ -313,6 +355,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $name = $product->get_name();
         $product->delete(true);
+        $this->clearProductTransients($productId);
 
         return [
             'success' => true,
@@ -390,6 +433,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $product->set_attributes($wcAttributes);
         $product->save();
+        $this->clearProductTransients($productId);
 
         return [
             'success' => true,
@@ -497,6 +541,7 @@ class WooCommerceManageTool implements ToolInterface {
         }
 
         \WC_Product_Variable::sync($productId);
+        $this->clearProductTransients($productId);
 
         return [
             'success' => true,
@@ -589,13 +634,15 @@ class WooCommerceManageTool implements ToolInterface {
             return ['success' => false, 'error' => 'No changes specified.'];
         }
 
+        $parentId = $variation->get_parent_id();
         $variation->save();
-        \WC_Product_Variable::sync($variation->get_parent_id());
+        \WC_Product_Variable::sync($parentId);
+        $this->clearProductTransients($parentId);
 
         return [
             'success' => true,
             'variation_id' => $variationId,
-            'parent_id' => $variation->get_parent_id(),
+            'parent_id' => $parentId,
             'changes' => $changes,
             'message' => 'Variation updated.',
         ];
@@ -615,6 +662,7 @@ class WooCommerceManageTool implements ToolInterface {
         $parentId = $variation->get_parent_id();
         $variation->delete(true);
         \WC_Product_Variable::sync($parentId);
+        $this->clearProductTransients($parentId);
 
         return [
             'success' => true,
@@ -699,6 +747,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $this->applyCouponParams($coupon, $params);
         $coupon->save();
+        clean_post_cache($coupon->get_id());
 
         return [
             'success' => true,
@@ -721,6 +770,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $this->applyCouponParams($coupon, $params);
         $coupon->save();
+        clean_post_cache($couponId);
 
         return [
             'success' => true,
@@ -743,6 +793,7 @@ class WooCommerceManageTool implements ToolInterface {
 
         $code = $coupon->get_code();
         $coupon->delete(true);
+        clean_post_cache($couponId);
 
         return [
             'success' => true,
@@ -750,6 +801,33 @@ class WooCommerceManageTool implements ToolInterface {
             'code' => $code,
             'message' => 'Coupon deleted.',
         ];
+    }
+
+    private function validateRequiredParams(string $action, array $params): ?array {
+        if (!isset(self::ACTION_REQUIRED_PARAMS[$action])) {
+            return [
+                'success' => false,
+                'error' => "Unknown action '{$action}'.",
+                'available_actions' => array_keys(self::ACTION_REQUIRED_PARAMS),
+            ];
+        }
+
+        $required = self::ACTION_REQUIRED_PARAMS[$action];
+        $missing = [];
+        foreach ($required as $param) {
+            if (!isset($params[$param]) || (is_string($params[$param]) && trim($params[$param]) === '')) {
+                $missing[] = $param;
+            }
+        }
+
+        if (!empty($missing)) {
+            return [
+                'success' => false,
+                'error' => "Action '{$action}' requires: " . implode(', ', $missing) . '.',
+            ];
+        }
+
+        return null;
     }
 
     private function applyCouponParams(\WC_Coupon $coupon, array $params): void {
@@ -768,5 +846,12 @@ class WooCommerceManageTool implements ToolInterface {
         if (isset($params['usage_limit'])) {
             $coupon->set_usage_limit((int) $params['usage_limit']);
         }
+    }
+
+    private function clearProductTransients(int $productId): void {
+        if (function_exists('wc_delete_product_transients')) {
+            wc_delete_product_transients($productId);
+        }
+        clean_post_cache($productId);
     }
 }

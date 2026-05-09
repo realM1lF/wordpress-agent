@@ -9,7 +9,10 @@ class DeleteThemeFileTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Delete a file inside a theme directory.';
+        return 'Delete a single file inside a theme directory. '
+            . 'Cannot delete the main style.css which is required by WordPress. '
+            . 'Use this to remove unused templates, old CSS, or PHP includes. '
+            . 'To remove an entire theme, deactivate it first via switch_theme.';
     }
 
     public function getParameters(): array {

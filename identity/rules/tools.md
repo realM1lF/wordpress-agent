@@ -30,6 +30,7 @@
 | `manage_menu` | Navigationsmenüs und Widgets verwalten |
 | `manage_user` | Benutzer anlegen oder bearbeiten |
 | `upload_media` | Bild von URL in Mediathek hochladen |
+| `update_media` | Bild-Metadaten bearbeiten: Alt-Text, Titel, Caption, Beschreibung (attachment_id aus get_media) |
 | `store_session_image` | Vom User hochgeladenes Bild in Mediathek speichern |
 | `update_option` | Sichere WP-Optionen ändern (Whitelist) |
 | `update_any_option` | Beliebige WP-Option ändern (gefährlich!) |

@@ -378,27 +378,16 @@ trait ExecutesToolLoop
                     }
                 }
 
-                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
-                    $mutationNudgeCount++;
-                    $messages[] = [
-                        'role' => 'system',
-                        'content' => 'Der Nutzer hat eine konkrete Aenderung angefordert. Du hast bisher nur gelesen oder geprueft. '
-                            . 'Fuehre jetzt den passenden mutierenden Tool-Call aus (z. B. delete/update/create/install), '
-                            . 'oder erklaere konkret, warum die Ausfuehrung nicht moeglich ist. Behaupte keinen Abschluss ohne mutierenden Erfolg.',
-                    ];
-                    $nudgedResponse = $this->chatWithTracking($messages, $this->getToolDefs(), $heartbeat, $webSearch);
-                    if (is_wp_error($nudgedResponse)) {
-                        $this->emitSSE('error', [
-                            'message' => $nudgedResponse->get_error_message(),
-                            'session_id' => $sessionId,
-                            'tools_used' => array_values(array_unique(array_map(fn($r) => $r['tool'], $toolResults))),
-                        ]);
-                        return;
-                    }
-                    $messageData = $nudgedResponse['choices'][0]['message'] ?? [];
-                    if (!empty($messageData['tool_calls'])) {
+                if ($mutationNudgeCount < 1) {
+                    $gateResult = $this->enforceMutationGate(
+                        $messages, $messageData, $toolResults, $latestUserMessage, $webSearch, $heartbeat
+                    );
+                    if ($gateResult !== null) {
+                        $mutationNudgeCount++;
+                        $messageData = $gateResult;
                         continue;
                     }
+                    $mutationNudgeCount++;
                 }
 
                 $finalMessage = $this->sanitizeAssistantMessageContent(
@@ -491,6 +480,7 @@ trait ExecutesToolLoop
             'write_theme_file' => 'Theme-Datei schreiben',
             'read_error_log' => 'Error-Log pruefen',
             'upload_media' => 'Medien hochladen',
+            'update_media' => 'Medien-Metadaten bearbeiten',
             'update_option' => 'Einstellung aendern',
             'manage_post_meta' => 'Metadaten verarbeiten',
             'manage_taxonomy' => 'Taxonomie verarbeiten',
@@ -802,7 +792,7 @@ trait ExecutesToolLoop
                 $messages[] = $ctw;
             }
 
-            $toolMismatch = $this->injectToolMismatchCorrection($message, $toolResults);
+            $toolMismatch = $this->injectToolMismatchCorrection($latestUserMessage, $toolResults);
             foreach ($toolMismatch as $tm) {
                 $messages[] = $tm;
             }
@@ -869,27 +859,16 @@ trait ExecutesToolLoop
                     }
                 }
 
-                if ($this->shouldNudgePendingMutation($toolResults, $taskIntent, $mutationNudgeCount)) {
-                    $mutationNudgeCount++;
-                    $messages[] = [
-                        'role' => 'system',
-                        'content' => 'Der Nutzer hat eine konkrete Aenderung angefordert. Du hast bisher nur gelesen oder geprueft. '
-                            . 'Fuehre jetzt den passenden mutierenden Tool-Call aus (z. B. delete/update/create/install), '
-                            . 'oder erklaere konkret, warum die Ausfuehrung nicht moeglich ist. Behaupte keinen Abschluss ohne mutierenden Erfolg.',
-                    ];
-
-                    $nextResponse = $this->chatWithTracking($messages, $this->getToolDefs(), null, $webSearch);
-                    if (is_wp_error($nextResponse)) {
-                        return new WP_REST_Response([
-                            'error' => $nextResponse->get_error_message(),
-                            'session_id' => $sessionId,
-                            'execution_trace' => $executionTrace,
-                        ], 500);
-                    }
-                    $messageData = $nextResponse['choices'][0]['message'] ?? [];
-                    if (!empty($messageData['tool_calls'])) {
+                if ($mutationNudgeCount < 1) {
+                    $gateResult = $this->enforceMutationGate(
+                        $messages, $messageData, $toolResults, $latestUserMessage, $webSearch
+                    );
+                    if ($gateResult !== null) {
+                        $mutationNudgeCount++;
+                        $messageData = $gateResult;
                         continue;
                     }
+                    $mutationNudgeCount++;
                 }
 
                 $finalMessage = $this->sanitizeAssistantMessageContent(

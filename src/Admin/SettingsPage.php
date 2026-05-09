@@ -169,13 +169,17 @@ class SettingsPage {
             $sanitized['ai_provider'] = isset($providers[$provider]) ? $provider : 'openrouter';
         }
 
-        if (array_key_exists('ai_auth_method', $input)) {
-            $authMethod = sanitize_key($input['ai_auth_method']);
-            $authOptions = $this->getAuthMethodOptions($sanitized['ai_provider']);
-            $sanitized['ai_auth_method'] = isset($authOptions[$authMethod]) ? $authMethod : array_key_first($authOptions);
+        // ai_auth_method is managed exclusively by OAuth connect/disconnect,
+        // NOT by the settings form. The value from $existing is preserved via
+        // the initial array_merge above. When switching to a non-OpenRouter
+        // provider, the auth method is effectively 'api_key' regardless.
+        if ($sanitized['ai_provider'] !== 'openrouter') {
+            $sanitized['ai_auth_method'] = 'api_key';
         }
 
-        // API Keys — only overwrite if explicitly submitted
+        // API Keys — only overwrite if explicitly submitted and non-empty.
+        // Empty values (e.g. from browser autofill prevention clearing the field)
+        // preserve the existing saved key.
         $keyFields = ['openrouter_api_key', 'openai_api_key', 'anthropic_api_key'];
         foreach ($keyFields as $keyField) {
             if (isset($input[$keyField])) {
@@ -186,9 +190,9 @@ class SettingsPage {
             }
         }
 
-        // Models — only overwrite if submitted
+        // Models — validate against allowed models per provider
         $modelFields = [
-            'openrouter' => 'openrouter_model',
+            'openrouter' => 'openrouter_alt_model',
             'openai' => 'openai_model',
             'anthropic' => 'anthropic_model',
         ];
@@ -198,12 +202,6 @@ class SettingsPage {
                 $candidate = sanitize_text_field($input[$settingKey]);
                 $sanitized[$settingKey] = isset($allowedModels[$candidate]) ? $candidate : array_key_first($allowedModels);
             }
-        }
-
-        if (array_key_exists('openrouter_alt_model', $input)) {
-            $allowedAltModels = $this->getAllowedAltModelsForProvider('openrouter');
-            $altCandidate = sanitize_text_field($input['openrouter_alt_model']);
-            $sanitized['openrouter_alt_model'] = isset($allowedAltModels[$altCandidate]) ? $altCandidate : array_key_first($allowedAltModels);
         }
 
         // Web search toggle (has hidden input value="0", so key present = tab was rendered)
@@ -231,10 +229,6 @@ class SettingsPage {
         if (array_key_exists('php_time_limit', $input)) {
             $sanitized['php_time_limit'] = max(0, absint($input['php_time_limit']));
         }
-        if (array_key_exists('max_context_tokens', $input)) {
-            $sanitized['max_context_tokens'] = max(1000, min(500000, absint($input['max_context_tokens'])));
-        }
-
         // --- Behavior presets (safety tab / wizard) ---
         $thoroughness = sanitize_key($input['levi_thoroughness'] ?? '');
         $safetyMode = sanitize_key($input['levi_safety_mode'] ?? '');
@@ -540,143 +534,81 @@ class SettingsPage {
 
     private function renderAiProviderTab(array $settings): void {
         $provider = $this->getProvider();
+        $providers = $this->getProviderLabels();
+        $allProviders = ['openrouter', 'anthropic', 'openai'];
         ?>
         <div class="levi-settings-section">
             <div class="levi-section-header">
-                <h2><?php echo esc_html($this->tr('OpenRouter Configuration', 'OpenRouter konfigurieren')); ?></h2>
-                <p><?php echo esc_html($this->tr('Levi uses OpenRouter with Kimi K2.5. Configure your API key below.', 'Levi nutzt OpenRouter mit Kimi K2.5. Richte deinen API-Schluessel ein.')); ?></p>
+                <h2><?php echo esc_html($this->tr('AI Provider', 'KI-Anbieter')); ?></h2>
+                <p><?php echo esc_html($this->tr('Choose your AI provider and configure the connection.', 'Waehle deinen KI-Anbieter und konfiguriere die Verbindung.')); ?></p>
             </div>
 
-            <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_provider]" value="openrouter">
+            <!-- Provider Selection -->
+            <div class="levi-form-card">
+                <h3><?php echo esc_html($this->tr('Provider', 'Anbieter')); ?></h3>
+                <div class="levi-form-group">
+                    <select name="<?php echo esc_attr($this->optionName); ?>[ai_provider]" class="levi-form-select" id="levi-provider-select">
+                        <?php foreach ($providers as $pId => $pLabel): ?>
+                            <option value="<?php echo esc_attr($pId); ?>" <?php selected($provider, $pId); ?>>
+                                <?php echo esc_html($pLabel); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="levi-form-help levi-provider-hint" data-provider="openrouter"<?php echo $provider !== 'openrouter' ? ' style="display:none;"' : ''; ?>>
+                        <?php echo esc_html($this->tr(
+                            'Access many models from different providers via one OpenRouter account. Easiest way to get started.',
+                            'Zugang zu vielen Modellen verschiedener Anbieter ueber ein OpenRouter-Konto. Einfachster Einstieg.'
+                        )); ?>
+                    </p>
+                    <p class="levi-form-help levi-provider-hint" data-provider="anthropic"<?php echo $provider !== 'anthropic' ? ' style="display:none;"' : ''; ?>>
+                        <?php echo esc_html($this->tr(
+                            'Connect directly to Anthropic. You need an API key from console.anthropic.com.',
+                            'Direkte Verbindung zu Anthropic. Du brauchst einen API-Key von console.anthropic.com.'
+                        )); ?>
+                    </p>
+                    <p class="levi-form-help levi-provider-hint" data-provider="openai"<?php echo $provider !== 'openai' ? ' style="display:none;"' : ''; ?>>
+                        <?php echo esc_html($this->tr(
+                            'Connect directly to OpenAI. You need an API key from platform.openai.com.',
+                            'Direkte Verbindung zu OpenAI. Du brauchst einen API-Key von platform.openai.com.'
+                        )); ?>
+                    </p>
+                </div>
+            </div>
 
-            <!-- Authentication -->
+            <!-- Authentication (all providers rendered, JS toggles visibility) -->
             <div class="levi-form-card">
                 <h3><?php echo esc_html($this->tr('Authentication', 'Authentifizierung')); ?></h3>
-                
-                <?php
-                $oauth = new OpenRouterOAuth();
-                $isOAuth = $oauth->isOAuthConnected();
-                $hasKey = !empty($this->getApiKeyForProvider($provider));
-                $keyField = match($provider) {
-                    'openai' => 'openai_api_key',
-                    'anthropic' => 'anthropic_api_key',
-                    default => 'openrouter_api_key',
-                };
+
+                <?php foreach ($allProviders as $p):
+                    $pHasKey = !empty($this->getApiKeyForProvider($p));
+                    $pKeyField = match($p) {
+                        'openai' => 'openai_api_key',
+                        'anthropic' => 'anthropic_api_key',
+                        default => 'openrouter_api_key',
+                    };
                 ?>
-
-                <?php if ($isOAuth): ?>
-                    <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" value="oauth">
-                    <div class="levi-oauth-connected">
-                        <div class="levi-oauth-status">
-                            <span class="dashicons dashicons-yes-alt" style="color: #46b450; font-size: 24px;"></span>
-                            <div>
-                                <strong><?php echo esc_html($this->tr('Connected via OpenRouter OAuth', 'Verbunden ueber OpenRouter OAuth')); ?></strong>
-                                <p class="levi-form-help" style="margin-top: 4px;">
-                                    <?php
-                                    $connectedAt = $settings['oauth_connected_at'] ?? null;
-                                    if ($connectedAt) {
-                                        printf(
-                                            esc_html($this->tr('Connected since %s', 'Verbunden seit %s')),
-                                            esc_html(wp_date(get_option('date_format') . ' ' . get_option('time_format'), (int) $connectedAt))
-                                        );
-                                    }
-                                    ?>
-                                </p>
-                            </div>
-                        </div>
-                        <button type="button" id="levi-oauth-disconnect" class="levi-btn levi-btn-danger levi-btn-small" style="margin-top: 12px;">
-                            <span class="dashicons dashicons-dismiss"></span>
-                            <?php echo esc_html($this->tr('Disconnect', 'Verbindung trennen')); ?>
-                        </button>
+                    <div class="levi-provider-auth-section" data-provider="<?php echo esc_attr($p); ?>"<?php echo $p !== $provider ? ' style="display:none;"' : ''; ?>>
+                        <?php if ($p === 'openrouter'): ?>
+                            <?php $this->renderOpenRouterAuth($settings, $pHasKey, $pKeyField); ?>
+                        <?php else: ?>
+                            <?php $this->renderDirectApiKeyAuth($p, $pHasKey, $pKeyField); ?>
+                        <?php endif; ?>
                     </div>
-
-                <?php else: ?>
-                    <?php
-                    $oauthUrl = $oauth->getAuthUrl('settings');
-                    ?>
-                    <div class="levi-oauth-connect">
-                        <p class="levi-form-description" style="margin-bottom: 8px;">
-                            <?php echo esc_html($this->tr(
-                                'Connect your OpenRouter account with one click. You will be redirected to OpenRouter to authorize Levi. Costs are billed to your own OpenRouter account.',
-                                'Verbinde dein OpenRouter-Konto mit einem Klick. Du wirst zu OpenRouter weitergeleitet, um Levi zu autorisieren. Die Kosten werden ueber dein eigenes OpenRouter-Konto abgerechnet.'
-                            )); ?>
-                        </p>
-                        <div class="levi-cost-hint" style="margin-bottom: 16px; padding: 10px 14px; background: rgba(124, 58, 237, 0.08); border-left: 4px solid var(--levi-accent, #7c3aed); border-radius: 4px; font-size: 13px; color: var(--levi-text-secondary, #94a3b8);">
-                            <strong style="color: var(--levi-text-primary, #f1f5f9);"><?php echo esc_html($this->tr('Typical costs:', 'Typische Kosten:')); ?></strong>
-                            <?php echo esc_html($this->tr(
-                                'Approx. $0.01–0.05 per message for simple questions. Complex tasks like plugin development use significantly more tokens (approx. $0.10–0.50 per message), as Levi generates code, verifies it, and performs multiple tool calls. Default model Kimi K2.5: $0.60/$3.00 per 1M tokens — one of the most cost-effective options.',
-                                'Ca. 0,01–0,05 $ pro Nachricht bei einfachen Fragen. Bei komplexen Aufgaben wie Plugin-Entwicklung werden deutlich mehr Tokens verbraucht (ca. 0,10–0,50 $ pro Nachricht), da Levi Code generiert, prueft und mehrere Tool-Aufrufe durchfuehrt. Standard-Modell Kimi K2.5: 0,60$/3,00$ pro 1M Tokens — eines der guenstigsten Modelle.'
-                            )); ?>
-                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(124, 58, 237, 0.15);">
-                                <strong style="color: var(--levi-text-primary, #f1f5f9); font-size: 14px;"><?php echo esc_html($this->tr('$5 credit is plenty to get started!', '5$ Guthaben reichen fuer den Einstieg locker aus!')); ?></strong>
-                            </div>
-                        </div>
-                        <a href="<?php echo esc_url($oauthUrl); ?>" class="levi-btn levi-btn-primary" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
-                            <span class="dashicons dashicons-admin-links"></span>
-                            <?php echo esc_html($this->tr('Connect with OpenRouter', 'Mit OpenRouter verbinden')); ?>
-                        </a>
-                    </div>
-
-                    <div class="levi-oauth-divider" style="margin: 20px 0; display: flex; align-items: center; gap: 12px;">
-                        <hr style="flex: 1; border: none; border-top: 1px solid #ddd;">
-                        <span style="color: #999; font-size: 13px;"><?php echo esc_html($this->tr('or enter manually', 'oder manuell eingeben')); ?></span>
-                        <hr style="flex: 1; border: none; border-top: 1px solid #ddd;">
-                    </div>
-
-                    <input type="hidden" name="<?php echo esc_attr($this->optionName); ?>[ai_auth_method]" value="api_key">
-                    <div class="levi-form-group">
-                        <label class="levi-form-label">
-                            <?php echo esc_html($this->tr('API Key', 'API-Schluessel')); ?>
-                            <?php if ($hasKey && !$isOAuth): ?>
-                                <span class="levi-badge levi-badge-success"><?php echo esc_html($this->tr('Configured', 'Konfiguriert')); ?></span>
-                            <?php endif; ?>
-                        </label>
-                        <input type="password" 
-                               name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($keyField); ?>]" 
-                               value="" 
-                               class="levi-form-input"
-                               placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : 'sk-or-...'; ?>">
-                        <p class="levi-form-help">
-                            <?php if ($hasKey): ?>
-                                <?php echo esc_html($this->tr('API key is saved. Enter a new key to replace it.', 'API-Schluessel ist gespeichert. Gib einen neuen ein, um ihn zu ersetzen.')); ?>
-                            <?php else: ?>
-                                <?php echo esc_html($this->tr(
-                                    'Get your key at openrouter.ai/keys — or use the button above for easier setup.',
-                                    'Hole deinen Key auf openrouter.ai/keys — oder nutze den Button oben fuer einfacheres Setup.'
-                                )); ?>
-                            <?php endif; ?>
-                        </p>
-                        <p class="levi-form-help levi-hint">
-                            <?php echo esc_html($this->tr(
-                                'Hint: The API key is stored in the database and only sent to OpenRouter. You can also set it via .env (OPEN_ROUTER_API_KEY).',
-                                'Hinweis: Der API-Schluessel wird in der Datenbank gespeichert und nur an OpenRouter uebertragen. Alternativ per .env setzen (OPEN_ROUTER_API_KEY).'
-                            )); ?>
-                        </p>
-                    </div>
-                <?php endif; ?>
+                <?php endforeach; ?>
 
                 <?php if (!empty($_GET['oauth_success'])): ?>
-                    <div class="levi-notice levi-notice-success" style="margin-top: 12px; padding: 10px 14px; background: #ecf7ed; border-left: 4px solid #46b450; border-radius: 4px;">
-                        <?php echo esc_html($this->tr(
-                            'Successfully connected with OpenRouter!',
-                            'Erfolgreich mit OpenRouter verbunden!'
-                        )); ?>
+                    <div class="levi-notice levi-notice-success levi-provider-auth-section" data-provider="openrouter" style="margin-top: 12px; padding: 10px 14px; background: #ecf7ed; border-left: 4px solid #46b450; border-radius: 4px;<?php echo $provider !== 'openrouter' ? ' display:none;' : ''; ?>">
+                        <?php echo esc_html($this->tr('Successfully connected with OpenRouter!', 'Erfolgreich mit OpenRouter verbunden!')); ?>
                     </div>
                 <?php endif; ?>
 
                 <?php if (!empty($_GET['oauth_error'])): ?>
-                    <div class="levi-notice levi-notice-error" style="margin-top: 12px; padding: 10px 14px; background: #fbeaea; border-left: 4px solid #dc3232; border-radius: 4px;">
+                    <div class="levi-notice levi-notice-error levi-provider-auth-section" data-provider="openrouter" style="margin-top: 12px; padding: 10px 14px; background: #fbeaea; border-left: 4px solid #dc3232; border-radius: 4px;<?php echo $provider !== 'openrouter' ? ' display:none;' : ''; ?>">
                         <?php
                         $errorCode = sanitize_key($_GET['oauth_error']);
                         $errorMessages = [
-                            'verifier_expired' => $this->tr(
-                                'OAuth session expired. Please try again.',
-                                'OAuth-Sitzung abgelaufen. Bitte erneut versuchen.'
-                            ),
-                            'exchange_failed' => $this->tr(
-                                'Could not exchange authorization code. Please try again or use a manual API key.',
-                                'Autorisierungscode konnte nicht eingeloest werden. Bitte erneut versuchen oder manuellen API-Key nutzen.'
-                            ),
+                            'verifier_expired' => $this->tr('OAuth session expired. Please try again.', 'OAuth-Sitzung abgelaufen. Bitte erneut versuchen.'),
+                            'exchange_failed' => $this->tr('Could not exchange authorization code. Please try again or use a manual API key.', 'Autorisierungscode konnte nicht eingeloest werden. Bitte erneut versuchen oder manuellen API-Key nutzen.'),
                         ];
                         echo esc_html($errorMessages[$errorCode] ?? $this->tr('OAuth error. Please try again.', 'OAuth-Fehler. Bitte erneut versuchen.'));
                         $details = isset($_GET['oauth_details']) ? sanitize_text_field(wp_unslash($_GET['oauth_details'])) : '';
@@ -696,137 +628,255 @@ class SettingsPage {
                 </div>
             </div>
 
-            <!-- Model Selection -->
+            <!-- Model Selection (all providers rendered, JS toggles visibility) -->
             <div class="levi-form-card">
                 <h3><?php echo esc_html($this->tr('AI Model', 'KI-Modell')); ?></h3>
                 <p class="levi-form-description">
-                    <?php echo esc_html($this->tr('Select the AI model to use for all queries. This model will handle everything from simple questions to complex coding tasks.', 'Wähle das KI-Modell für alle Anfragen. Dieses Modell bearbeitet alles von einfachen Fragen bis zu komplexen Coding-Aufgaben.')); ?>
+                    <?php echo esc_html($this->tr(
+                        'Select the AI model to use for all queries. This model will handle everything from simple questions to complex coding tasks.',
+                        'Waehle das KI-Modell fuer alle Anfragen. Dieses Modell bearbeitet alles von einfachen Fragen bis zu komplexen Coding-Aufgaben.'
+                    )); ?>
                 </p>
-                <div class="levi-form-group">
-                    <?php 
-                    $models = $this->getAllowedAltModelsForProvider('openrouter');
-                    $currentModel = $settings['openrouter_alt_model'] ?? 'moonshotai/kimi-k2.5';
-                    ?>
-                    <select name="<?php echo esc_attr($this->optionName); ?>[openrouter_alt_model]" class="levi-form-select" id="levi-model-select">
-                        <?php foreach ($models as $modelId => $modelLabel): ?>
-                            <option value="<?php echo esc_attr($modelId); ?>" <?php selected($currentModel, $modelId); ?>>
-                                <?php echo esc_html($modelLabel); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
 
-                <!-- Model Comparison Tables -->
-                <div class="levi-model-info">
-                    <h4><?php echo esc_html($this->tr('📊 Model Comparison', 'Modell-Vergleich')); ?></h4>
-                    
-                    <div class="levi-table-wrap">
-                        <table class="levi-data-table">
-                            <thead>
-                                <tr>
-                                    <th><?php echo esc_html($this->tr('Model', 'Modell')); ?></th>
-                                    <th><?php echo esc_html($this->tr('💰 Price (In/Out)', 'Preis (In/Out)')); ?></th>
-                                    <th><?php echo esc_html($this->tr('🧠 Intelligence', 'Intelligenz')); ?></th>
-                                    <th><?php echo esc_html($this->tr('📖 Context', 'Kontext')); ?></th>
-                                    <th><?php echo esc_html($this->tr('⚡ Speed', 'Geschwindigkeit')); ?></th>
-                                    <th><?php echo esc_html($this->tr('🎯 Best For', 'Beste für')); ?></th>
-                                    <th><?php echo esc_html($this->tr('⭐ Value', 'Preis-Leistung')); ?></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr class="levi-row-featured">
-                                    <td><span class="levi-model-name">Kimi K2.5</span></td>
-                                    <td><span class="levi-price">$0.60 / $3.00</span></td>
-                                    <td><span class="levi-score">87%</span> <span class="levi-badge">Sehr hoch</span></td>
-                                    <td>262K</td>
-                                    <td><?php echo esc_html($this->tr('Fast', 'Schnell')); ?></td>
-                                    <td><?php echo esc_html($this->tr('Allrounder, Coding, Analysis', 'Allrounder, Coding, Analyse')); ?></td>
-                                    <td><span class="levi-rating">⭐⭐⭐⭐⭐ KING</span></td>
-                                </tr>
-                                <tr>
-                                    <td>GPT 5.3 Codex</td>
-                                    <td><span class="levi-price">$1.75 / $14.00</span></td>
-                                    <td><span class="levi-score">86%</span> <span class="levi-badge">Sehr hoch</span></td>
-                                    <td>400K</td>
-                                    <td><?php echo esc_html($this->tr('Medium', 'Mittel')); ?></td>
-                                    <td><?php echo esc_html($this->tr('Max coding quality, large codebases', 'Max. Coding-Qualität, große Codebases')); ?></td>
-                                    <td><span class="levi-rating">⭐⭐⭐⭐ Sehr gut</span></td>
-                                </tr>
-                                <tr>
-                                    <td>Claude Opus 4.6</td>
-                                    <td><span class="levi-price levi-price-high">$5.00 / $25.00</span></td>
-                                    <td><span class="levi-score">88%</span> <span class="levi-badge">Höchst</span></td>
-                                    <td>1M</td>
-                                    <td><?php echo esc_html($this->tr('Slower', 'Langsamer')); ?></td>
-                                    <td><?php echo esc_html($this->tr('Complex reasoning, research', 'Komplexes Reasoning, Research')); ?></td>
-                                    <td><span class="levi-rating">⭐⭐⭐ Premium</span></td>
-                                </tr>
-                                <tr>
-                                    <td>Claude 3.5 Sonnet</td>
-                                    <td><span class="levi-price levi-price-high">$3.00 / $15.00</span></td>
-                                    <td><span class="levi-score">89%</span> <span class="levi-badge">Höchst</span></td>
-                                    <td>200K</td>
-                                    <td><?php echo esc_html($this->tr('Fast', 'Schnell')); ?></td>
-                                    <td><?php echo esc_html($this->tr('Backup option', 'Backup-Option')); ?></td>
-                                    <td><span class="levi-rating">⭐⭐⭐ Okay</span></td>
-                                </tr>
-                                <tr>
-                                    <td>GPT-4o Mini</td>
-                                    <td><span class="levi-price levi-price-low">$0.15 / $0.60</span></td>
-                                    <td><span class="levi-score">82%</span> <span class="levi-badge">Hoch</span></td>
-                                    <td>128K</td>
-                                    <td><?php echo esc_html($this->tr('Very fast', 'Sehr schnell')); ?></td>
-                                    <td><?php echo esc_html($this->tr('Budget option, simple tasks', 'Budget-Option, einfache Aufgaben')); ?></td>
-                                    <td><span class="levi-rating">⭐⭐⭐⭐ Gut</span></td>
-                                </tr>
-                            </tbody>
-                        </table>
+                <?php foreach ($allProviders as $p):
+                    $pModelKey = match($p) {
+                        'openai' => 'openai_model',
+                        'anthropic' => 'anthropic_model',
+                        default => 'openrouter_alt_model',
+                    };
+                    $pModels = $this->getAllowedModelsForProvider($p);
+                    $pCurrentModel = $this->getModelForProvider($p);
+                ?>
+                    <div class="levi-provider-model-section" data-provider="<?php echo esc_attr($p); ?>"<?php echo $p !== $provider ? ' style="display:none;"' : ''; ?>>
+                        <div class="levi-form-group">
+                            <select name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($pModelKey); ?>]" class="levi-form-select">
+                                <?php foreach ($pModels as $modelId => $modelLabel): ?>
+                                    <option value="<?php echo esc_attr($modelId); ?>" <?php selected($pCurrentModel, $modelId); ?>>
+                                        <?php echo esc_html($modelLabel); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <?php $this->renderModelComparisonTable($p); ?>
                     </div>
-
-                    <h4><?php echo esc_html($this->tr('🎯 Quick Selection Guide', 'Schnellauswahl')); ?></h4>
-                    <div class="levi-table-wrap">
-                        <table class="levi-data-table levi-guide-table">
-                            <thead>
-                                <tr>
-                                    <th><?php echo esc_html($this->tr('If you want...', 'Wenn du willst...')); ?></th>
-                                    <th><?php echo esc_html($this->tr('Choose...', 'Wähle...')); ?></th>
-                                    <th><?php echo esc_html($this->tr('Why?', 'Warum?')); ?></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr class="levi-row-featured">
-                                    <td><?php echo esc_html($this->tr('The best value for money', 'Das Beste fürs Geld')); ?></td>
-                                    <td><span class="levi-model-name">Kimi K2.5</span></td>
-                                    <td><?php echo esc_html($this->tr('9x cheaper than Opus, almost equally smart', '9x günstiger als Opus, fast gleich smart')); ?></td>
-                                </tr>
-                                <tr>
-                                    <td><?php echo esc_html($this->tr('Huge codebases (400K+ context)', 'Riesige Codebases (400K+ Kontext)')); ?></td>
-                                    <td>GPT 5.3 Codex</td>
-                                    <td><?php echo esc_html($this->tr('Largest context, best coding worldwide', 'Größter Kontext, bestes Coding weltweit')); ?></td>
-                                </tr>
-                                <tr>
-                                    <td><?php echo esc_html($this->tr('Extremely complex analysis', 'Extrem komplexe Analysen')); ?></td>
-                                    <td>Claude Opus 4.6</td>
-                                    <td><?php echo esc_html($this->tr('Highest intelligence, 1M context', 'Höchste Intelligenz, 1M Kontext')); ?></td>
-                                </tr>
-                                <tr>
-                                    <td><?php echo esc_html($this->tr('Watch your budget', 'Aufs Geld achten')); ?></td>
-                                    <td>GPT-4o Mini</td>
-                                    <td><?php echo esc_html($this->tr('4x cheaper than Kimi, still good', '4x günstiger als Kimi, trotzdem gut')); ?></td>
-                                </tr>
-                                <tr>
-                                    <td><?php echo esc_html($this->tr('Prefer Claude', 'Claude bevorzugen')); ?></td>
-                                    <td>Claude 3.5 Sonnet</td>
-                                    <td><?php echo esc_html($this->tr('Good balance, but 5x more expensive than Kimi', 'Gute Balance, aber 5x teurer als Kimi')); ?></td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                <?php endforeach; ?>
             </div>
 
         </div>
         <?php
+    }
+
+    private function renderOpenRouterAuth(array $settings, bool $hasKey, string $keyField): void {
+        $oauth = new OpenRouterOAuth();
+        $isOAuth = $oauth->isOAuthConnected();
+
+        if ($isOAuth): ?>
+            <div class="levi-oauth-connected">
+                <div class="levi-oauth-status">
+                    <span class="dashicons dashicons-yes-alt" style="color: #46b450; font-size: 24px;"></span>
+                    <div>
+                        <strong><?php echo esc_html($this->tr('Connected via OpenRouter OAuth', 'Verbunden ueber OpenRouter OAuth')); ?></strong>
+                        <p class="levi-form-help" style="margin-top: 4px;">
+                            <?php
+                            $connectedAt = $settings['oauth_connected_at'] ?? null;
+                            if ($connectedAt) {
+                                printf(
+                                    esc_html($this->tr('Connected since %s', 'Verbunden seit %s')),
+                                    esc_html(wp_date(get_option('date_format') . ' ' . get_option('time_format'), (int) $connectedAt))
+                                );
+                            }
+                            ?>
+                        </p>
+                    </div>
+                </div>
+                <button type="button" id="levi-oauth-disconnect" class="levi-btn levi-btn-danger levi-btn-small" style="margin-top: 12px;">
+                    <span class="dashicons dashicons-dismiss"></span>
+                    <?php echo esc_html($this->tr('Disconnect', 'Verbindung trennen')); ?>
+                </button>
+            </div>
+        <?php else:
+            $oauthUrl = $oauth->getAuthUrl('settings');
+            ?>
+            <div class="levi-oauth-connect">
+                <p class="levi-form-description" style="margin-bottom: 8px;">
+                    <?php echo esc_html($this->tr(
+                        'Connect your OpenRouter account with one click. You will be redirected to OpenRouter to authorize Levi. Costs are billed to your own OpenRouter account.',
+                        'Verbinde dein OpenRouter-Konto mit einem Klick. Du wirst zu OpenRouter weitergeleitet, um Levi zu autorisieren. Die Kosten werden ueber dein eigenes OpenRouter-Konto abgerechnet.'
+                    )); ?>
+                </p>
+                <div class="levi-cost-hint" style="margin-bottom: 16px; padding: 10px 14px; background: rgba(124, 58, 237, 0.08); border-left: 4px solid var(--levi-accent, #7c3aed); border-radius: 4px; font-size: 13px; color: var(--levi-text-secondary, #94a3b8);">
+                    <strong style="color: var(--levi-text-primary, #f1f5f9);"><?php echo esc_html($this->tr('Typical costs:', 'Typische Kosten:')); ?></strong>
+                    <?php echo esc_html($this->tr(
+                        'Approx. $0.01–0.05 per message for simple questions. Complex tasks use more tokens (approx. $0.10–0.50 per message).',
+                        'Ca. 0,01-0,05 $ pro Nachricht bei einfachen Fragen. Komplexe Aufgaben verbrauchen mehr Tokens (ca. 0,10-0,50 $ pro Nachricht).'
+                    )); ?>
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(124, 58, 237, 0.15);">
+                        <strong style="color: var(--levi-text-primary, #f1f5f9); font-size: 14px;"><?php echo esc_html($this->tr('$5 credit is plenty to get started!', '5$ Guthaben reichen fuer den Einstieg locker aus!')); ?></strong>
+                    </div>
+                </div>
+                <a href="<?php echo esc_url($oauthUrl); ?>" class="levi-btn levi-btn-primary" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
+                    <span class="dashicons dashicons-admin-links"></span>
+                    <?php echo esc_html($this->tr('Connect with OpenRouter', 'Mit OpenRouter verbinden')); ?>
+                </a>
+            </div>
+
+            <div class="levi-oauth-divider" style="margin: 20px 0; display: flex; align-items: center; gap: 12px;">
+                <hr style="flex: 1; border: none; border-top: 1px solid #ddd;">
+                <span style="color: #999; font-size: 13px;"><?php echo esc_html($this->tr('or enter manually', 'oder manuell eingeben')); ?></span>
+                <hr style="flex: 1; border: none; border-top: 1px solid #ddd;">
+            </div>
+
+            <div class="levi-form-group">
+                <label class="levi-form-label">
+                    <?php echo esc_html($this->tr('API Key', 'API-Schluessel')); ?>
+                    <?php if ($hasKey): ?>
+                        <span class="levi-badge levi-badge-success"><?php echo esc_html($this->tr('Configured', 'Konfiguriert')); ?></span>
+                    <?php endif; ?>
+                </label>
+                <input type="password"
+                       name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($keyField); ?>]"
+                       value="" class="levi-form-input levi-api-key-field"
+                       autocomplete="new-password"
+                       placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : 'sk-or-...'; ?>">
+                <p class="levi-form-help">
+                    <?php if ($hasKey): ?>
+                        <?php echo esc_html($this->tr('API key is saved. Enter a new key to replace it.', 'API-Schluessel ist gespeichert. Gib einen neuen ein, um ihn zu ersetzen.')); ?>
+                    <?php else: ?>
+                        <?php echo esc_html($this->tr('Get your key at openrouter.ai/keys — or use the button above for easier setup.', 'Hole deinen Key auf openrouter.ai/keys — oder nutze den Button oben fuer einfacheres Setup.')); ?>
+                    <?php endif; ?>
+                </p>
+                <p class="levi-form-help levi-hint">
+                    <?php echo esc_html($this->tr(
+                        'Hint: The API key is stored in the database and only sent to OpenRouter. You can also set it via .env (OPEN_ROUTER_API_KEY).',
+                        'Hinweis: Der API-Schluessel wird in der Datenbank gespeichert und nur an OpenRouter uebertragen. Alternativ per .env setzen (OPEN_ROUTER_API_KEY).'
+                    )); ?>
+                </p>
+            </div>
+        <?php endif;
+    }
+
+    private function renderDirectApiKeyAuth(string $provider, bool $hasKey, string $keyField): void {
+        $providerConfig = match($provider) {
+            'anthropic' => [
+                'label' => 'Anthropic',
+                'placeholder' => 'sk-ant-...',
+                'url' => 'console.anthropic.com',
+                'url_full' => 'https://console.anthropic.com/settings/keys',
+                'env_var' => 'ANTHROPIC_API_KEY',
+            ],
+            'openai' => [
+                'label' => 'OpenAI',
+                'placeholder' => 'sk-...',
+                'url' => 'platform.openai.com',
+                'url_full' => 'https://platform.openai.com/api-keys',
+                'env_var' => 'OPENAI_API_KEY',
+            ],
+            default => [
+                'label' => ucfirst($provider),
+                'placeholder' => 'sk-...',
+                'url' => '',
+                'url_full' => '',
+                'env_var' => '',
+            ],
+        };
+        ?>
+        <div class="levi-form-group">
+            <label class="levi-form-label">
+                <?php echo esc_html($providerConfig['label'] . ' API-Key'); ?>
+                <?php if ($hasKey): ?>
+                    <span class="levi-badge levi-badge-success"><?php echo esc_html($this->tr('Configured', 'Konfiguriert')); ?></span>
+                <?php endif; ?>
+            </label>
+            <input type="password"
+                   name="<?php echo esc_attr($this->optionName); ?>[<?php echo esc_attr($keyField); ?>]"
+                   value="" class="levi-form-input levi-api-key-field"
+                   autocomplete="new-password"
+                   placeholder="<?php echo $hasKey ? '••••••••••••••••••••' : esc_attr($providerConfig['placeholder']); ?>">
+            <p class="levi-form-help">
+                <?php if ($hasKey): ?>
+                    <?php echo esc_html($this->tr('API key is saved. Enter a new key to replace it.', 'API-Schluessel ist gespeichert. Gib einen neuen ein, um ihn zu ersetzen.')); ?>
+                <?php else: ?>
+                    <?php printf(
+                        esc_html($this->tr('Get your key at %s', 'Hole deinen Key auf %s')),
+                        '<a href="' . esc_url($providerConfig['url_full']) . '" target="_blank" rel="noopener">' . esc_html($providerConfig['url']) . '</a>'
+                    ); ?>
+                <?php endif; ?>
+            </p>
+            <?php if ($providerConfig['env_var'] !== ''): ?>
+                <p class="levi-form-help levi-hint">
+                    <?php printf(
+                        esc_html($this->tr(
+                            'Hint: The API key is stored in the database and only sent to %1$s. You can also set it via .env (%2$s).',
+                            'Hinweis: Der API-Schluessel wird in der Datenbank gespeichert und nur an %1$s uebertragen. Alternativ per .env setzen (%2$s).'
+                        )),
+                        esc_html($providerConfig['label']),
+                        esc_html($providerConfig['env_var'])
+                    ); ?>
+                </p>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    private function renderModelComparisonTable(string $provider): void {
+        $tables = $this->getModelComparisonData($provider);
+        if (empty($tables)) {
+            return;
+        }
+        ?>
+        <div class="levi-model-info">
+            <h4><?php echo esc_html($this->tr('Model Comparison', 'Modell-Vergleich')); ?></h4>
+            <div class="levi-table-wrap">
+                <table class="levi-data-table">
+                    <thead>
+                        <tr>
+                            <th><?php echo esc_html($this->tr('Model', 'Modell')); ?></th>
+                            <th><?php echo esc_html($this->tr('Price (In/Out per 1M)', 'Preis (In/Out pro 1M)')); ?></th>
+                            <th><?php echo esc_html($this->tr('Context', 'Kontext')); ?></th>
+                            <th><?php echo esc_html($this->tr('Best For', 'Geeignet fuer')); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($tables as $row): ?>
+                            <tr<?php echo !empty($row['featured']) ? ' class="levi-row-featured"' : ''; ?>>
+                                <td><?php echo !empty($row['featured']) ? '<span class="levi-model-name">' . esc_html($row['name']) . '</span>' : esc_html($row['name']); ?></td>
+                                <td><span class="levi-price"><?php echo esc_html($row['price']); ?></span></td>
+                                <td><?php echo esc_html($row['context']); ?></td>
+                                <td><?php echo esc_html($row['best_for']); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php
+    }
+
+    private function getModelComparisonData(string $provider): array {
+        return match ($provider) {
+            'anthropic' => [
+                ['name' => 'Claude Opus 4.6', 'price' => '$5.00 / $25.00', 'context' => '1M', 'best_for' => $this->tr('Most intelligent, agents & coding', 'Intelligentestes Modell, Agenten & Coding')],
+                ['name' => 'Claude Sonnet 4.6', 'price' => '$3.00 / $15.00', 'context' => '1M', 'best_for' => $this->tr('Best speed-intelligence balance', 'Beste Balance aus Speed & Intelligenz'), 'featured' => true],
+                ['name' => 'Claude Haiku 4.5', 'price' => '$1.00 / $5.00', 'context' => '200K', 'best_for' => $this->tr('Fastest, near-frontier intelligence', 'Schnellstes Modell, nahe Spitzenklasse')],
+                ['name' => 'Claude Sonnet 4', 'price' => '$3.00 / $15.00', 'context' => '200K', 'best_for' => $this->tr('Proven, reliable model', 'Bewaehrtes, zuverlaessiges Modell')],
+            ],
+            'openai' => [
+                ['name' => 'GPT-5.4', 'price' => '$2.50 / $15.00', 'context' => '1M', 'best_for' => $this->tr('Flagship, complex reasoning & coding', 'Flagship, komplexes Reasoning & Coding'), 'featured' => true],
+                ['name' => 'GPT-5 Mini', 'price' => '$0.25 / $2.00', 'context' => '400K', 'best_for' => $this->tr('Fast & cheap, great for most tasks', 'Schnell & guenstig, ideal fuer die meisten Aufgaben')],
+                ['name' => 'GPT-4o', 'price' => '$2.50 / $10.00', 'context' => '128K', 'best_for' => $this->tr('Strong allrounder', 'Starker Allrounder')],
+                ['name' => 'GPT-4o Mini', 'price' => '$0.15 / $0.60', 'context' => '128K', 'best_for' => $this->tr('Ultra-budget option', 'Ultra-Budget-Option')],
+                ['name' => 'o3', 'price' => '$10.00 / $40.00', 'context' => '200K', 'best_for' => $this->tr('Deep reasoning, math, logic', 'Tiefes Reasoning, Mathe, Logik')],
+                ['name' => 'o4-mini', 'price' => '$1.10 / $4.40', 'context' => '200K', 'best_for' => $this->tr('Reasoning on a budget', 'Reasoning zum Budget-Preis')],
+            ],
+            default => [
+                ['name' => 'Kimi K2.5', 'price' => '$0.60 / $3.00', 'context' => '262K', 'best_for' => $this->tr('Best value, allrounder', 'Bestes Preis-Leistungs-Verhaeltnis'), 'featured' => true],
+                ['name' => 'GPT 5.3 Codex', 'price' => '$1.75 / $14.00', 'context' => '400K', 'best_for' => $this->tr('Max coding quality, large context', 'Max. Coding-Qualitaet, grosser Kontext')],
+                ['name' => 'Claude Opus 4.6', 'price' => '$5.00 / $25.00', 'context' => '1M', 'best_for' => $this->tr('Most intelligent model available', 'Intelligentestes verfuegbares Modell')],
+                ['name' => 'Claude Sonnet 4.6', 'price' => '$3.00 / $15.00', 'context' => '1M', 'best_for' => $this->tr('Fast flagship Claude', 'Schneller Flagship Claude')],
+                ['name' => 'Claude 3.5 Sonnet', 'price' => '$3.00 / $15.00', 'context' => '200K', 'best_for' => $this->tr('Proven coding model', 'Bewaehrtes Coding-Modell')],
+                ['name' => 'GPT-4o Mini', 'price' => '$0.15 / $0.60', 'context' => '128K', 'best_for' => $this->tr('Budget option', 'Budget-Option')],
+            ],
+        };
     }
 
     private function renderMemoryTab(array $settings): void {
@@ -1245,7 +1295,7 @@ class SettingsPage {
                                    value="<?php echo esc_attr($settings['max_tokens']); ?>"
                                    min="1" max="131072" class="levi-form-input levi-input-small">
                             <p class="levi-form-help">
-                                <?php echo esc_html($this->tr('Maximum tokens per AI response (max 131072). The AI only uses what it needs, but the provider reserves this space.', 'Maximale Tokens pro KI-Antwort (max 131072). Die KI nutzt nur so viel wie noetig, aber der Provider reserviert diesen Platz.')); ?>
+                                <?php echo esc_html($this->tr('Maximum tokens per AI response. Capped automatically per model. The AI only uses what it needs.', 'Maximale Tokens pro KI-Antwort. Wird pro Modell automatisch begrenzt. Die KI nutzt nur so viel wie noetig.')); ?>
                             </p>
                         </div>
                         <div class="levi-form-group">
@@ -1274,17 +1324,9 @@ class SettingsPage {
                 <!-- Context Budget -->
                 <div class="levi-form-card">
                     <h3><?php echo esc_html($this->tr('Conversation Context', 'Kontext-Verlauf')); ?></h3>
-                    <div class="levi-form-group">
-                        <label class="levi-form-label"><?php echo esc_html($this->tr('Max Context Tokens', 'Max. Kontext-Tokens')); ?></label>
-                        <input type="number" 
-                               name="<?php echo esc_attr($this->optionName); ?>[max_context_tokens]" 
-                               value="<?php echo esc_attr($settings['max_context_tokens']); ?>"
-                               min="1000" max="500000" step="1000" class="levi-form-input levi-input-small">
-                        <p class="levi-form-help">
-                            <?php echo esc_html($this->tr('Maximum input tokens sent to the AI. Older messages are trimmed if exceeded. Older messages are summarized automatically instead of being lost.', 'Maximale Input-Tokens an die KI. Aeltere Nachrichten werden gekuerzt wenn ueberschritten. Aeltere Nachrichten werden dabei automatisch zusammengefasst statt verworfen.')); ?>
-                        </p>
-                    </div>
-
+                    <p class="levi-form-description" style="margin-bottom: 12px;">
+                        <?php echo esc_html($this->tr('Input context limit is derived automatically from the selected model. Older messages are trimmed and summarized when exceeded.', 'Das Input-Kontextlimit wird automatisch aus dem gewaehlten Modell abgeleitet. Aeltere Nachrichten werden bei Ueberschreitung gekuerzt und zusammengefasst.')); ?>
+                    </p>
                     <div class="levi-form-group">
                         <label class="levi-form-label"><?php echo esc_html($this->tr('Compaction Model (optional)', 'Compaction-Modell (optional)')); ?></label>
                         <input type="text"
@@ -1445,7 +1487,11 @@ class SettingsPage {
 
     // Helper Methods
     public function getProviderLabels(): array {
-        return ['openrouter' => 'OpenRouter'];
+        return [
+            'openrouter' => 'OpenRouter',
+            'anthropic'  => 'Anthropic (direkt)',
+            'openai'     => 'OpenAI (direkt)',
+        ];
     }
 
     public function getProvider(): string {
@@ -1456,9 +1502,14 @@ class SettingsPage {
     }
 
     public function getAuthMethodOptions(string $provider): array {
+        if ($provider === 'openrouter') {
+            return [
+                'oauth' => $this->tr('Connect with OpenRouter (recommended)', 'Mit OpenRouter verbinden (empfohlen)'),
+                'api_key' => $this->tr('Manual API Key', 'Manueller API-Schluessel'),
+            ];
+        }
         return [
-            'oauth' => $this->tr('Connect with OpenRouter (recommended)', 'Mit OpenRouter verbinden (empfohlen)'),
-            'api_key' => $this->tr('Manual API Key', 'Manueller API-Schluessel'),
+            'api_key' => $this->tr('API Key', 'API-Schluessel'),
         ];
     }
 
@@ -1526,22 +1577,30 @@ class SettingsPage {
     }
 
     public function getAllowedModelsForProvider(string $provider): array {
-        return [
-            'moonshotai/kimi-k2.5' => 'Kimi K2.5 (Moonshot)',
-        ];
-    }
-
-    public function getAllowedAltModelsForProvider(string $provider): array {
-        if ($provider !== 'openrouter') {
-            return [];
-        }
-        return [
-            'moonshotai/kimi-k2.5' => 'Kimi K2.5',
-            'openai/gpt-5.3-codex' => 'GPT 5.3 Codex',
-            'anthropic/claude-opus-4.6' => 'Claude Opus 4.6',
-            'anthropic/claude-3.5-sonnet' => 'Claude 3.5 Sonnet',
-            'openai/gpt-4o-mini' => 'GPT-4o Mini',
-        ];
+        return match ($provider) {
+            'anthropic' => [
+                'claude-opus-4-6'             => 'Claude Opus 4.6 (Flagship)',
+                'claude-sonnet-4-6'           => 'Claude Sonnet 4.6 (Flagship)',
+                'claude-haiku-4-5'            => 'Claude Haiku 4.5 (Budget)',
+                'claude-sonnet-4-20250514'    => 'Claude Sonnet 4',
+            ],
+            'openai' => [
+                'gpt-5.4'          => 'GPT-5.4 (Flagship)',
+                'gpt-5-mini'       => 'GPT-5 Mini',
+                'gpt-4o'           => 'GPT-4o',
+                'gpt-4o-mini'      => 'GPT-4o Mini (Budget)',
+                'o3'               => 'o3 (Reasoning)',
+                'o4-mini'          => 'o4-mini (Reasoning Budget)',
+            ],
+            default => [
+                'moonshotai/kimi-k2.5'            => 'Kimi K2.5',
+                'openai/gpt-5.3-codex'            => 'GPT 5.3 Codex',
+                'anthropic/claude-opus-4.6'       => 'Claude Opus 4.6',
+                'anthropic/claude-sonnet-4.6'     => 'Claude Sonnet 4.6',
+                'anthropic/claude-3.5-sonnet'     => 'Claude 3.5 Sonnet',
+                'openai/gpt-4o-mini'              => 'GPT-4o Mini',
+            ],
+        };
     }
 
     public function getModel(): string {
@@ -1554,20 +1613,14 @@ class SettingsPage {
 
     public function getModelForProvider(string $provider): string {
         $settings = $this->getSettings();
-        
-        // For OpenRouter, use the selected model (openrouter_alt_model stores the choice)
-        if ($provider === 'openrouter') {
-            $allowed = $this->getAllowedAltModelsForProvider($provider);
-            $model = (string) ($settings['openrouter_alt_model'] ?? array_key_first($allowed));
-            return isset($allowed[$model]) ? $model : array_key_first($allowed);
-        }
-        
+        $allowed = $this->getAllowedModelsForProvider($provider);
+
         $settingKey = match ($provider) {
             'openai' => 'openai_model',
             'anthropic' => 'anthropic_model',
-            default => 'openrouter_model',
+            default => 'openrouter_alt_model',
         };
-        $allowed = $this->getAllowedModelsForProvider($provider);
+
         $model = (string) ($settings[$settingKey] ?? array_key_first($allowed));
         return isset($allowed[$model]) ? $model : array_key_first($allowed);
     }
@@ -1582,6 +1635,49 @@ class SettingsPage {
         return $this->getModelForProvider($provider);
     }
 
+    /**
+     * Returns context_limit and max_output_tokens for the given provider/model.
+     * Used to derive input budget and cap output tokens per model.
+     *
+     * @return array{context_limit: int, max_output_tokens: int}
+     */
+    public function getModelLimits(string $provider, string $modelId): array {
+        $limits = [
+            'openrouter' => [
+                'openai/gpt-4o' => ['context_limit' => 128000, 'max_output_tokens' => 16400],
+                'openai/gpt-4o-mini' => ['context_limit' => 128000, 'max_output_tokens' => 16400],
+                'moonshotai/kimi-k2.5' => ['context_limit' => 256000, 'max_output_tokens' => 64000],
+                'openai/gpt-5.3-codex' => ['context_limit' => 922000, 'max_output_tokens' => 128000],
+                'anthropic/claude-opus-4.6' => ['context_limit' => 200000, 'max_output_tokens' => 8192],
+                'anthropic/claude-sonnet-4.6' => ['context_limit' => 200000, 'max_output_tokens' => 8192],
+                'anthropic/claude-3.5-sonnet' => ['context_limit' => 200000, 'max_output_tokens' => 8192],
+            ],
+            'openai' => [
+                'gpt-4o' => ['context_limit' => 128000, 'max_output_tokens' => 16400],
+                'gpt-4o-mini' => ['context_limit' => 128000, 'max_output_tokens' => 16400],
+                'gpt-5.4' => ['context_limit' => 922000, 'max_output_tokens' => 128000],
+                'gpt-5-mini' => ['context_limit' => 128000, 'max_output_tokens' => 16384],
+                'o3' => ['context_limit' => 200000, 'max_output_tokens' => 100000],
+                'o4-mini' => ['context_limit' => 200000, 'max_output_tokens' => 100000],
+            ],
+            'anthropic' => [
+                'claude-opus-4-6' => ['context_limit' => 200000, 'max_output_tokens' => 8192],
+                'claude-sonnet-4-6' => ['context_limit' => 200000, 'max_output_tokens' => 8192],
+                'claude-haiku-4-5' => ['context_limit' => 200000, 'max_output_tokens' => 8192],
+                'claude-sonnet-4-20250514' => ['context_limit' => 200000, 'max_output_tokens' => 8192],
+            ],
+        ];
+
+        $providerLimits = $limits[$provider] ?? [];
+        $modelLimits = $providerLimits[$modelId] ?? null;
+
+        if ($modelLimits !== null) {
+            return $modelLimits;
+        }
+
+        return ['context_limit' => 128000, 'max_output_tokens' => 16384];
+    }
+
     public function getDefaults(): array {
         return [
             'ai_provider' => 'openrouter',
@@ -1592,14 +1688,13 @@ class SettingsPage {
             'anthropic_api_key' => '',
             'openrouter_model' => 'moonshotai/kimi-k2.5',
             'openrouter_alt_model' => 'moonshotai/kimi-k2.5',
-            'openai_model' => 'gpt-4o-mini',
-            'anthropic_model' => 'claude-3-5-sonnet-20241022',
+            'openai_model' => 'gpt-5.4',
+            'anthropic_model' => 'claude-sonnet-4-6',
             'rate_limit' => 100,
             'max_tool_iterations' => 30,
             'max_tokens' => 131072,
             'ai_timeout' => 120,
             'php_time_limit' => 0,
-            'max_context_tokens' => 100000,
             'history_context_limit' => 20,
             'tool_profile' => 'standard',
             'allowed_plugin_slugs_manual' => '',

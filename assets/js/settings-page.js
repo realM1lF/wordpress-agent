@@ -6,25 +6,28 @@
     'use strict';
 
     $(document).ready(function() {
-        // Provider selection - update form on change
-        $('input[name*="ai_provider"]').on('change', function() {
-            // Show loading indicator
-            const $form = $(this).closest('form');
-            $form.addClass('levi-updating');
-            
-            // Reload page to show provider-specific fields
-            setTimeout(function() {
-                $form.submit();
-            }, 300);
+        // Provider selection - live toggle of all provider-specific sections
+        $('#levi-provider-select').on('change', function() {
+            var p = this.value;
+            $('.levi-provider-auth-section, .levi-provider-model-section, .levi-provider-hint').hide();
+            $('.levi-provider-auth-section[data-provider="' + p + '"]').show();
+            $('.levi-provider-model-section[data-provider="' + p + '"]').show();
+            $('.levi-provider-hint[data-provider="' + p + '"]').show();
+            $('#levi-test-result').empty();
         });
 
-        // Test connection button
+        // Test connection button — sends the form key so the user can
+        // verify their input BEFORE saving.
         $('#levi-test-connection').on('click', function() {
             const $btn = $(this);
             const $result = $('#levi-test-result');
             
             $btn.prop('disabled', true).addClass('levi-loading');
             $result.html('<span class="levi-spinner"></span> ' + (leviSettings.i18n && leviSettings.i18n.testing ? leviSettings.i18n.testing : 'Testing…'));
+
+            var provider = $('#levi-provider-select').val() || '';
+            var $visibleKey = $('.levi-provider-auth-section[data-provider="' + provider + '"] .levi-api-key-field');
+            var formKey = $visibleKey.length ? $visibleKey.val() : '';
             
             $.ajax({
                 url: leviSettings.ajaxUrl,
@@ -32,6 +35,8 @@
                 data: {
                     action: 'levi_test_connection',
                     nonce: leviSettings.nonce,
+                    test_key: formKey,
+                    test_provider: provider,
                 },
                 success: function(response) {
                     if (response.success) {
@@ -308,11 +313,25 @@
             });
         });
 
+        // Track user interaction with API key fields to prevent
+        // browser autofill from silently overwriting saved keys.
+        $('.levi-api-key-field').on('input', function() {
+            $(this).attr('data-dirty', '1');
+        });
+
         // Form submission with visual feedback
         $('.levi-settings-form').on('submit', function() {
             const $form = $(this);
             const $submitBtn = $form.find('[type="submit"]');
             const $indicator = $('.levi-save-indicator');
+
+            // Clear API key fields that the user did not explicitly modify.
+            // This prevents browser autofill values from overwriting real keys.
+            $form.find('.levi-api-key-field').each(function() {
+                if (!$(this).attr('data-dirty')) {
+                    $(this).val('');
+                }
+            });
             
             $submitBtn.prop('disabled', true).text((leviSettings.i18n && leviSettings.i18n.saving) ? leviSettings.i18n.saving : 'Saving…');
             

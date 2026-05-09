@@ -27,6 +27,8 @@ class QueryExpander
     private const SYSTEM_PROMPT = <<<'PROMPT'
 You generate search queries for a WordPress/WooCommerce/Elementor technical documentation vector database.
 
+You may receive recent conversation context before the current query. Use it to understand what the user actually needs.
+
 Rules:
 - Output EXACTLY 3 short English search queries, one per line, no numbering, no explanation.
 - Each query should target a DIFFERENT aspect: one for API schemas/data structures, one for hooks/filters/code patterns, one for conceptual/architectural docs.
@@ -35,7 +37,7 @@ Rules:
 - Last line: write one of COMPLEX, SIMPLE, or NO_RETRIEVAL:
   - COMPLEX: Task requires deep technical documentation (plugin development, API integration, complex hooks)
   - SIMPLE: Task benefits from some documentation lookup
-  - NO_RETRIEVAL: Task needs NO documentation at all (e.g. "list my products", "create a page", "what plugins do I have", simple CRUD operations, greetings, status questions)
+  - NO_RETRIEVAL: Task needs NO documentation at all (e.g. "list my products", "create a page", "publish these pages", "delete that post", simple CRUD operations, follow-up actions referring to previously listed items, greetings, status questions)
 PROMPT;
 
     private ?bool $lastComplexity = null;
@@ -44,9 +46,12 @@ PROMPT;
     /**
      * Expand a user query into multiple search queries via LLM.
      *
+     * @param string $query The current user message.
+     * @param array  $conversationContext Recent conversation messages (role/content pairs)
+     *                                    so the LLM can judge whether retrieval is needed.
      * @return string[] Original query + up to 3 LLM-generated English queries.
      */
-    public function expand(string $query): array
+    public function expand(string $query, array $conversationContext = []): array
     {
         $trimmed = trim($query);
         if ($trimmed === '' || mb_strlen($trimmed) < 10) {
@@ -57,7 +62,7 @@ PROMPT;
         $this->lastNeedsRetrieval = true;
 
         try {
-            $expanded = $this->callLLM($trimmed);
+            $expanded = $this->callLLM($trimmed, $conversationContext);
             if (!empty($expanded)) {
                 return array_values(array_unique(array_merge([$trimmed], $expanded)));
             }
@@ -86,7 +91,7 @@ PROMPT;
         return $this->lastNeedsRetrieval;
     }
 
-    private function callLLM(string $query): array
+    private function callLLM(string $query, array $conversationContext = []): array
     {
         $settings = new SettingsPage();
         $provider = $settings->getProvider();
@@ -99,9 +104,21 @@ PROMPT;
         $model = $this->getCompactModel($settings, $provider);
         $client = AIClientFactory::createWithModel($provider, $model);
 
+        $userContent = '';
+        if (!empty($conversationContext)) {
+            $snippets = [];
+            foreach ($conversationContext as $msg) {
+                $role = ($msg['role'] ?? '') === 'user' ? 'User' : 'Assistant';
+                $text = mb_substr((string) ($msg['content'] ?? ''), 0, 200);
+                $snippets[] = "{$role}: {$text}";
+            }
+            $userContent .= "Recent conversation:\n" . implode("\n", $snippets) . "\n\n";
+        }
+        $userContent .= "Current query: {$query}";
+
         $messages = [
             ['role' => 'system', 'content' => self::SYSTEM_PROMPT],
-            ['role' => 'user', 'content' => $query],
+            ['role' => 'user', 'content' => $userContent],
         ];
 
         $response = $client->chat($messages);

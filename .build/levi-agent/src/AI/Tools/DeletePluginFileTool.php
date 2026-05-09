@@ -9,7 +9,8 @@ class DeletePluginFileTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Delete a file inside a plugin directory.';
+        return 'Delete a single file inside a plugin directory (for own plugins only). '
+            . 'To delete an entire plugin, use install_plugin with action "delete" instead.';
     }
 
     public function getParameters(): array {

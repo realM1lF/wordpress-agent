@@ -9,7 +9,10 @@ class UpdatePostTool implements ToolInterface {
     }
 
     public function getDescription(): string {
-        return 'Update an existing WordPress post. Only updates provided fields.';
+        return 'Update an existing WordPress post, page, or custom post type entry by ID. '
+            . 'Only the fields you provide are changed — all other fields remain untouched. '
+            . 'Supports title, content, excerpt, status, categories, tags, featured image, and slug. '
+            . 'Use this to publish drafts (status="publish"), edit content, or reassign categories.';
     }
 
     public function getParameters(): array {
@@ -137,5 +140,13 @@ class UpdatePostTool implements ToolInterface {
             $action,
             $postId
         ));
+    }
+
+    public function getInputExamples(): array
+    {
+        return [
+            ['post_id' => 42, 'status' => 'publish'],
+            ['post_id' => 42, 'title' => 'Neuer Titel', 'content' => '<p>Aktualisierter Inhalt</p>'],
+        ];
     }
 }

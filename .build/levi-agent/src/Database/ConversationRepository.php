@@ -49,7 +49,7 @@ class ConversationRepository {
         return $ownerId !== null ? (int) $ownerId : null;
     }
 
-    public function getHistory(string $sessionId, int $limit = 50): array {
+    public function getHistory(string $sessionId, int $limit = 20): array {
         global $wpdb;
 
         $sql = $wpdb->prepare(

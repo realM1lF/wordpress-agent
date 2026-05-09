@@ -578,8 +578,7 @@ $leviSettings = [
     
     // Datenschutz
     'blocked_post_types' => 'wpforms,flamingo_contact,nf_sub', // Sensitive CPTs
-    'history_context_limit' => 50,          // Kontext begrenzen
-    'max_context_tokens' => 100000,         // Token-Limit
+    'history_context_limit' => 50,          // Kontext begrenzen (Input-Limit kommt automatisch aus Modell)
     
     // Performance
     'ai_timeout' => 120,                    // Timeout

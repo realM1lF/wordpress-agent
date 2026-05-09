@@ -14,6 +14,11 @@ class OpenRouterClient implements AIClientInterface {
     private string $model;
     private int $timeout;
     private int $maxTokens;
+    private ?string $pendingToolChoice = null;
+
+    public function setToolChoice(?string $toolChoice): void {
+        $this->pendingToolChoice = $toolChoice;
+    }
 
     public function __construct(?string $modelOverride = null) {
         $settings = new SettingsPage();
@@ -22,11 +27,18 @@ class OpenRouterClient implements AIClientInterface {
         $this->model = $modelOverride ?? $settings->getModelForProvider('openrouter');
         $allSettings = $settings->getSettings();
         $this->timeout = max(1, (int) ($allSettings['ai_timeout'] ?? 120));
-        $this->maxTokens = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
+        $userMax = max(1, (int) ($allSettings['max_tokens'] ?? 131072));
+        $limits = $settings->getModelLimits('openrouter', $this->model);
+        $modelMaxOutput = $limits['max_output_tokens'] ?? 16384;
+        $this->maxTokens = min($userMax, $modelMaxOutput);
     }
 
     public function isConfigured(): bool {
         return $this->apiKey !== null;
+    }
+
+    public function overrideApiKey(string $key): void {
+        $this->apiKey = $key;
     }
 
     public function chat(array $messages, array $tools = [], ?callable $heartbeat = null, bool $webSearch = false): array|WP_Error {
@@ -50,8 +62,9 @@ class OpenRouterClient implements AIClientInterface {
 
         if (!empty($tools)) {
             $payload['tools'] = $tools;
-            $payload['tool_choice'] = 'auto';
+            $payload['tool_choice'] = $this->pendingToolChoice ?? 'auto';
         }
+        $this->pendingToolChoice = null;
 
         return $this->executeWithRetry(
             fn() => $this->executeApiCall($payload, $heartbeat),
@@ -246,8 +259,9 @@ class OpenRouterClient implements AIClientInterface {
 
         if (!empty($tools)) {
             $payload['tools'] = $tools;
-            $payload['tool_choice'] = 'auto';
+            $payload['tool_choice'] = $this->pendingToolChoice ?? 'auto';
         }
+        $this->pendingToolChoice = null;
 
         $fullContent = '';
         $fullReasoningContent = '';
@@ -258,6 +272,7 @@ class OpenRouterClient implements AIClientInterface {
         $hasToolCalls = false;
         $toolCallChunks = [];
         $sseBuffer = '';
+        $rawResponseBody = '';
 
         $ch = curl_init(self::API_BASE . '/chat/completions');
 
@@ -270,7 +285,8 @@ class OpenRouterClient implements AIClientInterface {
                 array_values($this->getApiHeaders())
             ),
             CURLOPT_RETURNTRANSFER => false,
-            CURLOPT_WRITEFUNCTION => function ($ch, $data) use ($onChunk, &$fullContent, &$finishReason, &$usage, &$model, &$hasToolCalls, &$toolCallChunks, &$sseBuffer) {
+            CURLOPT_WRITEFUNCTION => function ($ch, $data) use ($onChunk, &$fullContent, &$finishReason, &$usage, &$model, &$hasToolCalls, &$toolCallChunks, &$sseBuffer, &$rawResponseBody) {
+                $rawResponseBody .= $data;
                 $sseBuffer .= $data;
                 while (($pos = strpos($sseBuffer, "\n")) !== false) {
                     $line = substr($sseBuffer, 0, $pos);
@@ -371,7 +387,12 @@ class OpenRouterClient implements AIClientInterface {
         curl_close($ch);
 
         if ($httpCode !== 200) {
-            return new WP_Error('api_error', "OpenRouter streaming returned HTTP $httpCode", ['status' => $httpCode]);
+            $errorMessage = "OpenRouter streaming returned HTTP $httpCode";
+            $parsed = json_decode($rawResponseBody, true);
+            if (is_array($parsed) && !empty($parsed['error']['message'])) {
+                $errorMessage = (string) $parsed['error']['message'];
+            }
+            return new WP_Error('api_error', $errorMessage, ['status' => $httpCode]);
         }
 
         $result = [

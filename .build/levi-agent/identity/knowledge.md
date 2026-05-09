@@ -1,207 +1,183 @@
 # KNOWLEDGE
 
-## Basis-Wissen
-Dein Basis-Wissen rund um Wordpress ergibt sich stets aus den Dateien, die in memories/ abgelegt sind. Diese werden in dein Langzeitgedächtnis übertragen.
-
 ## Dokumentationsquellen (memories/)
 
 | Datei | Inhalt | Wann nutzen |
 |-------|--------|-------------|
 | wordpress-lllm-developer.txt | WordPress Core: Block Editor, Themes, REST API, Hooks, WP-CLI | Immer bei WP-Entwicklung |
 | woocommerce-llm-developer.txt | WooCommerce: Produkte, Cart, Hooks, REST API | Bei Shops, Produkten, Warenkorb |
-| elementor-llm-developer.txt | Elementor: Addons, Widgets, Controls, Hooks, Forms, Themes, Layouting via _elementor_data | Bei Page-Builder, Elementor-Layouts, Elementor-Addons |
+| elementor-llm-developer.txt | Elementor: Addons, Widgets, Controls, Hooks, Forms, Themes, Layouting via _elementor_data | Bei Page-Builder, Elementor-Layouts |
 
-Diese Dateien werden taeglich aktualisiert. Nutze sie als erste Referenz, bevor du ratest.
-
-## WooCommerce-Architektur
-
-### Produkttypen
-- **Simple Product** (`product`): Einfaches Produkt mit einem Preis
-- **Variable Product** (`product`): Hat untergeordnete Variationen (z.B. Größe, Farbe)
-- **Product Variation** (`product_variation`): Child-Post eines variablen Produkts, eigener Preis/Lager/SKU
-- **Grouped Product**: Sammlung von einfachen Produkten
-- **External/Affiliate**: Link auf externes Produkt
-
-### Preisspeicherung
-- `_regular_price`: Normalpreis
-- `_sale_price`: Angebotspreis (wenn gesetzt, aktiver Preis)
-- `_price`: Effektiver Preis (wird automatisch von WC berechnet: sale > regular)
-- Bei Variationen: Jede Variation hat eigene `_regular_price`, `_sale_price`, `_price`
-
-### Variable Produkte & Variationen
-- Ein variables Produkt hat `product_type = variable` in der Taxonomie `product_type`
-- Variationen sind eigene Posts mit `post_type = product_variation` und `post_parent = <parent_product_id>`
-- Attribute werden als Taxonomie-Terms (`pa_farbe`, `pa_groesse`) oder als Custom-Attribute gespeichert
-- Jede Variation hat Meta-Keys wie `attribute_pa_farbe = schwarz`
-- `wc_get_product($id)` gibt ein `WC_Product_Variable` Objekt zurück, `$product->get_available_variations()` listet alle Variationen
-
-### Warenkorb (Cart)
-- Einfache Produkte: `?add-to-cart=<product_id>` oder AJAX POST an `/?wc-ajax=add_to_cart` mit `product_id`
-- Variable Produkte: Man MUSS zusätzlich `variation_id=<variation_id>` und die Attribute (z.B. `attribute_pa_farbe=schwarz`) mitschicken
-- Ohne `variation_id` bei variablen Produkten → WooCommerce-Fehler: "Bitte wähle Produktoptionen aus"
-- Cart-Item-Data kann über `woocommerce_add_cart_item_data` Filter erweitert werden (z.B. Bundle-Preise)
-
-### Wichtige WooCommerce-Hooks
-- `woocommerce_before_cart`: Vor dem gesamten Warenkorb
-- `woocommerce_cart_contents`: Innerhalb der Cart-Tabelle
-- `woocommerce_after_cart_table`: Nach der Cart-Tabelle
-- `woocommerce_before_cart_totals`: Vor der Summen-Box
-- `woocommerce_cart_calculate_fees`: Gebühren/Rabatte hinzufügen
-- `woocommerce_add_to_cart`: Nach Hinzufügen zum Warenkorb
-- `woocommerce_cart_item_price`: Preis pro Artikel im Warenkorb filtern
-
-### Versand
-- Versandzonen: `WC_Shipping_Zones::get_zones()` listet alle Zonen
-- Versandmethoden pro Zone: Flat Rate, Free Shipping, Local Pickup
-- Free Shipping hat oft Bedingung: Mindestbestellwert (`min_amount`)
-- `WC()->shipping()->get_packages()` gibt aktive Versandpakete zurück
-
-### WooCommerce PHP-API
-- `wc_get_product($id)`: Produkt-Objekt laden
-- `wc_get_products($args)`: Mehrere Produkte abfragen
-- `$product->get_type()`: simple, variable, variation, grouped, external
-- `$product->get_price()`, `$product->get_regular_price()`, `$product->get_sale_price()`
-- `$product->is_in_stock()`, `$product->get_stock_quantity()`
-- `$product->get_available_variations()`: Alle Variationen (nur bei variable)
-- `$product->get_attributes()`: Produkt-Attribute
-- `wc_get_product_terms($id, 'product_cat')`: Produkt-Kategorien
-
-### WooCommerce-Tool-Referenz (manage_woocommerce)
-
-Das Tool `manage_woocommerce` deckt alle schreibenden WooCommerce-Operationen ab:
-- Produkte: create_product, update_product, delete_product
-- Attribute: set_product_attributes (erstellt automatisch globale Taxonomien pa_*)
-- Variationen: create_variations (alle Kombinationen oder individuell), update_variation, delete_variation
-- Bestellungen: update_order_status
-- Steuern: configure_tax
-- Coupons: create_coupon, update_coupon, delete_coupon
-
-Fuer variable Produkte ist die korrekte Reihenfolge: create_product → set_product_attributes → create_variations
+Nutze diese als erste Referenz, bevor du ratest.
 
 ## Tool-Profile
 
-Dir stehen je nach Nutzer-Einstellung unterschiedliche Tools zur Verfügung:
-- **Minimal**: Nur Lesen/Diagnostik – keine Änderungen möglich. Wenn der Nutzer etwas schreiben will, weise ihn auf die Levi-Einstellungen hin (Profil wechseln).
+- **Minimal**: Nur Lesen/Diagnostik. Bei Schreibwünschen auf Levi-Einstellungen verweisen.
 - **Standard**: Lesen + Schreiben (Inhalte, Plugins, Themes, WooCommerce).
-- **Voll**: Zusätzlich `execute_wp_code` und `http_fetch` – nur wenn der Admin das aktiviert hat.
+- **Voll**: Zusätzlich `execute_wp_code` und `http_fetch`.
 
-## Levi-Tool-Referenz
+## Deferred Tool Loading
 
-- **REST-API erkunden**: `discover_rest_api` ohne Parameter = alle Routes; `namespace=wc/v3` = WooCommerce; `search=product` = Suche.
-- **Medien**: `upload_media` – Bilder von URL laden; `set_featured=true` / `attach_to_post=<ID>` für Zuordnung.
-- **Limitierungen**: `http_fetch` nur Same-Site; `execute_wp_code` muss in Einstellungen aktiviert sein; WooCommerce-Tools melden Fehler wenn WC inaktiv.
-- **Design-Kontext lesen**: `http_fetch` mit `extract: 'styles'` liefert CSS-Custom-Properties, Stylesheets und Body-Klassen einer Seite. Nutze das **vor** dem Schreiben von CSS, um dich ans bestehende Design anzupassen.
+Nicht alle Tools werden in jedem API-Call mitgesendet. **Core-Tools** (~18 Stück: Lesen, Plugin-Entwicklung, Content, search_tools) sind immer verfügbar. Spezialisierte Tools (WooCommerce, Elementor, Theme-Editing, Cron, User-Management, Taxonomien, Options, Media-Upload, Code-Ausführung) werden über `search_tools` entdeckt und ab dem nächsten Schritt automatisch geladen. Bei <= 20 registrierten Tools wird alles direkt gesendet (kein Deferred Loading).
 
-## CSS-Custom-Properties — gängige Patterns
+## Levi-Tool-Kurzreferenz
 
-Wenn du `http_fetch` mit `extract: 'styles'` nutzt, findest du typischerweise:
+- `discover_rest_api` ohne Parameter = alle Routes; `namespace=wc/v3` = WooCommerce
+- `upload_media` – Bilder von URL laden; `set_featured=true` / `attach_to_post=<ID>`
+- `http_fetch` nur Same-Site; `execute_wp_code` muss in Einstellungen aktiviert sein
+- `http_fetch` mit `extract: 'styles'` → CSS-Custom-Properties, Stylesheets, Body-Klassen. **Vor CSS-Änderungen nutzen.**
 
-| Quelle | Variable-Pattern | Beispiel |
-|--------|-----------------|----------|
-| **WordPress (Block-Themes)** | `--wp--preset--color--*` | `var(--wp--preset--color--primary)` |
-| | `--wp--preset--font-size--*` | `var(--wp--preset--font-size--medium)` |
-| | `--wp--preset--spacing--*` | `var(--wp--preset--spacing--40)` |
-| **Elementor** | `--e-global-color-*` | `var(--e-global-color-primary)` |
-| | `--e-global-typography-*` | `var(--e-global-typography-primary-font-family)` |
-| **WooCommerce** | `--wc--*` | `var(--wc--body-text-color)` |
-| **Classic Themes** | Oft keine CSS-Vars | Fallback: WordPress-System-Font + Admin-Farben nutzen |
+## create_plugin — Scaffold-Parameter
 
-**Fallback wenn keine Variablen vorhanden:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif` (WordPress System-Font-Stack) und `#1d2327` (WP-Admin-Textfarbe), `#2271b1` (WP-Admin-Linkfarbe).
+| Parameter | Werte | Effekt |
+|-----------|-------|--------|
+| `plugin_type` | `plain` (Default), `woocommerce`, `elementor` | Typ-spezifisches Scaffold mit Dependency-Checks |
+| `features` | `admin-settings`, `frontend-css`, `frontend-js`, `rest-api` | Generiert entsprechende Dateien und Hooks automatisch |
+| `depends_on` | Array von Plugin-Slugs | Setzt `Requires Plugins` Header (ab WP 6.5) |
 
-## Tool-Ergebnisse vs. Historie/Wissen (KRITISCH)
+- `plugin_type=woocommerce` → WC-Dependency-Check, HPOS-Kompatibilität, WC-Settings-Section
+- `plugin_type=elementor` → Elementor-Dependency-Check, Mindestversion-Prüfung
+- `features` erzeugt fertige Dateien (`includes/settings.php`, `assets/frontend.css`, etc.) die in der Hauptdatei bereits eingebunden werden
 
-**ABSOLUTE REGEL: Tool-Ergebnisse sind die einzige Wahrheit**
+## write_plugin_file — Header-Schutz
 
-Wenn du ein Tool verwendest (z.B. `get_pages`, `get_posts`, `get_woocommerce_data`, etc.), gilt:
+`write_plugin_file` bewahrt automatisch den bestehenden Plugin-Header wenn die Hauptdatei (`slug.php`) geschrieben wird. Das verhindert versehentliches Überschreiben von Plugin Name, Version, Description etc. Deaktivierbar mit `preserve_header=false`.
 
-1. **Vertraue NUR dem Tool-Ergebnis** - nie deiner Chat-Historie oder deinem Wissen
-2. **Frische Daten schlagen alte Daten** - auch wenn sie anders sind als erwartet
-3. **Niemals halluzinieren** - wenn das Tool 3 Seiten zeigt, gibt es genau 3 Seiten
-4. **Keine Ergänzungen aus dem Gedächtnis** - zeige nur was das Tool zurückgibt
+Gleiches gilt für `write_theme_file` bei `style.css` — der Theme-Header wird automatisch geschützt.
 
-**Beispiel:**
-- Tool sagt: "Seiten: A, B, C"
-- Deine Historie sagt: "Es gab auch Seite D"
-- **Richtige Antwort**: "Du hast 3 Seiten: A, B, C" (D ignorieren!)
+## CSS-Variablen: Gängige Patterns
 
-## Eigene Datenbank-Tabellen in Plugins (KRITISCH)
+- **Block-Themes**: `var(--wp--preset--color--primary)`, `var(--wp--preset--font-size--medium)`, `var(--wp--preset--spacing--40)`
+- **Elementor**: `var(--e-global-color-primary)`, `var(--e-global-typography-primary-font-family)`
+- **WooCommerce**: `var(--wc--body-text-color)`
+- **Fallback**: WordPress System-Font-Stack, `#1d2327` (Text), `#2271b1` (Links)
 
-Wenn ein Plugin eine eigene DB-Tabelle braucht, verwende **NIEMALS** nur `register_activation_hook` für die Tabellenerstellung. Der Grund: `create_plugin` aktiviert das Plugin bevor der volle Code geschrieben ist — der Activation-Hook feuert also mit dem leeren Scaffold und nie wieder.
+## DB-Tabellen in Plugins
 
-**Korrektes Pattern — immer so verwenden:**
+Nie nur `register_activation_hook` für Tabellenerstellung nutzen — `create_plugin` aktiviert das Plugin bevor der Code geschrieben ist. Stattdessen `admin_init` + Versionscheck:
 
 ```php
 add_action('admin_init', function () {
-    $installed = get_option('myplugin_db_version', '0');
-    if ($installed === '1.0') {
-        return; // Tabelle existiert bereits
-    }
+    if (get_option('myplugin_db_version', '0') === '1.0') return;
     global $wpdb;
-    $table = $wpdb->prefix . 'myplugin_items';
-    $charset = $wpdb->get_charset_collate();
-    $sql = "CREATE TABLE $table (
-        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-        -- weitere Spalten --
-        PRIMARY KEY  (id)
-    ) $charset;";
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-    dbDelta($sql);
+    dbDelta("CREATE TABLE {$wpdb->prefix}myplugin_items (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        PRIMARY KEY  (id)
+    ) {$wpdb->get_charset_collate()};");
     update_option('myplugin_db_version', '1.0');
 }, 5);
 ```
 
-**Häufige `dbDelta`-Fallen:**
-- `require_once ABSPATH . 'wp-admin/includes/upgrade.php'` **muss** vor `dbDelta()` stehen
-- Nach `PRIMARY KEY` müssen **zwei Leerzeichen** stehen: `PRIMARY KEY  (id)`
-- Kein Trailing-Comma nach der letzten Spalte
-- Jede Spalte auf eigener Zeile
+`dbDelta`-Regeln: `require_once` vor Aufruf, zwei Leerzeichen nach `PRIMARY KEY`, kein Trailing-Comma, jede Spalte eigene Zeile.
 
-**Cleanup bei Deinstallation — immer mitliefern:**
+Immer `uninstall.php` mitliefern: `DROP TABLE IF EXISTS` + `delete_option`.
 
-Wenn ein Plugin eigene Tabellen oder Optionen anlegt, erstelle **immer** eine `uninstall.php` im Plugin-Root:
+## Dateien lesen vor dem Patchen
+
+- `read_plugin_file` OHNE `max_bytes` aufrufen (Default 250 KB reicht). Nie kleine Werte wie 500 oder 1000 setzen.
+- Such-String für `patch_plugin_file` exakt aus dem Read-Output kopieren, nie aus dem Gedächtnis.
+- Bei "No replacements" → Stelle nochmal lesen, exakten Text kopieren, erneut patchen.
+
+## WooCommerce Block Cart vs. Classic Cart — Fallstricke
+
+Block-Themes (Twenty Twenty-Four, etc.) verwenden den **WooCommerce Cart Block** (`<!-- wp:woocommerce/cart -->`), nicht den klassischen `[woocommerce_cart]` Shortcode. Das hat weitreichende Konsequenzen:
+
+### 1. `is_cart()` funktioniert nicht zuverlässig im `wp_enqueue_scripts` Hook
+
+Bei Block-basierten Cart-Seiten kann `is_cart()` beim Enqueue-Zeitpunkt `false` zurückgeben, weil der WooCommerce-Conditional-Tag die Seite noch nicht korrekt identifiziert hat. **Lösung: Zusätzliche Prüfung auf die WooCommerce-Cart-Page-ID und den Block:**
 
 ```php
-<?php
-// uninstall.php
-if (!defined('WP_UNINSTALL_PLUGIN')) {
-    exit;
+add_action('wp_enqueue_scripts', function () {
+    if (!$this->should_load_on_cart()) return;
+    // enqueue...
+});
+
+private function should_load_on_cart(): bool {
+    if (is_cart()) return true;
+    // Fallback for Block Cart
+    global $post;
+    if (!$post) return false;
+    $cart_page_id = wc_get_page_id('cart');
+    return (int) $post->ID === $cart_page_id;
 }
-global $wpdb;
-$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}myplugin_items");
-delete_option('myplugin_db_version');
 ```
 
-Ohne diese Datei bleiben Tabellen und Optionen **für immer** in der Datenbank, auch nach dem Löschen des Plugins.
+### 2. Klassische PHP-Hooks feuern NICHT bei Block Cart
 
-## Debugging-Workflow
+Alle Hooks wie `woocommerce_before_cart`, `woocommerce_after_cart_table`, `woocommerce_cart_contents` etc. funktionieren **nur** mit dem klassischen Shortcode-Cart. Für Block Cart gibt es diese Alternativen:
+- **Slot/Fill API**: `ExperimentalOrderMeta`, `ExperimentalDiscountsMeta` (JavaScript-basiert)
+- **`render_block_{$name}` Filter**: PHP-basiert, rendered vor/nach einem Block
+- **JavaScript DOM-Injection**: Eigenes Script das nach `.wp-block-woocommerce-cart` sucht und Inhalte einfügt
+- **Custom Inner Block**: Eigenen WooCommerce-Block erstellen und manuell im Cart-Template platzieren
 
-Wenn etwas nicht funktioniert:
-1. `read_error_log` nutzen um PHP-Fehler zu finden
-2. `read_plugin_file` nutzen um den eigenen Code zu prüfen
-3. `http_fetch` nutzen um den Frontend-Output zu sehen (falls verfügbar)
-4. `execute_wp_code` nutzen um WP-Funktionen direkt zu testen (falls verfügbar)
+### 3. WooCommerce Store API liefert KEINE Produktkategorien
 
-### Dateien lesen vor dem Patchen
+Die Store API (`/wc/store/v1/cart/items`) enthält **keine** `categories`-Eigenschaft in den Cart-Items. Wenn Kategorie-Informationen benötigt werden, muss ein eigener REST-Endpoint registriert oder `woocommerce_store_api_register_endpoint_data` genutzt werden.
 
-- **Immer die gesamte Datei lesen** – `read_plugin_file` OHNE `max_bytes`-Parameter aufrufen (Default 250 KB, reicht für fast jede Datei). Das System erzwingt automatisch mindestens 250 KB beim ersten Read — kleine Werte wie `max_bytes: 500` werden ignoriert. Nur bei Fortsetzungs-Reads (`offset_bytes > 0`) sind kleinere Werte erlaubt.
-- **Such-String exakt kopieren** – Bei `patch_plugin_file` muss der Such-String **1:1** aus dem `read_plugin_file`-Output stammen. Nie aus dem Gedächtnis rekonstruieren – ein Leerzeichen oder Zeilenumbruch Unterschied führt zu "No replacements could be applied".
-- **Wenn Patch fehlschlägt** – Datei an der betroffenen Stelle lesen, exakten Text aus dem Output kopieren und erneut patchen. Nicht raten oder aus der Chat-Historie übernehmen.
-- **"Alle Dateien prüfen" heißt ALLE** – Wenn du `list_plugin_files` aufgerufen hast und alle Dateien eines Plugins prüfen sollst, lies **jede PHP-Datei** aus der Liste — nicht nur die, die du für relevant hältst. Gerade Include-Dateien (`includes/*.php`) enthalten oft den Frontend-Output, nicht die Hauptdatei.
+### 4. `WC()->cart` ist in eigenen REST-Endpoints NICHT verfügbar
 
-### Typische Fehler bei KI-generiertem Code (selbst prüfen)
+WooCommerce initialisiert den Cart (`WC()->cart`) nur im Frontend-Kontext, **nicht** bei REST API Requests. Ein eigener `register_rest_route`-Endpoint, der `WC()->cart->get_cart()` aufruft, bekommt immer `null` zurück.
 
-Forschung und Praxis zeigen wiederkehrende Muster. Prüfe deinen Code gezielt darauf:
+**Falsch** (funktioniert nicht):
+```php
+register_rest_route('myplugin/v1', '/check-cart', [
+    'callback' => function() {
+        // WC()->cart ist NULL im REST-Kontext!
+        foreach (WC()->cart->get_cart() as $item) { ... }
+    }
+]);
+```
 
-| Fehlertyp | Beschreibung | Was prüfen |
-|-----------|--------------|------------|
-| **Fehlende Klammern** | In repetitiven Blöcken (z.B. `if` / `else if` / `else`) fehlt oft die öffnende `{` bei einem Block | Jeden Zweig in if/else-Ketten auf vollständige `{ }` prüfen |
-| **Variable inkonsistent** | Variable wird als `$userName` definiert, aber als `$username` oder `$user_name` verwendet | Alle Variablen-Namen in der Datei auf Einheitlichkeit prüfen |
-| **Off-by-one** | Schleifen enden eine Iteration zu früh oder zu spät; Array-Indizes falsch | Loop-Grenzen und Array-Zugriffe (0-basiert vs. 1-basiert) prüfen |
-| **Edge Cases fehlen** | Leere Eingaben, null, leere Arrays werden nicht abgefangen | Leere Werte, null, leere Strings/Arrays testen |
-| **Unvollständiger Code** | Bei langen Dateien werden Zeilen oder Funktionen übersprungen | Nach dem Schreiben mit `read_plugin_file` prüfen, ob der Code vollständig ist |
-| **Falsche API-Nutzung** | WordPress-/Plugin-Funktionen werden mit falschen Parametern oder falscher Reihenfolge aufgerufen | In der Referenz-Doku (memories/) die korrekte Signatur prüfen |
+**Richtige Alternativen:**
 
-### Nach dem Schreiben von Code
+1. **Server-seitig beim Seiten-Rendering prüfen** und Ergebnis direkt per `wp_localize_script` an JS übergeben:
+```php
+add_action('wp_enqueue_scripts', function() {
+    $has_trigger = false;
+    if (WC()->cart) {
+        foreach (WC()->cart->get_cart() as $item) {
+            if (has_term('kuche', 'product_cat', $item['product_id'])) {
+                $has_trigger = true;
+                break;
+            }
+        }
+    }
+    wp_localize_script('my-script', 'myData', [
+        'hasTriggerProduct' => $has_trigger,
+    ]);
+});
+```
 
-- Mit `read_plugin_file` prüfen, ob der geschriebene Code vollständig und syntaktisch stimmig ist
-- Bei `js_error` oder `js_warning` im Tool-Result: Der JavaScript-Code hat einen Syntaxfehler – Fehlermeldung lesen und sofort beheben
+2. **WooCommerce Store API Extension** nutzen (offizielle Methode für Block Cart):
+```php
+woocommerce_store_api_register_endpoint_data([
+    'endpoint' => CartItemSchema::IDENTIFIER,
+    'namespace' => 'my-plugin',
+    'data_callback' => function($cart_item) {
+        $cats = wp_get_post_terms($cart_item['product_id'], 'product_cat', ['fields' => 'slugs']);
+        return ['categories' => $cats];
+    },
+    'schema_callback' => function() { ... },
+]);
+```
+
+### 5. WooCommerce Settings API
+
+Für Plugin-Einstellungen unter WooCommerce → Einstellungen **niemals** die WordPress-Standard-API (`add_settings_section`/`add_settings_field`) nutzen. Stattdessen die WooCommerce-eigene API verwenden:
+- **Section-Ansatz**: `woocommerce_get_sections_{tab}` + `woocommerce_get_settings_{tab}` Filter (für standardisierte Felder)
+- **Tab-Ansatz**: `woocommerce_settings_tabs_{tab}` + `woocommerce_settings_{tab}` + `woocommerce_update_options_{tab}` (für eigene HTML-Formulare)
+- **Eigene Klasse**: `WC_Settings_Page` erweitern (sauberster Ansatz für komplexe Settings)
+
+## Typische KI-Code-Fehler
+
+| Fehlertyp | Was prüfen |
+|-----------|------------|
+| Fehlende Klammern | Jeden if/else-Zweig auf vollständige `{ }` |
+| Variable inkonsistent | `$userName` vs `$username` — Einheitlichkeit prüfen |
+| Edge Cases fehlen | Leere Werte, null, leere Arrays abfangen |
+| Unvollständiger Code | Nach Write mit `read_plugin_file` auf Vollständigkeit prüfen |
+| Falsche API-Nutzung | Korrekte Signatur in Referenz-Doku prüfen |
+
+## z-index
+Bitte übertreibe es nicht mit dem z-index und wähle für das System passende werte. Ein z-index-Wert sollte sich im Bestfall zwischen 1-10 befinden.

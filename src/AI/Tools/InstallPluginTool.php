@@ -91,6 +91,9 @@ class InstallPluginTool implements ToolInterface {
                     'success' => true,
                     'plugin' => $pluginFile,
                     'message' => 'Plugin was already installed and is now activated.',
+                    '_verify' => [
+                        ['type' => 'plugin_active', 'plugin_file' => $pluginFile, 'expected_active' => true],
+                    ],
                 ];
             }
             return [
@@ -145,13 +148,19 @@ class InstallPluginTool implements ToolInterface {
             }
         }
 
-        return [
+        $result = [
             'success' => true,
             'plugin' => $pluginFile,
             'version' => $api->version,
             'activated' => $activate,
             'message' => $activate ? 'Plugin installed and activated.' : 'Plugin installed.',
         ];
+        if ($activate) {
+            $result['_verify'] = [
+                ['type' => 'plugin_active', 'plugin_file' => $pluginFile, 'expected_active' => true],
+            ];
+        }
+        return $result;
     }
 
     private function updateOutdated(): array {
@@ -240,6 +249,9 @@ class InstallPluginTool implements ToolInterface {
             'success' => true,
             'plugin_slug' => $slug,
             'message' => "Plugin '$slug' fully deleted (files removed, uninstall hooks executed).",
+            '_verify' => [
+                ['type' => 'file_exists', 'path' => trailingslashit(WP_PLUGIN_DIR) . $pluginFile, 'expected' => false],
+            ],
         ];
     }
 
@@ -273,7 +285,14 @@ class InstallPluginTool implements ToolInterface {
             ];
         }
 
-        return ['success' => true, 'plugin_slug' => $slug, 'message' => "Plugin '$slug' activated."];
+        return [
+            'success' => true,
+            'plugin_slug' => $slug,
+            'message' => "Plugin '$slug' activated.",
+            '_verify' => [
+                ['type' => 'plugin_active', 'plugin_file' => $pluginFile, 'expected_active' => true],
+            ],
+        ];
     }
 
     private function deactivatePlugin(string $slug): array {
@@ -293,6 +312,13 @@ class InstallPluginTool implements ToolInterface {
 
         deactivate_plugins($pluginFile);
 
-        return ['success' => true, 'plugin_slug' => $slug, 'message' => "Plugin '$slug' deactivated."];
+        return [
+            'success' => true,
+            'plugin_slug' => $slug,
+            'message' => "Plugin '$slug' deactivated.",
+            '_verify' => [
+                ['type' => 'plugin_active', 'plugin_file' => $pluginFile, 'expected_active' => false],
+            ],
+        ];
     }
 }

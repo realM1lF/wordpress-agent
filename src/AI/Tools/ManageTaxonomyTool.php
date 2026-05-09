@@ -248,6 +248,9 @@ class ManageTaxonomyTool implements ToolInterface {
             'name' => $name,
             'taxonomy' => $taxonomy,
             'message' => 'Term created.',
+            '_verify' => [
+                ['type' => 'term_exists', 'term_id' => $result['term_id'], 'expected' => true],
+            ],
         ];
     }
 }

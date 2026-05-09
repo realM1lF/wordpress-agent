@@ -57,6 +57,24 @@ class Tables {
 ) {$charsetCollate};";
         dbDelta($sqlMemory);
 
+        $usageLogTable = $wpdb->prefix . 'levi_usage_log';
+        $sqlUsageLog = "CREATE TABLE {$usageLogTable} (
+    id bigint(20) unsigned NOT NULL auto_increment,
+    session_id varchar(64) NOT NULL,
+    user_id bigint(20) unsigned DEFAULT NULL,
+    prompt_tokens int unsigned NOT NULL DEFAULT 0,
+    completion_tokens int unsigned NOT NULL DEFAULT 0,
+    cached_tokens int unsigned NOT NULL DEFAULT 0,
+    api_calls smallint unsigned NOT NULL DEFAULT 0,
+    model varchar(120) DEFAULT NULL,
+    created_at datetime DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY  (id),
+    KEY idx_session (session_id),
+    KEY idx_user_time (user_id, created_at),
+    KEY idx_created (created_at)
+) {$charsetCollate};";
+        dbDelta($sqlUsageLog);
+
         $sqlAuditLog = "CREATE TABLE {$auditLogTable} (
     id bigint(20) unsigned NOT NULL auto_increment,
     user_id bigint(20) unsigned DEFAULT NULL,
