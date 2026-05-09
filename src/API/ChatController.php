@@ -113,9 +113,16 @@ class ChatController extends WP_REST_Controller
      * Get tool definitions using deferred loading.
      * Returns core tools + any tools discovered via search_tools.
      * When total tools <= 20, returns all (no benefit from deferring).
+     *
+     * 0.9.0: When use_generic_tools is enabled, returns the 12 generic tools
+     * from GenericRegistry instead of the 44 specialized ones.
      */
     private function getToolDefs(): array
     {
+        if ($this->useGenericTools && $this->genericRegistry !== null) {
+            return $this->genericRegistry->getDefinitions();
+        }
+
         return $this->toolRegistry->getCoreAndDiscoveredDefinitions(
             $this->discoveredToolNames,
         );

@@ -3,6 +3,51 @@
 Alle wesentlichen Änderungen am Levi AI Agent Plugin werden hier dokumentiert.
 Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.9.0] – 2026-05-09
+
+**Das größte Architektur-Update seit dem Launch.** Levi wird vom „Viele-spezialisierte-Tools“-Ansatz zu einem schlanken, generischen Agenten wie Claude Code oder Aider — mit deutlich höherer Zuverlässigkeit und weniger Token-Verbrauch.
+
+### Generische Tools (44 → 12)
+- **Neue Tool-Architektur:** Statt 44 spezialisierter Tools gibt es jetzt 12 universelle, generische Tools, die das LLM intuitiver nutzen kann:
+  - `read` — Posts, Seiten, Dateien, Optionen, Benutzer, Medien, Logs lesen
+  - `write` — Dateien, Posts, Seiten erstellen/überschreiben
+  - `edit` — Atomares Search-and-Replace in Dateien (alles oder nichts)
+  - `list` — Verzeichnisse, Posts, Plugins, Themes auflisten
+  - `grep` — Text/Regex-Suche in Dateien und Inhalten
+  - `execute` — PHP/WP-Code oder WP-CLI-Befehle ausführen
+  - `install` — Plugins/Themes installieren, aktivieren, deaktivieren, löschen
+  - `manage` — Taxonomien, Menüs, Cron-Jobs, Post-Meta verwalten
+  - `manage_woo` — WooCommerce-Produkte, Bestellungen, Gutscheine, Einstellungen
+  - `manage_elementor` — Elementor-Templates, Seiten, Widgets verwalten
+  - `fetch` — HTTP-Requests für externe APIs und Frontend-Tests
+  - `health_check` — Systemzustand prüfen (WP-Version, PHP, Plugins, DB, Memory)
+- **Tool-Wissen im Prompt:** Statt komplexer JSON-Schemas mit 20+ Parametern pro Tool wandert das Domänenwissen in `identity/rules/tools-v2.md`. Das LLM nutzt sein Training + die Regeln, um die generischen Tools korrekt anzuwenden.
+- **Kein Deferred Loading mehr:** Alle 12 Tools sind immer sichtbar — kein „Henne-Ei-Problem“ mehr, wo das LLM ein Tool nicht finden kann, weil es nicht weiß, dass es fehlt.
+
+### ORPA State Machine
+- **Formalisierte Zustandsmaschine:** Jede Anfrage durchläuft definierte Zustände: `IDLE → OBSERVING → REASONING → (PLANNING | EXECUTING) → VERIFYING → DONE`.
+- **Explizite Planungsphase:** Bei komplexen Aufgaben (Plugin-Entwicklung, Multi-File-Edits) erstellt Levi einen sichtbaren Plan mit „Soll ich loslegen?“-Freigabe direkt im Chat.
+- **Zustands-Streaming:** Der Chat zeigt live den aktuellen Zustand an („Analysiere Anfrage…“, „Erstelle Plan…“, „Führe aus…", „Verifiziere…").
+- **Loop-Erkennung:** Wiederholte identische Tool-Aufrufe werden erkannt und blockiert — statt dass Levi sich im Kreis dreht.
+
+### Vereinfachte Verifikation
+- **3 Checks statt 15+:** Das System prüft nur noch Plan-Vollständigkeit, Write-Verifikation und Mutation-Gate. Die 15 separaten Post-Execution Guard Injections wurden entfernt.
+- **~60% weniger Tokens pro Iteration:** Durch Wegfall der massiven System-Nachrichten-Injections nach jedem Tool-Call.
+
+### Modulare Prompts
+- **Regex-basierte Query Classification:** Kein extra LLM-Call mehr vor jeder Anfrage. Die Klassifizierung kostet ~0ms und ist deterministisch.
+- **Nur relevante Module laden:** Bei einfachen Anfragen werden nur `core`-Regeln geladen. Bei Entwicklungsaufgaben kommen `tools`, `coding` und `planning` dazu. WooCommerce/Elementor/Cron-Module werden nur bei passenden Keywords geladen.
+- **~72% weniger System-Prompt-Tokens:** Von ~15.000 auf ~3.000 Tokens für typische Anfragen.
+
+### Fallback & Migration
+- **Automatischer Fallback:** Bei wiederholten Fehlern mit generischen Tools (3 Versuche) wechselt Levi automatisch zurück auf die alte Tool-Registry.
+- **Feature-Flag:** Generische Tools können in den Einstellungen aktiviert werden (`use_generic_tools`). Standardmäßig deaktiviert für sanfte Migration.
+- **Alte Tools bleiben erhalten:** Alle 44 spezialisierten Tools sind weiter verfügbar und funktionieren wie bisher, solange das Feature-Flag nicht aktiv ist.
+
+### Tests & Benchmarks
+- **7 neue Test-Suiten:** AgentStateTest, GenericToolContractTest, GenericToolIntegrationTest, GenericToolWorkflowTest, PerformanceBenchmarkTest, ToolResponseContractTest.
+- **Performance-Benchmark:** V1 vs V2 zeigt deutliche Verbesserungen bei Token-Nutzung, Latenz und Memory-Verbrauch.
+
 ## [0.8.0] – 2026-03-15
 - **Alle Tools validieren jetzt ihre Parameter:** Wenn Levi einem Tool Parameter schickt, die es gar nicht kennt, bekommt er jetzt eine Warnung zurück — statt dass sie still ignoriert werden. Das verhindert, dass Levi denkt, eine Aktion hätte geklappt, obwohl sie gar nicht ausgeführt wurde. Betrifft alle 50+ Tools automatisch über die zentrale Registry.
 - **Elementor-Inhalte werden endlich sichtbar:** Drei Bugs behoben, die dazu führten, dass von Levi erstellte Elementor-Widgets nicht auf der Seite erschienen:
