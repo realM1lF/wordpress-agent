@@ -49,6 +49,7 @@ class GenericToolContractTest
     private array $warningMessages = [];
 
     private const MIN_DESCRIPTION_SENTENCES = 3;
+    private const EXPECTED_MINIMAL_TOOLS = 5;
     private const EXPECTED_STANDARD_TOOLS = 10;
     private const EXPECTED_FULL_TOOLS = 12;
 
@@ -105,6 +106,9 @@ class GenericToolContractTest
 
     private function testRegistryProfiles(): void
     {
+        $minimal = new \Levi\Agent\AI\Tools\GenericRegistry(
+            \Levi\Agent\AI\Tools\GenericRegistry::PROFILE_MINIMAL,
+        );
         $standard = new \Levi\Agent\AI\Tools\GenericRegistry(
             \Levi\Agent\AI\Tools\GenericRegistry::PROFILE_STANDARD,
         );
@@ -112,8 +116,22 @@ class GenericToolContractTest
             \Levi\Agent\AI\Tools\GenericRegistry::PROFILE_FULL,
         );
 
+        $minimalCount = count($minimal->getAll());
         $standardCount = count($standard->getAll());
         $fullCount = count($full->getAll());
+
+        if ($minimalCount === self::EXPECTED_MINIMAL_TOOLS) {
+            $this->pass(
+                "Registry MINIMAL profile has {$minimalCount} tools (expected " .
+                    self::EXPECTED_MINIMAL_TOOLS .
+                    ")",
+            );
+        } else {
+            $this->fail(
+                "Registry MINIMAL profile has {$minimalCount} tools, expected " .
+                    self::EXPECTED_MINIMAL_TOOLS,
+            );
+        }
 
         if ($standardCount === self::EXPECTED_STANDARD_TOOLS) {
             $this->pass(
@@ -139,6 +157,15 @@ class GenericToolContractTest
                 "Registry FULL profile has {$fullCount} tools, expected " .
                     self::EXPECTED_FULL_TOOLS,
             );
+        }
+
+        // Verify standard contains all minimal tools
+        foreach ($minimal->getAll() as $name => $tool) {
+            if ($standard->get($name) !== null) {
+                $this->pass("STANDARD profile contains minimal tool '{$name}'");
+            } else {
+                $this->fail("STANDARD profile missing minimal tool '{$name}'");
+            }
         }
 
         // Verify full contains all standard tools
